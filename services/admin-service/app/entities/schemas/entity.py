@@ -1,0 +1,63 @@
+from typing import Optional, List, Union, Any
+from pydantic import BaseModel
+from datetime import datetime, date
+from uuid import UUID
+
+class EntityBase(BaseModel):
+    entity_name: str
+    entity_code: str
+    company_size: Optional[str] = None
+    description: Optional[str] = None
+    contact: Optional[str] = None
+    email: Optional[str] = None
+    address_1: Optional[str] = None
+    address_2: Optional[str] = None
+    city_code: Optional[str] = None
+    state_code: Optional[str] = None
+    country_code: Optional[str] = None
+    time_zone: Optional[str] = None
+    time_zone_offset: Optional[str] = None
+    date_format: Optional[str] = None
+    time_format: Optional[str] = None
+    date_time_format: Optional[str] = None
+    active: bool = True
+    deleted: bool = False
+
+class EntityCreate(EntityBase):
+    client_id: UUID
+
+class EntityUpdate(BaseModel):
+    entity_name: Optional[str] = None
+    entity_code: Optional[str] = None
+    company_size: Optional[str] = None
+    description: Optional[str] = None
+    contact: Optional[str] = None
+    email: Optional[str] = None
+    address_1: Optional[str] = None
+    address_2: Optional[str] = None
+    city_code: Optional[str] = None
+    state_code: Optional[str] = None
+    country_code: Optional[str] = None
+    time_zone: Optional[str] = None
+    time_zone_offset: Optional[str] = None
+    date_format: Optional[str] = None
+    time_format: Optional[str] = None
+    date_time_format: Optional[str] = None
+    active: Optional[bool] = None
+    deleted: Optional[bool] = None
+
+class EntityResponse(EntityBase):
+    entity_id: UUID
+    client_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class EntityListResponse(BaseModel):
+    entities: List[EntityResponse]
+    total: int
+    page: int
+    size: int
+    pages: int

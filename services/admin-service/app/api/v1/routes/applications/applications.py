@@ -1,0 +1,652 @@
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.orm import Session
+from app.infrastructure.database.session import get_db
+from app.domain_controls.models.applications import Application
+from app.domain_controls.models.menus import Menu
+from app.schemas.applications import ApplicationCreate, ApplicationUpdate, ApplicationResponse
+from app.schemas.applications import MenuResponse
+from app.core.security import get_current_user
+from app.core.config import settings
+from app.infrastructure.cache.redis_cache import redis_cache
+from app.infrastructure.mongodb.mongo_client import get_mongodb
+from bson import ObjectId
+import uuid
+
+router = APIRouter()
+
+@router.get("/", response_model=List[ApplicationResponse])
+def get_applications(
+    skip: int = 0,
+    limit: int = 100,
+    domain_id: Optional[uuid.UUID] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get all applications with pagination and optional domain filtering, sorted by newest first (FILO)"""
+    try:
+        # Create cache key
+        cache_key = f"applications:list:skip={skip}:limit={limit}:domain_id={domain_id}"
+
+        # Try to get from cache (with error handling)
+        try:
+            cached_apps = redis_cache.get(cache_key)
+            if cached_apps:
+                return cached_apps
+        except Exception as cache_error:
+            print(f"Redis cache error (continuing without cache): {str(cache_error)}")
+
+        # Query database if not in cache
+        query = db.query(Application).filter(Application.is_active == True)
+        
+        # Check if is_deleted column exists before filtering
+        try:
+            query = query.filter(Application.is_deleted == False)
+        except Exception:
+            # Column might not exist in older schemas
+            pass
+
+        if domain_id:
+            query = query.filter(Application.domain_id == domain_id)
+
+        # Sort by created_at in descending order (newest first - FILO)
+        # Fallback to id if created_at doesn't exist
+        try:
+            query = query.order_by(Application.created_at.desc())
+        except Exception:
+            print("Warning: created_at column not found, sorting by id instead")
+            query = query.order_by(Application.id.desc())
+
+        applications = query.offset(skip).limit(limit).all()
+
+        # Convert to dict for caching
+        apps_list = []
+        for a in applications:
+            app_dict = {
+                "id": str(a.id),
+                "name": a.name,
+                "description": a.description,
+                "domain_id": str(a.domain_id),
+                "version": a.version,
+                "status": a.status,
+                "config": a.config,
+                "is_active": a.is_active,
+                "key": getattr(a, 'key', None),
+                "label": getattr(a, 'label', None),
+                "route": getattr(a, 'route', None),
+                "icon": getattr(a, 'icon', None),
+                "badge": getattr(a, 'badge', None),
+                "section_title": getattr(a, 'section_title', None),
+                "access": getattr(a, 'access', None),
+                "order_index": getattr(a, 'order_index', 0),
+                "created_at": str(getattr(a, 'created_at', '')),
+                "updated_at": str(getattr(a, 'updated_at', ''))
+            }
+            apps_list.append(app_dict)
+
+        # Cache the result for 30 minutes (with error handling)
+        try:
+            redis_cache.set(cache_key, apps_list, ttl=settings.CACHE_DEFAULT_TTL)
+        except Exception as cache_error:
+            print(f"Redis cache set error (continuing without cache): {str(cache_error)}")
+
+        return applications
+        
+    except Exception as e:
+        # Log the full error for debugging
+        print(f"Error getting applications: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get applications: {str(e)}"
+        )
+
+    """Get a specific application by ID"""
+    application = db.query(Application).filter(
+        Application.id == application_id, 
+        Application.is_active == True,
+        Application.is_deleted == False
+    ).first()
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application not found"
+        )
+    return application
+
+@router.get("/{application_id}/menus")
+async def get_menus_by_application(
+    application_id: uuid.UUID,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    include_children: bool = Query(True, description="Include child menus in the response"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get complete mainNavigation structure for a specific application
+    
+    Returns the full navigation structure including:
+    - _id: Master document ID
+    - config: Navigation configuration
+    - mainNavigation: Array with the specific application and its menu hierarchy
+    - profileSection: User profile menu items
+    
+    Structure matches the MongoDB mainNavigation document format.
+    
+    - **application_id**: UUID of the application
+    - **skip**: Number of records to skip (pagination)
+    - **limit**: Maximum number of records to return
+    - **include_children**: Whether to include child menus (default: True)
+    """
+    # Verify application exists
+    application = db.query(Application).filter(
+        Application.id == application_id,
+        Application.is_active == True,
+        Application.is_deleted == False
+    ).first()
+    
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application with id {application_id} not found"
+        )
+    
+    # Create cache key
+    cache_key = f"menus:application:{application_id}:navigation:skip={skip}:limit={limit}:children={include_children}"
+    
+    # Try to get from cache
+    cached_response = redis_cache.get(cache_key)
+    if cached_response:
+        return cached_response
+    
+    # Connect to MongoDB to get the master navigation document
+    db_mongo = await get_mongodb()
+    if db_mongo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MongoDB not available"
+        )
+    
+    # Fetch the master navigation document
+    master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
+    master_doc = await db_mongo.menu_details.find_one({"_id": master_doc_id})
+    
+    if not master_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Master navigation document not found"
+        )
+    
+    # Get mainNavigation array references
+    main_nav_refs = master_doc.get("mainNavigation", [])
+    
+    # Find the application document in MongoDB
+    application_doc = None
+    for app_ref in main_nav_refs:
+        if isinstance(app_ref, ObjectId) or isinstance(app_ref, str):
+            try:
+                # Convert to ObjectId if it's a string
+                if isinstance(app_ref, str):
+                    app_doc_id = ObjectId(app_ref)
+                else:
+                    app_doc_id = app_ref
+                
+                # Fetch the application document
+                app_doc = await db_mongo.menu_details.find_one({"_id": app_doc_id})
+                
+                if app_doc and app_doc.get("application_id") == str(application_id):
+                    application_doc = app_doc
+                    break
+            except Exception as e:
+                print(f"[Get Menus By Application] Error fetching app doc: {str(e)}")
+                continue
+        elif isinstance(app_ref, dict) and app_ref.get("application_id") == str(application_id):
+            application_doc = app_ref
+            break
+    
+    if not application_doc:
+        # If not found in MongoDB, build from PostgreSQL
+        print(f"[Get Menus By Application] Application document not found in MongoDB, building from PostgreSQL")
+        
+        # Query only parent menus (those without parent_menu_id)
+        query = db.query(Menu).filter(
+            Menu.application_id == application_id,
+            Menu.is_active == True,
+            Menu.deleted_at.is_(None),
+            Menu.parent_menu_id.is_(None)
+        )
+        
+        # Sort by order_index and created_at
+        query = query.order_by(Menu.order_index.asc(), Menu.created_at.asc())
+        
+        # Apply pagination
+        parent_menus = query.offset(skip).limit(limit).all()
+        
+        # Helper function to recursively build children
+        def build_children_recursive(parent_menu):
+            """Recursively fetch and build children for a menu"""
+            children = db.query(Menu).filter(
+                Menu.parent_menu_id == parent_menu.id,
+                Menu.is_active == True,
+                Menu.deleted_at.is_(None)
+            ).order_by(Menu.order_index.asc(), Menu.created_at.asc()).all()
+            
+            if not children:
+                return []
+            
+            children_list = []
+            for child in children:
+                child_dict = {
+                    "key": child.key or child.name,
+                    "label": child.label,
+                    "icon": child.icon,
+                    "description": child.menus_description,
+                    "badge": child.badge,
+                    "section_title": child.section_title or "",
+                    "sectionTitle": child.section_title or "",
+                    "route": child.route,
+                    "component": child.component,
+                    "menu_id": str(child.id),
+                    "level": child.level,
+                    "order_index": child.order_index,
+                }
+                
+                # Recursively get grandchildren
+                grandchildren = build_children_recursive(child)
+                if grandchildren:
+                    child_dict["children"] = grandchildren
+                
+                children_list.append(child_dict)
+            
+            return children_list
+        
+        # Build children array
+        children_array = []
+        for menu in parent_menus:
+            menu_item = {
+                "key": menu.key or menu.name,
+                "label": menu.label,
+                "icon": menu.icon,
+                "description": menu.menus_description,
+                "badge": menu.badge,
+                "section_title": menu.section_title or "",
+                "sectionTitle": menu.section_title or "",
+                "route": menu.route,
+                "component": menu.component,
+                "menu_id": str(menu.id),
+                "level": menu.level,
+                "order_index": menu.order_index,
+            }
+            
+            # Add children recursively if requested
+            if include_children:
+                children = build_children_recursive(menu)
+                if children:
+                    menu_item["children"] = children
+            
+            children_array.append(menu_item)
+        
+        # Build application document structure
+        application_doc = {
+            "key": application.key or application.name.lower().replace(" ", "-"),
+            "label": application.label or application.name,
+            "icon": application.icon or "ri-apps-line",
+            "description": application.description or f"Manage {application.name}",
+            "badge": application.badge,
+            "sectionTitle": application.section_title or application.name,
+            "route": application.route or f"/{application.name.lower().replace(' ', '-')}",
+            "application_id": str(application.id),
+            "level": 1,
+            "order_index": 1000,
+            "children": children_array
+        }
+    else:
+        # Remove MongoDB internal fields
+        application_doc.pop("_id", None)
+        application_doc.pop("created_at", None)
+        application_doc.pop("updated_at", None)
+        application_doc.pop("is_active", None)
+    
+    # Get profileSection and config from master document
+    profile_section = master_doc.get("profileSection", {})
+    config = master_doc.get("config", {})
+    
+    # Clean userData fields (ensure simple strings, not {value, color} objects)
+    if profile_section and "userData" in profile_section:
+        user_data = profile_section["userData"]
+        cleaned_user_data = {}
+        
+        for key, value in user_data.items():
+            if isinstance(value, dict) and 'value' in value:
+                cleaned_user_data[key] = value['value']
+            else:
+                cleaned_user_data[key] = value
+        
+        profile_section["userData"] = cleaned_user_data
+    
+    # Build response matching mainNavigation structure
+    response = {
+        "_id": str(master_doc_id),
+        "config": config,
+        "mainNavigation": [application_doc],  # Array with single application
+        "profileSection": profile_section
+    }
+    
+    # Cache the result for 30 minutes
+    redis_cache.set(cache_key, response, ttl=settings.CACHE_DEFAULT_TTL)
+    
+    return response
+    
+    # Cache the result for 30 minutes
+    redis_cache.set(cache_key, response, ttl=settings.CACHE_DEFAULT_TTL)
+    
+    return response
+
+@router.get("/domain/{domain_id}", response_model=List[ApplicationResponse])
+def get_applications_by_domain(
+    domain_id: uuid.UUID,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    include_inactive: bool = Query(False, description="Include inactive applications"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all applications for a specific domain
+    
+    - **domain_id**: UUID of the domain
+    - **skip**: Number of records to skip (pagination)
+    - **limit**: Maximum number of records to return
+    - **include_inactive**: Whether to include inactive applications (default: False)
+    
+    Returns a list of applications sorted by created_at (newest first - FILO)
+    """
+    # Create cache key
+    cache_key = f"applications:domain:{domain_id}:skip={skip}:limit={limit}:inactive={include_inactive}"
+    
+    # Try to get from cache
+    cached_apps = redis_cache.get(cache_key)
+    if cached_apps:
+        return cached_apps
+    
+    # Query applications for this domain
+    query = db.query(Application).filter(
+        Application.domain_id == domain_id,
+        Application.is_deleted == False
+    )
+    
+    # Filter by active status unless include_inactive is True
+    if not include_inactive:
+        query = query.filter(Application.is_active == True)
+    
+    # Sort by created_at in descending order (newest first - FILO)
+    query = query.order_by(Application.created_at.desc())
+    
+    # Apply pagination
+    applications = query.offset(skip).limit(limit).all()
+    
+    # If no applications found, return empty list (not an error - domain might be new)
+    if not applications:
+        return []
+    
+    # Convert to dict for caching
+    apps_list = [
+        {
+            "id": str(app.id),
+            "domain_id": str(app.domain_id),
+            "name": app.name,
+            "description": app.description,
+            "version": app.version,
+            "status": app.status,
+            "config": app.config,
+            "is_active": app.is_active,
+            "key": app.key,
+            "label": app.label,
+            "route": app.route,
+            "icon": app.icon,
+            "badge": app.badge,
+            "section_title": app.section_title,
+            "access": app.access,
+            "order_index": app.order_index,
+            "created_at": str(app.created_at),
+            "updated_at": str(app.updated_at)
+        }
+        for app in applications
+    ]
+    
+    # Cache the result for 30 minutes
+    redis_cache.set(cache_key, apps_list, ttl=settings.CACHE_DEFAULT_TTL)
+    
+    return applications
+
+@router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
+def create_application(
+    application_data: ApplicationCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Create a new application"""
+    try:
+        # Check if application name already exists in the same domain
+        existing_application = db.query(Application).filter(
+            Application.name == application_data.name,
+            Application.domain_id == application_data.domain_id
+        ).first()
+        if existing_application:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Application with this name already exists in the domain"
+            )
+
+        # Create application using dict() method
+        application_dict = application_data.dict()
+        application = Application(**application_dict)
+        
+        db.add(application)
+        db.commit()
+        db.refresh(application)
+
+        # Cache the created application
+        app_dict = {
+            "id": str(application.id),
+            "name": application.name,
+            "description": application.description,
+            "domain_id": str(application.domain_id),
+            "version": application.version,
+            "status": application.status,
+            "config": application.config,
+            "is_active": application.is_active,
+            "key": application.key,
+            "label": application.label,
+            "route": application.route,
+            "icon": application.icon,
+            "badge": application.badge,
+            "section_title": application.section_title,
+            "access": application.access,
+            "order_index": application.order_index,
+            "created_at": str(application.created_at),
+            "updated_at": str(application.updated_at)
+        }
+        redis_cache.set(f"application:{application.id}", app_dict, ttl=settings.CACHE_DEFAULT_TTL)
+
+        # Invalidate applications list cache
+        redis_cache.delete_pattern("applications:list:*")
+
+        return application
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log the full error for debugging
+        print(f"Error creating application: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Rollback the transaction
+        db.rollback()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create application: {str(e)}"
+        )
+
+@router.put("/{application_id}", response_model=ApplicationResponse)
+async def update_application(
+    application_id: uuid.UUID,
+    application_data: ApplicationUpdate,
+    nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Update an application in PostgreSQL and sync to MongoDB navigation
+
+    This endpoint:
+    1. Updates the application in PostgreSQL
+    2. Syncs the changes to MongoDB mainNavigation structure
+    3. Invalidates relevant caches
+    """
+    print(f"[Application Update] Updating application_id: {application_id}")
+
+    application = db.query(Application).filter(
+        Application.id == application_id,
+        Application.is_active == True,
+        Application.is_deleted == False
+    ).first()
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application not found"
+        )
+
+    # Check if new name conflicts with existing application in the same domain
+    if application_data.name and application_data.name != application.name:
+        existing_application = db.query(Application).filter(
+            Application.name == application_data.name,
+            Application.domain_id == application.domain_id
+        ).first()
+        if existing_application:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Application with this name already exists in the domain"
+            )
+
+    # Update PostgreSQL
+    update_data = application_data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(application, field, value)
+
+    db.commit()
+    db.refresh(application)
+
+    print(f"[Application Update] ✅ PostgreSQL updated")
+
+    # Sync to MongoDB navigation structure
+    try:
+        db_mongo = await get_mongodb()
+        if db_mongo is not None:
+            print(f"[Application Update] Syncing to MongoDB...")
+
+            # Convert nav_doc_id to ObjectId
+            try:
+                doc_id = ObjectId(nav_doc_id)
+            except Exception:
+                print(f"[Application Update] ⚠️ Invalid nav_doc_id: {nav_doc_id}")
+                doc_id = ObjectId("69074724f217ab8fcb2e3b24")
+
+            # Fetch the navigation document
+            nav_doc = await db_mongo.menu_details.find_one({"_id": doc_id})
+
+            if nav_doc:
+                main_navigation = nav_doc.get("mainNavigation", [])
+
+                # Find and update the application in mainNavigation
+                updated = False
+                for app_item in main_navigation:
+                    if app_item.get("application_id") == str(application_id):
+                        # Update application fields in MongoDB
+                        if "key" in update_data:
+                            app_item["key"] = update_data["key"]
+                        if "label" in update_data:
+                            app_item["label"] = update_data["label"]
+                        if "route" in update_data:
+                            app_item["route"] = update_data["route"]
+                        if "icon" in update_data:
+                            app_item["icon"] = update_data["icon"]
+                        if "badge" in update_data:
+                            app_item["badge"] = update_data["badge"]
+                        if "section_title" in update_data:
+                            app_item["sectionTitle"] = update_data["section_title"]
+                        if "name" in update_data:
+                            app_item["application_name"] = update_data["name"]
+
+                        updated = True
+                        print(f"[Application Update] ✅ Found and updated application in MongoDB")
+                        break
+
+                if updated:
+                    # Save the updated document back to MongoDB
+                    result = await db_mongo.menu_details.replace_one(
+                        {"_id": doc_id},
+                        nav_doc
+                    )
+                    print(f"[Application Update] ✅ MongoDB updated (modified={result.modified_count})")
+                else:
+                    print(f"[Application Update] ⚠️ Application not found in mainNavigation")
+            else:
+                print(f"[Application Update] ⚠️ Navigation document not found")
+        else:
+            print(f"[Application Update] ⚠️ MongoDB not available, skipping sync")
+    except Exception as e:
+        print(f"[Application Update] ⚠️ MongoDB sync failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Invalidate caches
+    redis_cache.delete(f"application:{application.id}")
+    redis_cache.delete_pattern("applications:list:*")
+    redis_cache.delete("menus:mongo:main_navigation_full")
+
+    print(f"[Application Update] ✅ Complete!")
+
+    return application
+
+@router.delete("/{application_id}", status_code=status.HTTP_200_OK)
+def delete_application(
+    application_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Soft delete an application"""
+    application = db.query(Application).filter(
+        Application.id == application_id, 
+        Application.is_active == True,
+        Application.is_deleted == False
+    ).first()
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application not found"
+        )
+    
+    try:
+        # Import datetime for soft delete
+        from datetime import datetime
+        
+        # Soft delete - set flags and timestamp
+        application.is_active = False
+        application.is_deleted = True
+        application.deleted_at = datetime.utcnow()
+        
+        db.commit()
+        return {"message": "Application deleted successfully", "application_id": str(application_id)}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete application: {str(e)}"
+        )

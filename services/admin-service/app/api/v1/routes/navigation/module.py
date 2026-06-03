@@ -1,0 +1,423 @@
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+from datetime import datetime
+from app.db.database import get_db
+from app.services.modules import ModuleService
+from app.schemas.modules import (
+    ModuleCreate,
+    ModuleUpdate,
+    ModuleResponse,
+    ModuleListResponse
+)
+import math
+
+router = APIRouter()
+
+@router.get("/health")
+async def modules_health_check():
+    """Health check endpoint for modules service"""
+    return {
+        "status": "ok",
+        "service": "modules",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@router.post(
+    "/",
+    response_model=ModuleResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new module",
+    description="Create a new module with the provided details"
+)
+async def create_module(
+    module_data: ModuleCreate,
+    db: Session = Depends(get_db),
+    created_by: Optional[int] = Query(None, description="User ID who is creating the module")
+):
+    """
+    Create a new module.
+    
+    - **application_id**: UUID of the application this module belongs to
+    - **name**: Internal name of the module (required)
+    - **code**: Unique identifier code (optional, e.g., CLIENT_MGMT)
+    - **key**: Module key for navigation (optional, e.g., analytics-module)
+    - **label**: Display name (optional, e.g., Analytics Module)
+    - **section_title**: Group title in UI (optional)
+    - **description**: Module description (optional)
+    - **icon**: Icon class/name (optional)
+    - **badge**: Badge text (optional)
+    - **route**: Route path (optional)
+    - **level**: Hierarchy level (default: 1)
+    - **order_index**: Ordering index (default: 0)
+    - **is_active**: Whether module is active (default: true)
+    - **is_public**: Whether module is public (default: false)
+    """
+    
+    # Check for duplicate code
+    if module_data.code:
+        existing_module = ModuleService.get_module_by_code(db, module_data.code)
+        if existing_module:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Module with code '{module_data.code}' already exists"
+            )
+    
+    # Check for duplicate key
+    if module_data.key:
+        existing_module = ModuleService.get_module_by_key(db, module_data.key)
+        if existing_module:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Module with key '{module_data.key}' already exists"
+            )
+    
+    try:
+        module = ModuleService.create_module(db, module_data, created_by)
+        return module
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create module: {str(e)}"
+        )
+
+@router.get(
+    "/",
+    response_model=ModuleListResponse,
+    summary="Get modules with filtering and pagination",
+    description="Retrieve modules with optional filtering, searching, and pagination"
+)
+async def get_modules(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    application_id: Optional[str] = Query(None, description="Filter by application ID"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    is_public: Optional[bool] = Query(None, description="Filter by public status"),
+    search: Optional[str] = Query(None, description="Search in name, label, description, code, or key"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$", description="Sort order (asc or desc)")
+):
+    """
+    Get modules with filtering and pagination.
+    
+    - **page**: Page number (starts from 1)
+    - **size**: Number of items per page (1-100)
+    - **application_id**: Filter by application ID
+    - **is_active**: Filter by active status
+    - **is_public**: Filter by public status
+    - **search**: Search in name, label, description, code, or key
+    - **sort_by**: Field to sort by (default: created_at)
+    - **sort_order**: Sort order - asc or desc (default: desc)
+    """
+    
+    skip = (page - 1) * size
+    
+    try:
+        modules, total = ModuleService.get_modules(
+            db=db,
+            skip=skip,
+            limit=size,
+            application_id=application_id,
+            is_active=is_active,
+            is_public=is_public,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+        
+        total_pages = math.ceil(total / size) if total > 0 else 0
+        
+        return ModuleListResponse(
+            modules=modules,
+            total=total,
+            page=page,
+            size=size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve modules: {str(e)}"
+        )
+
+@router.get(
+    "/{module_id}",
+    response_model=ModuleResponse,
+    summary="Get a module by ID",
+    description="Retrieve a specific module by its ID"
+)
+async def get_module(
+    module_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get a specific module by ID.
+    
+    - **module_id**: The UUID of the module to retrieve
+    """
+    
+    module = ModuleService.get_module(db, module_id)
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with ID {module_id} not found"
+        )
+    
+    return module
+
+@router.get(
+    "/application/{application_id}",
+    response_model=List[ModuleResponse],
+    summary="Get modules by application ID",
+    description="Retrieve all modules for a specific application"
+)
+async def get_modules_by_application(
+    application_id: str,
+    db: Session = Depends(get_db),
+    is_active: Optional[bool] = Query(None, description="Filter by active status")
+):
+    """
+    Get all modules for a specific application.
+    
+    - **application_id**: The UUID of the application
+    - **is_active**: Filter by active status (optional)
+    """
+    
+    try:
+        modules = ModuleService.get_modules_by_application(db, application_id, is_active)
+        return modules
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve modules for application: {str(e)}"
+        )
+
+@router.get(
+    "/code/{code}",
+    response_model=ModuleResponse,
+    summary="Get a module by code",
+    description="Retrieve a specific module by its unique code"
+)
+async def get_module_by_code(
+    code: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get a specific module by its unique code.
+    
+    - **code**: The unique code of the module to retrieve
+    """
+    
+    module = ModuleService.get_module_by_code(db, code)
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with code '{code}' not found"
+        )
+    
+    return module
+
+@router.get(
+    "/key/{key}",
+    response_model=ModuleResponse,
+    summary="Get a module by key",
+    description="Retrieve a specific module by its unique key"
+)
+async def get_module_by_key(
+    key: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get a specific module by its unique key.
+    
+    - **key**: The unique key of the module to retrieve
+    """
+    
+    module = ModuleService.get_module_by_key(db, key)
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with key '{key}' not found"
+        )
+    
+    return module
+
+@router.put(
+    "/{module_id}",
+    response_model=ModuleResponse,
+    summary="Update a module",
+    description="Update an existing module with the provided details"
+)
+async def update_module(
+    module_id: str,
+    module_data: ModuleUpdate,
+    db: Session = Depends(get_db),
+    updated_by: Optional[int] = Query(None, description="User ID who is updating the module")
+):
+    """
+    Update an existing module.
+    
+    - **module_id**: The UUID of the module to update
+    - All fields are optional and only provided fields will be updated
+    """
+    
+    # Check if module exists
+    existing_module = ModuleService.get_module(db, module_id)
+    if not existing_module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with ID {module_id} not found"
+        )
+    
+    # Check for duplicate code (if being updated)
+    if module_data.code and module_data.code != existing_module.code:
+        duplicate_module = ModuleService.get_module_by_code(db, module_data.code)
+        if duplicate_module:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Module with code '{module_data.code}' already exists"
+            )
+    
+    # Check for duplicate key (if being updated)
+    if module_data.key and module_data.key != existing_module.key:
+        duplicate_module = ModuleService.get_module_by_key(db, module_data.key)
+        if duplicate_module:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Module with key '{module_data.key}' already exists"
+            )
+    
+    try:
+        updated_module = ModuleService.update_module(db, module_id, module_data, updated_by)
+        return updated_module
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update module: {str(e)}"
+        )
+
+@router.delete(
+    "/{module_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a module",
+    description="Soft delete a module (marks as deleted but keeps in database)"
+)
+async def delete_module(
+    module_id: str,
+    db: Session = Depends(get_db),
+    deleted_by: Optional[int] = Query(None, description="User ID who is deleting the module")
+):
+    """
+    Soft delete a module.
+    
+    - **module_id**: The UUID of the module to delete
+    - **deleted_by**: User ID who is performing the deletion
+    
+    This performs a soft delete - the module is marked as deleted but remains in the database.
+    """
+    
+    success = ModuleService.delete_module(db, module_id, deleted_by)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with ID {module_id} not found"
+        )
+
+@router.patch(
+    "/{module_id}/activate",
+    response_model=ModuleResponse,
+    summary="Activate a module",
+    description="Activate a deactivated module"
+)
+async def activate_module(
+    module_id: str,
+    db: Session = Depends(get_db),
+    activated_by: Optional[int] = Query(None, description="User ID who is activating the module")
+):
+    """
+    Activate a module.
+    
+    - **module_id**: The UUID of the module to activate
+    - **activated_by**: User ID who is performing the activation
+    """
+    
+    module = ModuleService.activate_module(db, module_id, activated_by)
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with ID {module_id} not found"
+        )
+    
+    return module
+
+@router.patch(
+    "/{module_id}/deactivate",
+    response_model=ModuleResponse,
+    summary="Deactivate a module",
+    description="Deactivate an active module"
+)
+async def deactivate_module(
+    module_id: str,
+    db: Session = Depends(get_db),
+    deactivated_by: Optional[int] = Query(None, description="User ID who is deactivating the module")
+):
+    """
+    Deactivate a module.
+    
+    - **module_id**: The UUID of the module to deactivate
+    - **deactivated_by**: User ID who is performing the deactivation
+    """
+    
+    module = ModuleService.deactivate_module(db, module_id, deactivated_by)
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with ID {module_id} not found"
+        )
+    
+    return module
+
+@router.patch(
+    "/application/{application_id}/reorder",
+    status_code=status.HTTP_200_OK,
+    summary="Reorder modules within an application",
+    description="Update the order_index of multiple modules within an application"
+)
+async def reorder_modules(
+    application_id: str,
+    module_orders: List[dict],
+    db: Session = Depends(get_db),
+    updated_by: Optional[int] = Query(None, description="User ID who is reordering the modules")
+):
+    """
+    Reorder modules within an application.
+    
+    - **application_id**: The UUID of the application
+    - **module_orders**: List of objects with module_id and order_index
+    - **updated_by**: User ID who is performing the reordering
+    
+    Example request body:
+    ```json
+    [
+        {"module_id": 1, "order_index": 0},
+        {"module_id": 2, "order_index": 1},
+        {"module_id": 3, "order_index": 2}
+    ]
+    ```
+    """
+    
+    try:
+        success = ModuleService.reorder_modules(db, application_id, module_orders, updated_by)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to reorder modules"
+            )
+        
+        return {"message": "Modules reordered successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reorder modules: {str(e)}"
+        )

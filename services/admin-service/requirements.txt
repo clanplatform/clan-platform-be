@@ -1,0 +1,45 @@
+# Web Framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# Database - PostgreSQL
+SQLAlchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# Database - MongoDB
+pymongo==4.6.1
+motor==3.3.2
+
+# Cache - Redis
+redis==5.0.1
+hiredis==2.3.2
+
+# Validation & Serialization
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+cryptography==42.0.2
+
+# HTTP Client
+httpx==0.26.0
+requests==2.31.0
+
+# Logging & Monitoring
+python-json-logger==2.0.7
+
+# Utilities
+python-dotenv==1.0.1
+
+# Testing (optional, but recommended)
+pytest==7.4.4
+pytest-asyncio==0.23.4
+
+# Code Quality (optional)
+black==24.1.1
+flake8==7.0.0
+mypy==1.8.0

@@ -1,0 +1,73 @@
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Boolean, Numeric
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+from app.db.database import Base
+import uuid
+
+class Department(Base):
+    __tablename__ = "departments"
+    
+    department_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
+    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
+    parent_department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
+    department_name = Column(String(100), nullable=False)
+    department_code = Column(String(50), nullable=True)
+    description = Column(Text, nullable=True)
+    department_type = Column(String(50), nullable=True)
+    cost_center = Column(String(50), nullable=True)
+    budget_info = Column(JSON, default=dict)
+    manager_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True)
+    location = Column(String(255), nullable=False)
+    phone = Column(String(20), nullable=False)
+    email = Column(String(255), nullable=False)
+    annual_budget = Column(Numeric(15, 2), nullable=False)
+    reporting_structure = Column(String(100), nullable=False)
+    department_metadata = Column(JSON, default=dict)
+    is_active = Column(Boolean, default=True)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_by = Column(UUID(as_uuid=True), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
+    
+    # Relationships
+    client = relationship("Client")
+    entity = relationship("Entity", back_populates="departments")
+    divisions = relationship("Division", back_populates="department")
+    parent_department = relationship("Department", remote_side=[department_id], foreign_keys=[parent_department_id])
+    child_departments = relationship("Department", foreign_keys=[parent_department_id], overlaps="parent_department")
+    user_departments = relationship("UserDepartment", back_populates="department")
+    
+    def __repr__(self):
+        return f"<Department(id={self.department_id}, name={self.department_name}, entity_id={self.entity_id})>"
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    
+    log_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
+    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
+    action = Column(String(100), nullable=False)
+    object_type = Column(String(100), nullable=False)
+    object_id = Column(String(255), nullable=True)
+    old_values = Column(JSON, default=dict)
+    new_values = Column(JSON, default=dict)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    session_id = Column(String(255), nullable=True)
+    risk_score = Column(String(20), nullable=True)
+    compliance_tags = Column(JSON, default=list)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    user = relationship("User")
+    client = relationship("Client")
+    entity = relationship("Entity")
+    
+    def __repr__(self):
+        return f"<AuditLog(id={self.log_id}, action={self.action}, user_id={self.user_id})>"

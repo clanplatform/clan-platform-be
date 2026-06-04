@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.infrastructure.database.session import get_db
-from app.domain_controls.models.domains import Domain
-from app.schemas.domains import DomainCreate, DomainUpdate, DomainResponse
+from app.domains.models.domain import Domain
+from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainResponse
 from app.core.security import get_current_user_id
 from app.core.config import settings
 from app.infrastructure.cache.redis_cache import redis_cache
@@ -241,7 +241,7 @@ async def delete_domain(
     
     try:
         # Import Application model and datetime for soft delete
-        from app.domain_controls.models.applications import Application
+        from app.applications.models.application import Application
         from datetime import datetime
         
         # First, soft delete all applications that reference this domain

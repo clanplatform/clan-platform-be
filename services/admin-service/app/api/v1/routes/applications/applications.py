@@ -2,14 +2,14 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.infrastructure.database.session import get_db
-from app.domain_controls.models.applications import Application
-from app.domain_controls.models.menus import Menu
-from app.schemas.applications import ApplicationCreate, ApplicationUpdate, ApplicationResponse
-from app.schemas.applications import MenuResponse
+from app.applications.models.application import Application
+from app.menus.models.menu import Menu
+from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse
+from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
 from app.infrastructure.cache.redis_cache import redis_cache
-from app.infrastructure.mongodb.mongo_client import get_mongodb
+from app.infrastructure.mongodb.mongodb_admin import get_mongodb
 from bson import ObjectId
 import uuid
 

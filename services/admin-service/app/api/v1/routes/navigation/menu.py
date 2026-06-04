@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, and_
 from datetime import datetime, timezone
-from app.db.database import get_db
+from app.infrastructure.database.session import get_db
 from app.models.menu import Menu
 from app.models.application import Application
 from app.models.modules import Module

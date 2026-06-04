@@ -4,12 +4,13 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 import os
 
-from app.db.database import get_db
+from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user  # Uses optional auth support
-from app.models.user import User
-from app.models.entity import Entity
-from app.models.client import Client
-from app.schemas.entity import (
+# User model not in scope - commenting out for now
+# from app.models.user import User
+from app.entities.models.entity import Entity
+from app.clients.models.clients import Client
+from app.entities.schemas.entity import (
     EntityCreate,
     EntityUpdate,
     EntityResponse,
@@ -19,8 +20,8 @@ from app.schemas.entity import (
 # Check if authentication is required
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
 
-# Simple admin check for no-auth mode
-def require_admin_role(current_user: User = Depends(get_current_user)) -> User:
+# Simple admin check for no-auth mode (User model not in scope)
+def require_admin_role(current_user=Depends(get_current_user)):
     """Require admin role (bypassed when REQUIRE_AUTH=false)"""
     if not REQUIRE_AUTH:
         return current_user  # Skip role check in no-auth mode

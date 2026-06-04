@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from datetime import datetime
-from app.db.database import get_db
+from app.infrastructure.database.session import get_db
 from app.services.modules import ModuleService
 from app.schemas.modules import (
     ModuleCreate,

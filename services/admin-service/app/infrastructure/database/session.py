@@ -41,8 +41,10 @@ def create_tables():
     """
     from app.infrastructure.database.base import Base
     # Import all models to ensure they're registered with Base
-    from app.domain_controls.models.domains import Domain
-    from app.domain_controls.models.applications import Application
+    from app.domains.models.domain import Domain
+    from app.applications.models.application import Application
+    from app.modules.models.module import Module
+    from app.menus.models.menu import Menu
     
     Base.metadata.create_all(bind=engine)
 
@@ -53,8 +55,9 @@ def check_db_connection() -> bool:
     Returns True if connection is successful, False otherwise.
     """
     try:
+        from sqlalchemy import text
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         return True
     except Exception as e:

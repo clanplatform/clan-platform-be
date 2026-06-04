@@ -1,0 +1,66 @@
+================================================================
+MongoDB Connection Information
+================================================================
+
+CONTAINER STATUS: Running and Healthy
+MongoDB Version: 7.0.34
+Port: 27017
+
+================================================================
+CONNECTION STRINGS
+================================================================
+
+For MongoDB Compass (GUI):
+--------------------------
+mongodb://admin:admin_pass@localhost:27017/?authSource=admin
+
+For Python/Application Code:
+----------------------------
+mongodb://admin:admin_pass@localhost:27017
+
+Database Name: admin_service
+
+================================================================
+CREDENTIALS
+================================================================
+
+Username: admin
+Password: admin_pass
+Auth Database: admin (MongoDB default for root user)
+
+================================================================
+HOW TO CONNECT WITH MONGODB COMPASS
+================================================================
+
+1. Open MongoDB Compass
+2. Click "New Connection"
+3. Paste this connection string:
+   mongodb://admin:admin_pass@localhost:27017/?authSource=admin
+
+4. Click "Connect"
+
+OR manually configure:
+   - Hostname: localhost
+   - Port: 27017
+   - Authentication: Username/Password
+   - Username: admin
+   - Password: admin_pass
+   - Authentication Database: admin
+
+================================================================
+DOCKER COMMANDS
+================================================================
+
+Start MongoDB:
+  docker-compose up -d mongodb
+
+Stop MongoDB:
+  docker-compose stop mongodb
+
+View MongoDB logs:
+  docker logs admin-service-mongodb
+
+Connect via mongo shell:
+  docker exec -it admin-service-mongodb mongosh -u admin -p admin_pass --authenticationDatabase admin
+
+================================================================

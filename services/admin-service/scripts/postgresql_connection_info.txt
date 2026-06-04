@@ -1,0 +1,73 @@
+================================================================
+PostgreSQL Connection Information
+================================================================
+
+CONTAINER STATUS: Running and Healthy
+PostgreSQL Version: 15-alpine
+Port: 5432
+
+================================================================
+CONNECTION CREDENTIALS
+================================================================
+
+Username: postgres
+Password: root
+Database: admin_service
+Host: localhost (from outside Docker)
+Port: 5432
+
+================================================================
+CONNECTION STRINGS
+================================================================
+
+For pgAdmin/DBeaver/DataGrip:
+-----------------------------
+Host: localhost
+Port: 5432
+Database: admin_service
+Username: postgres
+Password: root
+
+For Application Code (Python/SQLAlchemy):
+----------------------------------------
+postgresql://postgres:root@localhost:5432/admin_service
+
+For Docker Container to Container:
+----------------------------------
+postgresql://postgres:root@postgres:5432/admin_service
+
+================================================================
+DOCKER COMMANDS
+================================================================
+
+Start PostgreSQL:
+  docker-compose up -d postgres
+
+Stop PostgreSQL:
+  docker-compose stop postgres
+
+View PostgreSQL logs:
+  docker logs admin-service-postgres
+
+Connect via psql:
+  docker exec -it admin-service-postgres psql -U postgres -d admin_service
+
+List databases:
+  docker exec -it admin-service-postgres psql -U postgres -c "\l"
+
+================================================================
+ENVIRONMENT FILES UPDATED
+================================================================
+
+All environment example files have been standardized with:
+- Username: postgres
+- Password: root (dev/uat) or CHANGE_ME_STRONG_PASSWORD (prod)
+- Database: admin_service
+
+Files updated:
+- config/environments/.env.local.example
+- config/environments/.env.dev.example
+- config/environments/.env.uat.example
+- config/environments/.env.prod.example
+
+================================================================

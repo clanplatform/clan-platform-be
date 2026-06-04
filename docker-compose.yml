@@ -6,16 +6,16 @@ services:
     image: postgres:15-alpine
     container_name: admin-service-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-admin_db}
-      POSTGRES_USER: ${POSTGRES_USER:-admin_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-admin_service}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin_user} -d ${POSTGRES_DB:-admin_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-admin_service}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,7 +73,7 @@ services:
       ENVIRONMENT: "local"
       
       # Database - PostgreSQL
-      DATABASE_URL: postgresql://${POSTGRES_USER:-admin_user}:${POSTGRES_PASSWORD:-admin_pass}@postgres:5432/${POSTGRES_DB:-admin_db}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root}@postgres:5432/${POSTGRES_DB:-admin_service}
       
       # Cache - Redis
       REDIS_URL: redis://redis:6379/0

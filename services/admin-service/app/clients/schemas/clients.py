@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -6,7 +6,7 @@ from uuid import UUID
 class ClientBase(BaseModel):
     client_name: str
     client_code: Optional[str] = None
-    contact_email: EmailStr
+    contact_email: str  # Changed from EmailStr to str
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -28,7 +28,7 @@ class ClientCreate(ClientBase):
 class ClientUpdate(BaseModel):
     client_name: Optional[str] = None
     client_code: Optional[str] = None
-    contact_email: Optional[EmailStr] = None
+    contact_email: Optional[str] = None  # Changed from EmailStr to str
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None

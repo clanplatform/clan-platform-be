@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from sqlalchemy.orm import Session
 from datetime import datetime
 import math
-from app.db.database import get_db
+from app.infrastructure.database.session import get_db
 from app.services.forms_service import FormsService
 from app.services.forms_details import forms_details_service
 from app.schemas.form import (

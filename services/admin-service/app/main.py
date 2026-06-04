@@ -13,7 +13,7 @@ from app.core.logging import setup_logging
 from app.core.middleware import setup_middleware
 from app.infrastructure.database.session import check_db_connection, create_tables
 from app.infrastructure.cache.redis_cache import redis_cache
-from app.infrastructure.mongodb.mongo_client import mongodb_client
+from app.infrastructure.mongodb.mongodb_admin import mongodb_client
 from app.api.v1.router import api_v1_router
 
 # Setup logging
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     try:
         logger.info("Initializing MongoDB connection...")
         mongodb_client.connect()
-        if not mongodb_client.db:
+        if mongodb_client.db is None:
             startup_errors.append("MongoDB connection failed")
             logger.error("MongoDB connection failed")
         else:

@@ -108,20 +108,20 @@ async def list_clients(
         total_pages=(total + size - 1) // size
     )
 
-@router.get("/{client_id}", response_model=ClientResponse)
-async def get_client(
-    client_id: UUID,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
-):
-    """Get client by ID"""
-    # Simplified without User model - allow access to any client
-    client = db.query(Client).filter(Client.client_id == client_id).first()
+# @router.get("/{client_id}", response_model=ClientResponse)
+# async def get_client(
+#     client_id: UUID,
+#     db: Session = Depends(get_db),
+#     current_user=Depends(get_current_user)
+# ):
+#     """Get client by ID"""
+#     # Simplified without User model - allow access to any client
+#     client = db.query(Client).filter(Client.client_id == client_id).first()
 
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+#     if not client:
+#         raise HTTPException(status_code=404, detail="Client not found")
 
-    return client
+#     return client
 
 @router.put("/{client_id}", response_model=ClientResponse)
 async def update_client(

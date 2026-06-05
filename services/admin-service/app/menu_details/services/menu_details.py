@@ -1,10 +1,10 @@
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.db.database import get_db
-from app.models.application import Application
-from app.models.modules import Module
-from .base_mongodb import BaseMongoService
+from app.infrastructure.database.session import get_db
+from app.applications.models.application import Application
+from app.modules.models.module import Module
+from .menu_details_mongodb import BaseMongoService
 
 class MenuDetailsService(BaseMongoService):
     """Service for managing menu details in MongoDB (hybrid storage with PostgreSQL)"""

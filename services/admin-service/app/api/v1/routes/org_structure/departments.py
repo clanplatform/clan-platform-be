@@ -6,7 +6,6 @@ from app.departments.models.departments import Department
 from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate, DepartmentResponse
 from app.departments.services import departments as department_service
 from app.core.security import get_current_user  # Uses optional auth support
-from app.models.user import User
 import uuid
 
 router = APIRouter()
@@ -18,7 +17,7 @@ def get_departments(
     entity_id: Optional[uuid.UUID] = None,
     parent_department_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Get all departments with pagination and optional filtering"""
     try:
@@ -48,7 +47,7 @@ def get_departments(
 def get_department(
     department_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Get a specific department by ID"""
     try:
@@ -71,33 +70,12 @@ def get_department(
             detail=f"Failed to get department: {str(e)}"
         )
 
-@router.get("/{department_id}/children", response_model=List[DepartmentResponse])
-def get_department_children(
-    department_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all child departments of a specific department"""
-    try:
-        children = department_service.get_departments_by_parent(
-            db, parent_department_id=department_id
-        )
-        return children
-        
-    except Exception as e:
-        print(f"Error getting department children: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get department children: {str(e)}"
-        )
 
 @router.post("/", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED)
 def create_department(
     department_data: DepartmentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Create a new department"""
     try:
@@ -129,7 +107,7 @@ def update_department(
     department_id: uuid.UUID,
     department_data: DepartmentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Update a department"""
     try:
@@ -157,7 +135,7 @@ def update_department(
 async def delete_department(
     department_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Soft delete department"""
     try:
@@ -197,7 +175,7 @@ def get_departments_by_client(
     entity_id: Optional[uuid.UUID] = None,
     parent_department_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Get all departments for a specific client (supports both entity-based and entity-less clients)"""
     try:

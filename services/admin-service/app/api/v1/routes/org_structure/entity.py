@@ -6,8 +6,6 @@ import os
 
 from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user  # Uses optional auth support
-# User model not in scope - commenting out for now
-# from app.models.user import User
 from app.entities.models.entity import Entity
 from app.clients.models.clients import Client
 from app.entities.schemas.entity import (
@@ -64,7 +62,7 @@ async def list_entities(
     entity_type: Optional[str] = Query(None),
     client_id: Optional[UUID] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """List all entities with pagination and filtering"""
     query = db.query(Entity).filter(
@@ -111,7 +109,7 @@ async def list_entities(
 async def get_entity(
     entity_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Get entity by ID"""
     query = db.query(Entity).filter(
@@ -140,7 +138,7 @@ async def update_entity(
     entity_id: UUID,
     entity_data: EntityUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Update entity"""
     query = db.query(Entity).filter(Entity.entity_id == entity_id)
@@ -173,7 +171,7 @@ async def update_entity(
 async def delete_entity(
     entity_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Soft delete entity"""
     query = db.query(Entity).filter(
@@ -213,61 +211,61 @@ async def delete_entity(
     
     return {"message": "Entity deleted successfully"}
 
-@router.get("/by-client/{client_id}", response_model=EntityListResponse)
-async def get_entities_by_client(
-    client_id: UUID,
-    page: int = Query(1, ge=1),
-    size: int = Query(10, ge=1, le=100),
-    entity_type: Optional[str] = Query(None),
-    include_inactive: bool = Query(False),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all entities for a specific client"""
-    # Check if client exists
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+# @router.get("/by-client/{client_id}", response_model=EntityListResponse)
+# async def get_entities_by_client(
+#     client_id: UUID,
+#     page: int = Query(1, ge=1),
+#     size: int = Query(10, ge=1, le=100),
+#     entity_type: Optional[str] = Query(None),
+#     include_inactive: bool = Query(False),
+#     db: Session = Depends(get_db),
+#     current_user = Depends(get_current_user)
+# ):
+#     """Get all entities for a specific client"""
+#     # Check if client exists
+#     client = db.query(Client).filter(Client.client_id == client_id).first()
+#     if not client:
+#         raise HTTPException(status_code=404, detail="Client not found")
     
-    # Check permissions - admin can access any client, users only their own
-    user_client_id = current_user.client_id
-    if not current_user.is_admin() and user_client_id != client_id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this client's entities")
+#     # Check permissions - admin can access any client, users only their own
+#     user_client_id = current_user.client_id
+#     if not current_user.is_admin() and user_client_id != client_id:
+#         raise HTTPException(status_code=403, detail="Not authorized to access this client's entities")
     
-    # Build query
-    query = db.query(Entity).filter(
-        Entity.client_id == client_id
-    )
+#     # Build query
+#     query = db.query(Entity).filter(
+#         Entity.client_id == client_id
+#     )
     
-    # Apply filters
-    if entity_type:
-        query = query.filter(Entity.entity_type == entity_type)
-    if not include_inactive:
-        query = query.filter(Entity.active == True)
+#     # Apply filters
+#     if entity_type:
+#         query = query.filter(Entity.entity_type == entity_type)
+#     if not include_inactive:
+#         query = query.filter(Entity.active == True)
     
-    # Get total count
-    total = query.count()
+#     # Get total count
+#     total = query.count()
     
-    # Sort by created_at in descending order (newest first - FILO)
-    query = query.order_by(Entity.created_at.desc())
+#     # Sort by created_at in descending order (newest first - FILO)
+#     query = query.order_by(Entity.created_at.desc())
     
-    # Apply pagination
-    entities = query.offset((page - 1) * size).limit(size).all()
+#     # Apply pagination
+#     entities = query.offset((page - 1) * size).limit(size).all()
     
-    return EntityListResponse(
-        entities=entities,
-        total=total,
-        page=page,
-        size=size,
-        pages=(total + size - 1) // size
-    )
+#     return EntityListResponse(
+#         entities=entities,
+#         total=total,
+#         page=page,
+#         size=size,
+#         pages=(total + size - 1) // size
+#     )
 
-@router.get("/hierarchy/{client_id}")
-async def get_entity_hierarchy(
-    client_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
+# @router.get("/hierarchy/{client_id}")
+# async def get_entity_hierarchy(
+#     client_id: UUID,
+#     db: Session = Depends(get_db),
+#     current_user = Depends(get_current_user)
+# ):
     """Get list of entities for a specific client"""
     # Check if client exists
     client = db.query(Client).filter(Client.client_id == client_id).first()
@@ -302,54 +300,3 @@ async def get_entity_hierarchy(
         "total_entities": len(entities),
         "entities": entity_list
     }
-
-@router.get("/stats/{client_id}")
-async def get_entity_stats(client_id: UUID, db: Session = Depends(get_db)):
-    """
-    Get entity statistics for a specific client
-    """
-    try:
-        # Get client
-        client = db.query(Client).filter(Client.client_id == client_id).first()
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
-
-        # Get all entities for the client
-        entities = db.query(Entity).filter(Entity.client_id == client_id).all()
-
-        # Calculate statistics
-        total = len(entities)
-        active = len([e for e in entities if e.active])
-
-        return {
-            "client_id": client_id,
-            "total_entities": total,
-            "active_entities": active,
-            "inactive_entities": total - active
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-def validate_client_ownership(entity_id: UUID, client_id: UUID, db: Session) -> bool:
-    """
-    Validate that the entity belongs to the specified client
-    """
-    entity = db.query(Entity).filter(Entity.entity_id == entity_id).first()
-    return entity and entity.client_id == client_id
-    
-    # Get total count
-    total = query.count()
-    
-    # Sort by created_at in descending order (newest first - FILO)
-    query = query.order_by(Entity.created_at.desc())
-    
-    # Apply pagination
-    entities = query.offset((page - 1) * size).limit(size).all()
-    
-    return EntityListResponse(
-        entities=entities,
-        total=total,
-        page=page,
-        size=size,
-        pages=(total + size - 1) // size
-    )

@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.infrastructure.database.session import get_db
-from app.services.modules import ModuleService
-from app.schemas.modules import (
+from app.modules.services.module import ModuleService
+from app.modules.schemas.module import (
     ModuleCreate,
     ModuleUpdate,
     ModuleResponse,
@@ -14,14 +14,6 @@ import math
 
 router = APIRouter()
 
-@router.get("/health")
-async def modules_health_check():
-    """Health check endpoint for modules service"""
-    return {
-        "status": "ok",
-        "service": "modules",
-        "timestamp": datetime.now().isoformat()
-    }
 
 @router.post(
     "/",
@@ -142,31 +134,6 @@ async def get_modules(
         )
 
 @router.get(
-    "/{module_id}",
-    response_model=ModuleResponse,
-    summary="Get a module by ID",
-    description="Retrieve a specific module by its ID"
-)
-async def get_module(
-    module_id: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific module by ID.
-    
-    - **module_id**: The UUID of the module to retrieve
-    """
-    
-    module = ModuleService.get_module(db, module_id)
-    if not module:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Module with ID {module_id} not found"
-        )
-    
-    return module
-
-@router.get(
     "/application/{application_id}",
     response_model=List[ModuleResponse],
     summary="Get modules by application ID",
@@ -193,55 +160,6 @@ async def get_modules_by_application(
             detail=f"Failed to retrieve modules for application: {str(e)}"
         )
 
-@router.get(
-    "/code/{code}",
-    response_model=ModuleResponse,
-    summary="Get a module by code",
-    description="Retrieve a specific module by its unique code"
-)
-async def get_module_by_code(
-    code: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific module by its unique code.
-    
-    - **code**: The unique code of the module to retrieve
-    """
-    
-    module = ModuleService.get_module_by_code(db, code)
-    if not module:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Module with code '{code}' not found"
-        )
-    
-    return module
-
-@router.get(
-    "/key/{key}",
-    response_model=ModuleResponse,
-    summary="Get a module by key",
-    description="Retrieve a specific module by its unique key"
-)
-async def get_module_by_key(
-    key: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific module by its unique key.
-    
-    - **key**: The unique key of the module to retrieve
-    """
-    
-    module = ModuleService.get_module_by_key(db, key)
-    if not module:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Module with key '{key}' not found"
-        )
-    
-    return module
 
 @router.put(
     "/{module_id}",
@@ -324,72 +242,7 @@ async def delete_module(
             detail=f"Module with ID {module_id} not found"
         )
 
-@router.patch(
-    "/{module_id}/activate",
-    response_model=ModuleResponse,
-    summary="Activate a module",
-    description="Activate a deactivated module"
-)
-async def activate_module(
-    module_id: str,
-    db: Session = Depends(get_db),
-    activated_by: Optional[int] = Query(None, description="User ID who is activating the module")
-):
-    """
-    Activate a module.
-    
-    - **module_id**: The UUID of the module to activate
-    - **activated_by**: User ID who is performing the activation
-    """
-    
-    module = ModuleService.activate_module(db, module_id, activated_by)
-    if not module:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Module with ID {module_id} not found"
-        )
-    
-    return module
 
-@router.patch(
-    "/{module_id}/deactivate",
-    response_model=ModuleResponse,
-    summary="Deactivate a module",
-    description="Deactivate an active module"
-)
-async def deactivate_module(
-    module_id: str,
-    db: Session = Depends(get_db),
-    deactivated_by: Optional[int] = Query(None, description="User ID who is deactivating the module")
-):
-    """
-    Deactivate a module.
-    
-    - **module_id**: The UUID of the module to deactivate
-    - **deactivated_by**: User ID who is performing the deactivation
-    """
-    
-    module = ModuleService.deactivate_module(db, module_id, deactivated_by)
-    if not module:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Module with ID {module_id} not found"
-        )
-    
-    return module
-
-@router.patch(
-    "/application/{application_id}/reorder",
-    status_code=status.HTTP_200_OK,
-    summary="Reorder modules within an application",
-    description="Update the order_index of multiple modules within an application"
-)
-async def reorder_modules(
-    application_id: str,
-    module_orders: List[dict],
-    db: Session = Depends(get_db),
-    updated_by: Optional[int] = Query(None, description="User ID who is reordering the modules")
-):
     """
     Reorder modules within an application.
     

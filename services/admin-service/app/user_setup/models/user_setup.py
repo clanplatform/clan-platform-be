@@ -54,9 +54,6 @@ class UserSetupBasic(Base):
     end_date = Column(Date, nullable=True)
     tem_employee = Column(Boolean, default=False, nullable=False)  # Temporary employee flag
 
-    # Multi-tenancy
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="SET NULL"), nullable=True)
-
     # Organizational Structure - Foreign Keys
     department = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
     division = Column(UUID(as_uuid=True), ForeignKey("divisions.id"), nullable=True)
@@ -82,7 +79,6 @@ class UserSetupBasic(Base):
 
     # Relationships
     user_setup = relationship("UserSetup", back_populates="basic")
-    tenant = relationship("Tenant", foreign_keys=[tenant_id])
     department_rel = relationship("Department", foreign_keys=[department])
     default_dept_rel = relationship("Department", foreign_keys=[default_dept])
     division_rel = relationship("Division", foreign_keys=[division])

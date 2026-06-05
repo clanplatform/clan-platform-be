@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.middleware import setup_middleware
 from app.infrastructure.database.session import check_db_connection, create_tables
-from app.infrastructure.cache.redis_cache import redis_cache
+from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.mongodb.mongodb_admin import mongodb_client
 from app.api.v1.router import api_v1_router
 
@@ -47,14 +47,12 @@ async def lifespan(app: FastAPI):
     # Initialize Redis connection
     try:
         logger.info("Initializing Redis connection...")
-        if not redis_cache.client:
-            startup_errors.append("Redis connection failed")
-            logger.error("Redis connection failed")
+        if not redis_cache.is_available():
+            logger.warning("Redis connection not available - continuing without cache")
         else:
             logger.info("Redis connection established successfully")
     except Exception as e:
-        startup_errors.append(f"Redis initialization error: {e}")
-        logger.error(f"Redis initialization error: {e}", exc_info=True)
+        logger.warning(f"Redis initialization error: {e} - continuing without cache")
     
     # Initialize MongoDB connection
     try:
@@ -82,8 +80,9 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Admin Service...")
     
     try:
-        redis_cache.close()
-        logger.info("Redis connection closed")
+        if redis_cache.redis_client:
+            redis_cache.redis_client.close()
+            logger.info("Redis connection closed")
     except Exception as e:
         logger.error(f"Error closing Redis connection: {e}")
     

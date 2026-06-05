@@ -4,11 +4,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text, and_
 from datetime import datetime, timezone
 from app.infrastructure.database.session import get_db
-from app.models.menu import Menu
-from app.models.application import Application
-from app.models.modules import Module
-from app.schemas.menu import MenuCreate, MenuUpdate, MenuResponse, MenuBatchCreate
-from app.schemas.menu_reorder import (
+from app.menus.models.menu import Menu
+from app.applications.models.application import Application
+from app.modules.models.module import Module
+from app.menus.schemas.menu import MenuCreate, MenuUpdate, MenuResponse, MenuBatchCreate
+from app.menu_reorder.schemas.menu_reorder import (
     MenuReorderRequest,
     MenuReorderResponse,
     MenuReorderItem,
@@ -17,20 +17,19 @@ from app.schemas.menu_reorder import (
     MenuBatchUpdateResponse,
     MenuBatchUpdateItem
 )
-from app.schemas.navigation import create_navigation_item, validate_navigation_item  # ✅ Import validation helpers
-from app.core.security import get_current_user, get_current_user_id, verify_token  # Uses optional auth support
+from app.menu_navigation.schemas.menu_navigation import create_navigation_item, validate_navigation_item  # ✅ Import validation helpers
+from app.core.security import get_current_user, get_current_user_id  # Uses optional auth support
 from app.core.config import settings
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.models.user import User
-from app.services.menu_details import menu_details_service
-from app.services.menu_reorder_service import MenuReorderService
-from app.services.menu_cleanup_service import menu_cleanup_service
-from app.services.redis_cache import redis_cache
-from app.models.menu_language import MenuLanguage
+from app.menu_details.services.menu_details import menu_details_service
+from app.menu_reorder.services.menu_reorder import MenuReorderService
+from app.menu_soft_delete.services.menu_soft_delete import menu_cleanup_service
+from app.infrastructure.redis_cache.redis_cache import redis_cache
+# from app.models.menu_language import MenuLanguage
 from bson import ObjectId
-from app.core.mongodb import get_mongodb
-from app.models.user_setup import UserSetupBasic, UserSetupRolesEntity
-from app.models.user_role import UserRolePermission
+from app.infrastructure.mongodb import get_mongodb
+from app.user_setup.models.user_setup import UserSetupBasic, UserSetupRolesEntity
+from app.user_role.models.user_role import UserRolePermission
 import uuid
 from uuid import UUID
 import logging
@@ -382,7 +381,7 @@ async def working_sync_to_mongodb(db: Session, application_id: UUID) -> bool:
 async def get_menus(
     lang_code: Optional[str] = Query(None, description="Language code for menu translations (e.g., 'en', 'es', 'fr')"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     Gets entire mainNavigation with all menu details from MongoDBs.
@@ -1240,7 +1239,7 @@ async def _filter_menu_by_permissions(
 @router.get("/structured-hierarchy")
 async def get_structured_navigation_hierarchy(
     nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     Get structured navigation hierarchy: Applications -> Modules -> Menus -> Nested Menus
@@ -1520,7 +1519,7 @@ async def create_menu(
     menu_data: Union[MenuCreate, MenuBatchCreate],
     nav_doc_id: Optional[str] = Query("69074724f217ab8fcb2e3b24", description="Mongo navigation doc ObjectId (defaults to known id)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     Create menu(s) with structured hierarchy support: Applications -> Modules -> Menus -> Nested Menus
@@ -1569,7 +1568,7 @@ async def create_single_menu_structured(
     menu_data: MenuCreate,
     nav_doc_id: str,
     db: Session,
-    current_user: User
+    current_user
 ) -> MenuResponse:
     """
     Create a single menu with structured hierarchy support
@@ -2158,7 +2157,7 @@ async def create_menus_batch_structured(
     batch_data: MenuBatchCreate,
     nav_doc_id: str,
     db: Session,
-    current_user: User
+    current_user
 ):
     """
     Create multiple menus in batch with structured hierarchy support
@@ -2197,7 +2196,7 @@ async def create_single_menu(
     menu_data: MenuCreate,
     nav_doc_id: str,
     db: Session,
-    current_user: User
+    current_user
 ) -> MenuResponse:
     try:
         print(f"[Menu Create] 🚀 Starting menu creation")
@@ -2651,7 +2650,7 @@ async def create_menus_batch(
     batch_data: MenuBatchCreate,
     nav_doc_id: str,
     db: Session,
-    current_user: User
+    current_user
 ) -> Dict[str, Any]:
     """
     Create multiple parent menus with nested children in one request.
@@ -2968,7 +2967,7 @@ async def update_menu(
     menu_data: MenuUpdate,
     nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     ✅ SIMPLIFIED: Update menu in PostgreSQL and MongoDB
@@ -3243,7 +3242,7 @@ async def update_menu(
 async def delete_menu(
     menu_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     Soft delete a menu and all its children recursively.

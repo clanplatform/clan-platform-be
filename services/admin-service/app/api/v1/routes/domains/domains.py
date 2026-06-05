@@ -7,7 +7,7 @@ from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainResponse
 from app.core.security import get_current_user_id
 from app.core.config import settings
-from app.infrastructure.cache.redis_cache import redis_cache
+from app.infrastructure.redis_cache.redis_cache import redis_cache
 
 # Disable internal trailing-slash redirects for this router
 router = APIRouter(redirect_slashes=False)

@@ -8,7 +8,7 @@ from app.applications.schemas.application import ApplicationCreate, ApplicationU
 from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
-from app.infrastructure.cache.redis_cache import redis_cache
+from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.mongodb.mongodb_admin import get_mongodb
 from bson import ObjectId
 import uuid

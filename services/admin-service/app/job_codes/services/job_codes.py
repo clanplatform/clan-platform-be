@@ -12,8 +12,8 @@ from typing import List, Optional, Tuple
 from uuid import UUID
 from datetime import datetime
 
-from app.models.job_code import JobCode, JobCodeBasicInfo, JobCodeSkills, JobCodeBenefits
-from app.schemas.job_code import JobCodeCreate, JobCodeUpdate
+from app.job_codes.models.job_codes import JobCode, JobCodeBasicInfo, JobCodeSkills, JobCodeBenefits
+from app.job_codes.schemas.job_codes import JobCodeCreate, JobCodeUpdate
 
 
 def get_job_code_by_id(db: Session, job_code_id: UUID, load_relationships: bool = True) -> Optional[JobCode]:

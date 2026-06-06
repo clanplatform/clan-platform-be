@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
 from app.menus.models.menu import Menu
 from app.forms.models.forms import Form
-from app.schemas.user_role import (
+from app.user_role.schemas.user_role import (
     UserRoleBasicCreate,
     UserRoleBasicUpdate,
     UserRolePermissionCreate,

@@ -4,6 +4,7 @@ Application configuration management
 from pydantic_settings import BaseSettings
 from typing import Optional
 from functools import lru_cache
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -42,7 +43,8 @@ class Settings(BaseSettings):
     KAFKA_TOPIC_PREFIX: str = "admin-service"
     
     class Config:
-        env_file = ".env"
+        # Path to .env.local in config/environments directory (relative to project root)
+        env_file = Path(__file__).parent.parent.parent.parent.parent / "config" / "environments" / ".env.local"
         case_sensitive = True
 
 

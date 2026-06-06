@@ -11,6 +11,10 @@ from app.api.v1.routes.org_structure.divisions import router as division_router
 from app.api.v1.routes.org_structure.job_codes import router as job_code_router
 from app.api.v1.routes.navigation.module import router as modules_router
 from app.api.v1.routes.navigation.menu import router as menus_router
+from app.api.v1.routes.forms.forms import router as forms_router
+from app.api.v1.routes.navigation.menu_language import router as menus_language_router
+from app.api.v1.routes.forms.form_language import router as forms_language_router
+from app.api.v1.routes.access_control.user_role import router as user_role_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -40,6 +44,27 @@ api_v1_router.include_router(
     menus_router,
     prefix="/menus",
     tags=["menus"]
+)
+
+# Include menus_language routes
+api_v1_router.include_router(
+    menus_language_router,
+    prefix="/menus_language",
+    tags=["menus_language"]
+)
+
+# Include forms routes
+api_v1_router.include_router(
+    forms_router,
+    prefix="/forms",
+    tags=["forms"]
+)
+
+# Include forms_language routes
+api_v1_router.include_router(
+    forms_language_router,
+    prefix="/forms_language",
+    tags=["forms_language"]
 )
 
 #include client routes
@@ -75,4 +100,11 @@ api_v1_router.include_router(
     job_code_router,
     prefix="/job_codes",
     tags=["job_codes"]
+)
+
+#include user_role routes
+api_v1_router.include_router(
+    user_role_router,
+    prefix="/user_role",
+    tags=["user_role"]
 )

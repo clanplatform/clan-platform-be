@@ -3,11 +3,11 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from uuid import UUID
-from app.models.menu_language import MenuLanguage
-from app.models.application import Application
-from app.models.modules import Module
-from app.models.menu import Menu
-from app.schemas.menu_language import MenuLanguageCreate, MenuLanguageUpdate
+from app.menu_language.models.menu_language import MenuLanguage
+from app.applications.models.application import Application
+from app.modules.models.module import Module
+from app.menus.models.menu import Menu
+from app.menu_language.schemas.menu_language import MenuLanguageCreate, MenuLanguageUpdate
 
 
 class MenuLanguageService:

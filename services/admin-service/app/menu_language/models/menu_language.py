@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, text
+from sqlalchemy import Column, String, DateTime, Integer, Sequence
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.infrastructure.database.base import Base
@@ -9,7 +9,7 @@ class MenuLanguage(Base):
     __tablename__ = "menu_languages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    sino = Column(Integer, autoincrement=True, unique=True, nullable=False, server_default=text("nextval('menu_languages_sino_seq'::regclass)"))
+    sino = Column(Integer, Sequence('menu_languages_sino_seq'), unique=True, nullable=False)
     lang_code = Column(String(10), nullable=False, index=True)
     language = Column(String(100), nullable=False)  # Language name (e.g., 'Spanish', 'Tamil')
     translated_name = Column(String(255), nullable=False, index=True)  # The actual translated text

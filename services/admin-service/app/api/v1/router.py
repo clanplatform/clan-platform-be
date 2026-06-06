@@ -15,6 +15,7 @@ from app.api.v1.routes.forms.forms import router as forms_router
 from app.api.v1.routes.navigation.menu_language import router as menus_language_router
 from app.api.v1.routes.forms.form_language import router as forms_language_router
 from app.api.v1.routes.access_control.user_role import router as user_role_router
+from app.api.v1.routes.access_control.user_setup import router as user_setup_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -107,4 +108,11 @@ api_v1_router.include_router(
     user_role_router,
     prefix="/user_role",
     tags=["user_role"]
+)
+
+#include user_setup routes
+api_v1_router.include_router(
+    user_setup_router,
+    prefix="/user_setup",
+    tags=["user_setup"]
 )

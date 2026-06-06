@@ -14,16 +14,7 @@ from app.form_language.schemas.form_language import (
 from app.form_language.services.form_language import FormLanguageService
 from app.core.security import get_current_user
 
-router = APIRouter(
-    tags=["Form Languages"],
-    responses={
-        401: {"description": "Unauthorized - Invalid or missing authentication token"},
-        403: {"description": "Forbidden - Insufficient permissions"},
-        404: {"description": "Not Found - Resource does not exist"},
-        422: {"description": "Validation Error - Invalid request data"},
-        500: {"description": "Internal Server Error"}
-    }
-)
+router = APIRouter()
 
 
 @router.post(

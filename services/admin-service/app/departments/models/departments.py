@@ -19,7 +19,7 @@ class Department(Base):
     department_type = Column(String(50), nullable=True)
     cost_center = Column(String(50), nullable=True)
     budget_info = Column(JSON, default=dict)
-    manager_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True)
+    manager_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint to non-existent users table
     location = Column(String(255), nullable=False)
     phone = Column(String(20), nullable=False)
     email = Column(String(255), nullable=False)
@@ -40,7 +40,6 @@ class Department(Base):
     divisions = relationship("Division", back_populates="department")
     parent_department = relationship("Department", remote_side=[department_id], foreign_keys=[parent_department_id])
     child_departments = relationship("Department", foreign_keys=[parent_department_id], overlaps="parent_department")
-    user_departments = relationship("UserDepartment", back_populates="department")
     
     def __repr__(self):
         return f"<Department(id={self.department_id}, name={self.department_name}, entity_id={self.entity_id})>"
@@ -49,7 +48,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     log_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True)
+    user_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint to non-existent users table
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
     entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
     action = Column(String(100), nullable=False)
@@ -65,7 +64,6 @@ class AuditLog(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
-    user = relationship("User")
     client = relationship("Client")
     entity = relationship("Entity")
     

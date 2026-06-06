@@ -5,7 +5,6 @@ from uuid import UUID
 from app.infrastructure.database.session import get_db
 from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainResponse
-from app.core.security import get_current_user_id
 from app.core.config import settings
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 
@@ -19,8 +18,7 @@ async def get_domains(
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_id)
+    db: Session = Depends(get_db)
 ):
     """Get all domains with pagination, sorted by newest first (FILO)"""
     # Create cache key based on query parameters
@@ -70,8 +68,7 @@ async def get_domains(
 @router.get("/{domain_id}", response_model=DomainResponse)
 async def get_domain(
     domain_id: UUID,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_id)
+    db: Session = Depends(get_db)
 ):
     """Get a specific domain by ID"""
     # Try to get from cache
@@ -107,8 +104,7 @@ async def get_domain(
 @router.post("", response_model=DomainResponse)
 async def create_domain(
     domain: DomainCreate,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_id)
+    db: Session = Depends(get_db)
 ):
     """Create a new domain"""
     # Check if domain name already exists
@@ -165,8 +161,7 @@ async def create_domain(
 async def update_domain(
     domain_id: UUID,
     domain: DomainUpdate,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_id)
+    db: Session = Depends(get_db)
 ):
     """Update a domain"""
     # Get existing domain
@@ -228,8 +223,7 @@ async def update_domain(
 @router.delete("/{domain_id}")
 async def delete_domain(
     domain_id: UUID,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_id)
+    db: Session = Depends(get_db)
 ):
     """Soft delete a domain and all related applications"""
     domain = db.query(Domain).filter(Domain.id == domain_id, Domain.is_deleted == False).first()

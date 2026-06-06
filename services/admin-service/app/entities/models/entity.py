@@ -35,8 +35,6 @@ class Entity(Base):
     client = relationship("Client", back_populates="entities")
     departments = relationship("Department", back_populates="entity")
     divisions = relationship("Division", back_populates="entity")
-    user_entities = relationship("UserEntity", back_populates="entity")
-    timezone_config = relationship("EntityTimezoneConfig", back_populates="entity", uselist=False)
 
     def __repr__(self):
         return f"<Entity(id={self.entity_id}, name={self.entity_name}, client_id={self.client_id})>"

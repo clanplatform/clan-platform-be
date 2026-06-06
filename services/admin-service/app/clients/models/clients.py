@@ -33,7 +33,6 @@ class Client(Base):
 
     # Relationships
     entities = relationship("Entity", back_populates="client")
-    users = relationship("User", back_populates="client", foreign_keys="[User.client_id]")
 
     def __repr__(self):
         return f"<Client(client_name='{self.client_name}', is_active='{self.is_active}')>"

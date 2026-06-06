@@ -19,6 +19,7 @@ hiredis==2.3.2
 # Validation & Serialization
 pydantic==2.6.1
 pydantic-settings==2.1.0
+email-validator==2.1.0
 
 # Authentication & Security
 python-jose[cryptography]==3.3.0

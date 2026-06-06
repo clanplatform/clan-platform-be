@@ -35,6 +35,7 @@ class Application(Base):
 
     # Relationships
     domain = relationship("Domain", back_populates="applications")
+    modules = relationship("Module", back_populates="application", cascade="all, delete-orphan")
     menus = relationship("Menu", back_populates="application", cascade="all, delete-orphan")
     
     def __repr__(self):

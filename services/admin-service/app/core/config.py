@@ -46,6 +46,7 @@ class Settings(BaseSettings):
         # Path to .env.local in config/environments directory (relative to project root)
         env_file = Path(__file__).parent.parent.parent.parent.parent / "config" / "environments" / ".env.local"
         case_sensitive = True
+        extra = "ignore"  # Ignore extra fields in .env file
 
 
 @lru_cache()

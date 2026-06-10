@@ -172,13 +172,10 @@ class UserRoleService:
             menu_ids = [item.id for item in permission_data.menu_permissions]
             UserRoleService._verify_menus_exist(db, menu_ids)
 
-        # Verify form permissions - each item now has a single ID
-        if permission_data.form_permissions:
-            form_ids = [item.id for item in permission_data.form_permissions]
-            UserRoleService._verify_forms_exist(db, form_ids)
+        # Form permissions removed - not needed
 
         # Convert Pydantic models to dict for JSONB storage
-        # Store with individual access fields (menu_access, form_access)
+        # Store with individual access fields (menu_access)
         menu_perms = []
         for item in (permission_data.menu_permissions or []):
             perm_dict = {"id": item.id}
@@ -190,28 +187,18 @@ class UserRoleService:
                 perm_dict["access"] = item.menu_access
             menu_perms.append(perm_dict)
         
-        form_perms = []
-        for item in (permission_data.form_permissions or []):
-            perm_dict = {"id": item.id}
-            if item.application_id:
-                perm_dict["application_id"] = item.application_id
-            if item.modules_id:
-                perm_dict["modules_id"] = item.modules_id
-            if item.form_access:
-                perm_dict["access"] = item.form_access
-            form_perms.append(perm_dict)
+        # Form permissions removed - not needed
         
-        # Calculate the highest access level for each type
+        # Calculate the highest access level for menus
         menu_access_level = UserRoleService._calculate_highest_access(menu_perms)
-        form_access_level = UserRoleService._calculate_highest_access(form_perms)
         
         db_permission = UserRolePermission(
             user_role_id=user_role_id,  # Use the auto-fetched user_role_id
             userrole_basic_id=permission_data.userrole_basic_id,
             menu_permissions=menu_perms,
-            form_permissions=form_perms,
+            # form_permissions removed
             menu_access=menu_access_level,
-            form_access=form_access_level
+            # form_access removed
         )
         db.add(db_permission)
         db.commit()
@@ -263,22 +250,7 @@ class UserRoleService:
                 menu_perms.append(perm_dict)
             update_data["menu_permissions"] = menu_perms
 
-        # Verify form permissions if being updated - each item has a single ID
-        if "form_permissions" in update_data and update_data["form_permissions"]:
-            form_ids = [item.id for item in permission_data.form_permissions]
-            UserRoleService._verify_forms_exist(db, form_ids)
-            # Convert to dict with individual access fields
-            form_perms = []
-            for item in permission_data.form_permissions:
-                perm_dict = {"id": item.id}
-                if item.application_id:
-                    perm_dict["application_id"] = item.application_id
-                if item.modules_id:
-                    perm_dict["modules_id"] = item.modules_id
-                if item.form_access:
-                    perm_dict["access"] = item.form_access
-                form_perms.append(perm_dict)
-            update_data["form_permissions"] = form_perms
+        # Form permissions removed - not needed
 
         for field, value in update_data.items():
             setattr(db_permission, field, value)
@@ -405,10 +377,7 @@ class UserRoleService:
                         menu_ids = [item.id for item in perm_data.menu_permissions]
                         UserRoleService._verify_menus_exist(db, menu_ids)
 
-                    # Verify form permissions - each item has a single ID
-                    if perm_data.form_permissions:
-                        form_ids = [item.id for item in perm_data.form_permissions]
-                        UserRoleService._verify_forms_exist(db, form_ids)
+                    # Form permissions removed - not needed
 
                     # Convert Pydantic models to dict for JSONB storage
                     menu_perms = []
@@ -422,28 +391,18 @@ class UserRoleService:
                             perm_dict["access"] = item.menu_access
                         menu_perms.append(perm_dict)
                     
-                    form_perms = []
-                    for item in (perm_data.form_permissions or []):
-                        perm_dict = {"id": item.id}
-                        if item.application_id:
-                            perm_dict["application_id"] = item.application_id
-                        if item.modules_id:
-                            perm_dict["modules_id"] = item.modules_id
-                        if item.form_access:
-                            perm_dict["access"] = item.form_access
-                        form_perms.append(perm_dict)
+                    # Form permissions removed - not needed
                     
-                    # Calculate the highest access level for each type
+                    # Calculate the highest access level for menus
                     menu_access_level = UserRoleService._calculate_highest_access(menu_perms)
-                    form_access_level = UserRoleService._calculate_highest_access(form_perms)
 
                     db_permission = UserRolePermission(
                         user_role_id=db_user_role_main.id,
                         userrole_basic_id=db_role.id,
                         menu_permissions=menu_perms,
-                        form_permissions=form_perms,
+                        # form_permissions removed
                         menu_access=menu_access_level,
-                        form_access=form_access_level
+                        # form_access removed
                     )
                     db.add(db_permission)
                     db.flush()  # Get the permission ID
@@ -454,9 +413,9 @@ class UserRoleService:
                     user_role_id=db_user_role_main.id,
                     userrole_basic_id=db_role.id,
                     menu_permissions=[],
-                    form_permissions=[],
+                    # form_permissions removed
                     menu_access='disable',
-                    form_access='disable'
+                    # form_access removed
                 )
                 db.add(db_permission)
                 db.flush()  # Get the permission ID
@@ -531,24 +490,15 @@ class UserRoleService:
                             perm_dict["access"] = item.menu_access
                         menu_perms.append(perm_dict)
                     
-                    form_perms = []
-                    for item in (perm_data.form_permissions or []):
-                        perm_dict = {"id": item.id}
-                        if hasattr(item, 'application_id') and item.application_id:
-                            perm_dict["application_id"] = item.application_id
-                        if hasattr(item, 'modules_id') and item.modules_id:
-                            perm_dict["modules_id"] = item.modules_id
-                        if hasattr(item, 'form_access') and item.form_access:
-                            perm_dict["access"] = item.form_access
-                        form_perms.append(perm_dict)
+                    # Form permissions removed - not needed
 
                     db_permission = UserRolePermission(
                         user_role_id=db_role.user_role_id,
                         userrole_basic_id=db_role.id,
                         menu_permissions=menu_perms,
-                        form_permissions=form_perms,
+                        # form_permissions removed
                         menu_access=menu_perms,
-                        form_access=form_perms
+                        # form_access removed
                     )
                     db.add(db_permission)
 
@@ -763,29 +713,7 @@ class UserRoleService:
     @staticmethod
     def create_user_role_permission(db: Session, permission_data: Dict[str, Any]) -> UserRolePermission:
         """Create a new user role permission from dict data"""
-        # Convert form_permissions if present
-        form_perms = []
-        if "form_permissions" in permission_data and permission_data["form_permissions"]:
-            for item in permission_data["form_permissions"]:
-                if isinstance(item, dict):
-                    perm_dict = {"id": item.get("id")}
-                    if item.get("application_id"):
-                        perm_dict["application_id"] = item["application_id"]
-                    if item.get("modules_id"):
-                        perm_dict["modules_id"] = item["modules_id"]
-                    if item.get("form_access"):
-                        perm_dict["access"] = item["form_access"]
-                    form_perms.append(perm_dict)
-                else:
-                    # Handle Pydantic model
-                    perm_dict = {"id": item.id}
-                    if hasattr(item, 'application_id') and item.application_id:
-                        perm_dict["application_id"] = item.application_id
-                    if hasattr(item, 'modules_id') and item.modules_id:
-                        perm_dict["modules_id"] = item.modules_id
-                    if hasattr(item, 'form_access') and item.form_access:
-                        perm_dict["access"] = item.form_access
-                    form_perms.append(perm_dict)
+        # Form permissions removed - not needed
         
         # Convert menu_permissions if present
         menu_perms = []
@@ -811,17 +739,16 @@ class UserRoleService:
                         perm_dict["access"] = item.menu_access
                     menu_perms.append(perm_dict)
         
-        # Calculate highest access levels
+        # Calculate highest access level for menus
         menu_access_level = UserRoleService._calculate_highest_access(menu_perms)
-        form_access_level = UserRoleService._calculate_highest_access(form_perms)
         
         db_permission = UserRolePermission(
             user_role_id=permission_data["user_role_id"],
             userrole_basic_id=permission_data["userrole_basic_id"],
             menu_permissions=menu_perms,
-            form_permissions=form_perms,
+            # form_permissions removed
             menu_access=menu_access_level,
-            form_access=form_access_level
+            # form_access removed
         )
         db.add(db_permission)
         db.commit()
@@ -842,32 +769,7 @@ class UserRoleService:
         if not db_permission:
             return None
         
-        # Convert form_permissions if present
-        if "form_permissions" in update_data:
-            form_perms = []
-            for item in (update_data["form_permissions"] or []):
-                if isinstance(item, dict):
-                    perm_dict = {"id": item.get("id")}
-                    if item.get("application_id"):
-                        perm_dict["application_id"] = item["application_id"]
-                    if item.get("modules_id"):
-                        perm_dict["modules_id"] = item["modules_id"]
-                    if item.get("form_access"):
-                        perm_dict["access"] = item["form_access"]
-                    form_perms.append(perm_dict)
-                else:
-                    # Handle Pydantic model
-                    perm_dict = {"id": item.id}
-                    if hasattr(item, 'application_id') and item.application_id:
-                        perm_dict["application_id"] = item.application_id
-                    if hasattr(item, 'modules_id') and item.modules_id:
-                        perm_dict["modules_id"] = item.modules_id
-                    if hasattr(item, 'form_access') and item.form_access:
-                        perm_dict["access"] = item.form_access
-                    form_perms.append(perm_dict)
-            
-            db_permission.form_permissions = form_perms
-            db_permission.form_access = UserRoleService._calculate_highest_access(form_perms)
+        # Form permissions removed - not needed
         
         # Convert menu_permissions if present
         if "menu_permissions" in update_data:

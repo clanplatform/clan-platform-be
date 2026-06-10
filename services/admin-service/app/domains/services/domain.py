@@ -2,8 +2,8 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from typing import List, Optional
 
-from app.models.domain import Domain
-from app.schemas.domain import DomainCreate, DomainUpdate
+from app.domains.models.domain import Domain
+from app.domains.schemas.domain import DomainCreate, DomainUpdate
 from app.core.hybrid_encryption import hybrid_encryption
 
 def get_domain(db: Session, domain_id: int) -> Optional[Domain]:

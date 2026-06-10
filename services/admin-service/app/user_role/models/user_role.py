@@ -23,6 +23,7 @@ class UserRoleMain(Base):
     basic = relationship("UserRoleBasic", back_populates="user_role_main", cascade="all, delete-orphan", uselist=False)
     permissions = relationship("UserRolePermission", back_populates="user_role_main", cascade="all, delete-orphan")
     conditionals = relationship("UserRoleConditional", back_populates="user_role_main", cascade="all, delete-orphan")
+    form_permissions = relationship("RoleFormPermission", back_populates="user_role", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRoleMain(id={self.id})>"
@@ -52,6 +53,7 @@ class UserRoleBasic(Base):
 
     # Relationships
     user_role_main = relationship("UserRoleMain", back_populates="basic")
+    form_permissions = relationship("RoleFormPermission", back_populates="userrole_basic", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRoleBasic(id={self.id}, role_name={self.role_name}, role_code={self.role_code}, active={self.active})>"
@@ -84,6 +86,7 @@ class UserRolePermission(Base):
     # Relationships
     user_role_main = relationship("UserRoleMain", back_populates="permissions")
     userrole_basic = relationship("UserRoleBasic", backref="permissions")
+    role_form_permissions = relationship("RoleFormPermission", back_populates="userrole_permission", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRolePermission(id={self.id}, userrole_basic_id={self.userrole_basic_id}, menu_access={self.menu_access})>"

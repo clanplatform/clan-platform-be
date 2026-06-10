@@ -3,8 +3,8 @@ from fastapi import HTTPException
 from typing import List, Optional
 from uuid import UUID
 
-from app.models.entity import Entity
-from app.schemas.entity import EntityCreate, EntityUpdate
+from app.entities.models.entity import Entity
+from app.entities.schemas.entity import EntityCreate, EntityUpdate
 from app.core.hybrid_encryption import hybrid_encryption
 
 def get_entity(db: Session, entity_id: int) -> Optional[Entity]:
@@ -52,7 +52,7 @@ def create_entity(db: Session, entity: EntityCreate) -> Entity:
         raise HTTPException(status_code=400, detail="Entity code already registered")
 
     # Verify client exists
-    from app.crud.client import get_client
+    from app.clients.services.clients import get_client
     client = get_client(db, entity.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")

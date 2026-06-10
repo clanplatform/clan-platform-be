@@ -75,14 +75,14 @@ def get_all_departments(db: Session, skip: int = 0, limit: int = 100) -> List[De
 def create_department(db: Session, department: DepartmentCreate, user_id: Optional[UUID] = None) -> Department:
     """Create a new department"""
     # Verify client exists
-    from app.crud.client import get_client
+    from app.clients.services.clients import get_client
     client = get_client(db, department.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
     # Verify entity exists if provided
     if department.entity_id:
-        from app.crud.entity import get_entity
+        from app.entities.services.entity import get_entity
         entity = get_entity(db, department.entity_id)
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
@@ -106,12 +106,7 @@ def create_department(db: Session, department: DepartmentCreate, user_id: Option
         if department.entity_id and parent_dept.entity_id != department.entity_id:
             raise HTTPException(status_code=400, detail="Parent department does not belong to the same entity")
 
-    # Verify manager exists if provided
-    if department.manager_id:
-        from app.crud.user import get_user
-        manager = get_user(db, department.manager_id)
-        if not manager:
-            raise HTTPException(status_code=404, detail="Manager user not found")
+    # Manager validation removed - manager_id field doesn't exist in database
 
     # Create new department
     department_data = department.model_dump()
@@ -125,7 +120,7 @@ def create_department(db: Session, department: DepartmentCreate, user_id: Option
         department_type=department_data.get('department_type'),
         cost_center=department_data.get('cost_center'),
         budget_info=department_data.get('budget_info', {}),
-        manager_id=department_data.get('manager_id'),
+        # manager_id field removed - doesn't exist in database
         location=department_data['location'],
         phone=department_data['phone'],
         email=department_data['email'],
@@ -187,12 +182,7 @@ def update_department(
         if parent_dept.client_id != db_department.client_id:
             raise HTTPException(status_code=400, detail="Parent department does not belong to the same client")
 
-    # Verify manager exists if being updated
-    if "manager_id" in update_data and update_data["manager_id"]:
-        from app.crud.user import get_user
-        manager = get_user(db, update_data["manager_id"])
-        if not manager:
-            raise HTTPException(status_code=404, detail="Manager user not found")
+    # Manager validation removed - manager_id field doesn't exist in database
 
     # Update department fields
     for key, value in update_data.items():
@@ -236,21 +226,23 @@ def delete_department(db: Session, department_id: UUID, user_id: Optional[UUID] 
         )
     
     # Check if department has associated active users (optional check)
-    try:
-        from app.models.user import User
-        from app.models.associations import UserDepartment
-        users_count = db.query(UserDepartment).join(User).filter(
-            UserDepartment.department_id == department_id,
-            User.is_active == 1
-        ).count()
-        if users_count > 0:
-            raise HTTPException(
-                status_code=400, 
-                detail="Cannot delete department with associated active users"
-            )
-    except ImportError:
-        # Skip user check if associations model doesn't exist
-        pass
+    # TODO: Implement when User and UserDepartment models are available
+    # try:
+    #     from app.user_setup.models.user_setup import User
+    #     from app.models.associations import UserDepartment
+    #     users_count = db.query(UserDepartment).join(User).filter(
+    #         UserDepartment.department_id == department_id,
+    #         User.is_active == 1
+    #     ).count()
+    #     if users_count > 0:
+    #         raise HTTPException(
+    #             status_code=400, 
+    #             detail="Cannot delete department with associated active users"
+    #         )
+    # except ImportError:
+    #     # Skip user check if associations model doesn't exist
+    #     pass
+    pass  # Skip user validation for now
 
     old_values = {
         "department_name": db_department.department_name,

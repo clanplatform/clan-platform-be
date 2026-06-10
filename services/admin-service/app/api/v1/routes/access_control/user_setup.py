@@ -28,11 +28,12 @@ router = APIRouter()
 
 
 @router.post("/with-details", response_model=UserSetupWithDetails, status_code=status.HTTP_201_CREATED)
-def create_user_setup_with_details(
+async def create_user_setup_with_details(
     user_data: UserSetupCreateWithDetails,
     db: Session = Depends(get_db)
 ):
-    """Create a user setup with roles, entities, and preferences in one request"""
+    """Create a user setup with roles, entities, and preferences in one request.
+    Also syncs the user to the identity-domain auth-service."""
     return UserSetupService.create_user_setup_with_details(db, user_data)
 
 

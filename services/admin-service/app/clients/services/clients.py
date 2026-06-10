@@ -1,12 +1,28 @@
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from uuid import UUID
 
-from app.models.client import Client, ClientApplication
-from app.models.domain import DomainApplication
-from app.schemas.client import ClientCreate, ClientUpdate, ClientApplicationCreate, ClientApplicationUpdate, DomainApplicationCreate, DomainApplicationUpdate
+from app.clients.models.clients import Client
+from app.clients.schemas.clients import ClientCreate, ClientUpdate
 from app.core.hybrid_encryption import hybrid_encryption
+
+# TODO: ClientApplication and DomainApplication models and schemas need to be created
+# Placeholder types for now - functions using these will raise NotImplementedError
+if TYPE_CHECKING:
+    ClientApplication = None
+    DomainApplication = None
+    ClientApplicationCreate = None
+    ClientApplicationUpdate = None
+    DomainApplicationCreate = None
+    DomainApplicationUpdate = None
+else:
+    ClientApplication = type('ClientApplication', (), {})
+    DomainApplication = type('DomainApplication', (), {})
+    ClientApplicationCreate = type('ClientApplicationCreate', (), {})
+    ClientApplicationUpdate = type('ClientApplicationUpdate', (), {})
+    DomainApplicationCreate = type('DomainApplicationCreate', (), {})
+    DomainApplicationUpdate = type('DomainApplicationUpdate', (), {})
 
 # Client CRUD operations
 def get_client(db: Session, client_id: UUID) -> Optional[Client]:
@@ -114,10 +130,8 @@ def hard_delete_client(db: Session, client_id: UUID) -> bool:
 # Client Application CRUD operations
 def get_client_application(db: Session, client_id: UUID, app_id: int) -> Optional[ClientApplication]:
     """Get a client-application mapping"""
-    return db.query(ClientApplication).filter(
-        ClientApplication.client_id == client_id,
-        ClientApplication.app_id == app_id
-    ).first()
+    # TODO: Implement when ClientApplication model is created
+    raise NotImplementedError("ClientApplication model not yet implemented")
 
 def get_client_applications(db: Session, client_id: UUID) -> List[ClientApplication]:
     """Get all applications for a client"""
@@ -252,7 +266,7 @@ def get_client_hierarchy(db: Session, client_id: UUID) -> dict:
 
 def get_domain_hierarchy(db: Session, domain_id: int) -> dict:
     """Get complete hierarchy for a domain: Domain -> Applications -> Clients"""
-    from app.crud.domain import get_domain
+    from app.domains.services.domain import get_domain
     
     domain = get_domain(db, domain_id)
     if not domain:

@@ -3,9 +3,9 @@ from fastapi import HTTPException
 from typing import List, Optional
 import uuid
 
-from app.models.application import Application
-from app.schemas.application import ApplicationCreate, ApplicationUpdate
-from app.crud.domain import get_domain_by_name, get_domain
+from app.applications.models.application import Application
+from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate
+from app.domains.services.domain import get_domain_by_name, get_domain
 from app.core.hybrid_encryption import hybrid_encryption
 
 def get_application(db: Session, application_id: uuid.UUID) -> Optional[Application]:

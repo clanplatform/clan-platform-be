@@ -19,7 +19,7 @@ class Department(Base):
     department_type = Column(String(50), nullable=True)
     cost_center = Column(String(50), nullable=True)
     budget_info = Column(JSON, default=dict)
-    manager_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint to non-existent users table
+    # manager_id removed - column doesn't exist in database
     location = Column(String(255), nullable=False)
     phone = Column(String(20), nullable=False)
     email = Column(String(255), nullable=False)

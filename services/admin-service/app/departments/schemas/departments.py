@@ -10,7 +10,7 @@ class DepartmentBase(BaseModel):
     department_code: Optional[str] = Field(None, min_length=1, max_length=20, description="Department code")
     entity_id: Optional[uuid.UUID] = Field(None, description="Entity ID this department belongs to")
     parent_department_id: Optional[uuid.UUID] = Field(None, description="Parent department ID for hierarchy")
-    manager_id: Optional[uuid.UUID] = Field(None, description="Manager user ID")
+    # manager_id removed - column doesn't exist in database
     department_type: Optional[str] = Field(None, max_length=50, description="Department type")
     cost_center: Optional[str] = Field(None, max_length=50, description="Department cost center")
     location: str = Field(..., max_length=255, description="Department location")
@@ -43,7 +43,7 @@ class DepartmentUpdate(BaseModel):
     description: Optional[str] = Field(None, description="Department description")
     department_code: Optional[str] = Field(None, max_length=20, description="Department code")
     parent_department_id: Optional[uuid.UUID] = Field(None, description="Parent department ID for hierarchy")
-    manager_id: Optional[uuid.UUID] = Field(None, description="Manager user ID")
+    # manager_id removed - column doesn't exist in database
     department_type: Optional[str] = Field(None, max_length=50, description="Department type")
     cost_center: Optional[str] = Field(None, max_length=50, description="Department cost center")
     location: Optional[str] = Field(None, max_length=255, description="Department location")

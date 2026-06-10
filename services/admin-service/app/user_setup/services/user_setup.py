@@ -3,6 +3,8 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 from typing import List, Optional
 from uuid import UUID
+import asyncio
+import logging
 
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
 from app.user_setup.schemas.user_setup import (
@@ -18,6 +20,9 @@ from app.user_setup.schemas.user_setup import (
     UserReference
 )
 from app.core.security import get_password_hash
+from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
+
+logger = logging.getLogger(__name__)
 
 
 class UserSetupService:
@@ -428,8 +433,33 @@ class UserSetupService:
                 )
                 db.add(db_preference)
 
+            # Commit the transaction to admin-service database
             db.commit()
             db.refresh(db_user_basic)
+            
+            # Sync with auth-service (async operation)
+            if AuthServiceSync.sync_enabled():
+                try:
+                    # Run the async sync operation
+                    sync_result = asyncio.run(AuthServiceSync.create_auth_user(
+                        user_id=db_user_basic.id,
+                        username=db_user_basic.username,
+                        email=db_user_basic.email,
+                        password_hash=password_hash,
+                        firstname=db_user_basic.firstname,
+                        lastname=db_user_basic.lastname,
+                        phone_number=db_user_basic.phone_number,
+                        is_active=(db_user_basic.status == 'active'),
+                        employee_id=db_user_basic.employee_id
+                    ))
+                    logger.info(f"User {db_user_basic.username} synced to auth-service: {sync_result}")
+                except AuthServiceSyncError as e:
+                    # Log the error but don't fail the user creation
+                    logger.error(f"Failed to sync user {db_user_basic.username} to auth-service: {str(e)}")
+                    logger.warning("User created in admin-service but not synced to auth-service. Manual sync may be required.")
+            else:
+                logger.info("Auth service sync is disabled (IDENTITY_SERVICE_URL not configured)")
+            
             return UserSetupService.get_user_setup_with_details(db, db_user_basic.id)
         except IntegrityError as e:
             db.rollback()

@@ -217,14 +217,14 @@ def get_unique_divisions(
 def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUID] = None) -> Division:
     """Create a new division"""
     # Verify client exists
-    from app.crud.client import get_client
+    from app.clients.services.clients import get_client
     client = get_client(db, division.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
     # Verify entity exists if provided
     if division.entity_id:
-        from app.crud.entity import get_entity
+        from app.entities.services.entity import get_entity
         entity = get_entity(db, division.entity_id)
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")

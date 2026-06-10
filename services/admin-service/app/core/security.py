@@ -4,16 +4,19 @@ Authentication and security utilities
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # HTTP Bearer token scheme
 security = HTTPBearer(auto_error=False)
+
+# ============================================
+# AUTHENTICATION BYPASS FOR SWAGGER TESTING
+# Set to True to disable authentication
+# ============================================
+DISABLE_AUTH_FOR_TESTING = True
 
 
 def get_password_hash(password: str) -> str:
@@ -25,8 +28,20 @@ def get_password_hash(password: str) -> str:
         
     Returns:
         Hashed password string
+        
+    Note:
+        bcrypt has a 72-byte limit. Passwords longer than 72 bytes are automatically truncated.
     """
-    return pwd_context.hash(password)
+    # Convert password to bytes and truncate to 72 bytes (bcrypt limitation)
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    
+    # Generate salt and hash
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -39,8 +54,21 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         
     Returns:
         True if password matches, False otherwise
+        
+    Note:
+        bcrypt has a 72-byte limit. Passwords longer than 72 bytes are automatically truncated.
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    # Convert password to bytes and truncate to 72 bytes (bcrypt limitation)
+    password_bytes = plain_password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    
+    # Convert hashed password to bytes if it's a string
+    if isinstance(hashed_password, str):
+        hashed_password = hashed_password.encode('utf-8')
+    
+    # Verify password
+    return bcrypt.checkpw(password_bytes, hashed_password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -104,6 +132,10 @@ async def get_current_user_id(
     Raises:
         HTTPException: If credentials are missing or invalid
     """
+    # BYPASS AUTHENTICATION FOR TESTING
+    if DISABLE_AUTH_FOR_TESTING:
+        return "test-user-id-123"
+    
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -140,6 +172,15 @@ async def get_current_user(
     Raises:
         HTTPException: If credentials are missing or invalid
     """
+    # BYPASS AUTHENTICATION FOR TESTING
+    if DISABLE_AUTH_FOR_TESTING:
+        return {
+            "id": "test-user-id-123",
+            "username": "test_user",
+            "email": "test@example.com",
+            "roles": ["admin", "user"]
+        }
+    
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

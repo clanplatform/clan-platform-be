@@ -60,7 +60,7 @@ class MenuReorderService:
                 return False
             
             # ✅ Get ALL modules for this application (always include all modules in MongoDB)
-            from app.models.modules import Module as ModuleModel
+            from app.modules.models.module import Module as ModuleModel
             
             # Always get all modules to prevent other modules from disappearing
             modules = db.query(ModuleModel).filter(
@@ -284,7 +284,7 @@ class MenuReorderService:
                 logger.info(f"Creating new application document in MongoDB...")
                 
                 # Get application details from PostgreSQL
-                from app.models.application import Application
+                from app.applications.models.application import Application
                 pg_app = db.query(Application).filter(
                     Application.id == application_id,
                     Application.is_active == True,
@@ -409,7 +409,7 @@ class MenuReorderService:
                 logger.info(f"[Reorder] Modules to reorder: {len(reorder_data.items)}")
                 
                 # Import Module model
-                from app.models.modules import Module as ModuleModel
+                from app.modules.models.module import Module as ModuleModel
                 
                 # ✅ AUTO-SHIFT LOGIC for single module reorder
                 if len(reorder_data.items) == 1:
@@ -623,7 +623,7 @@ class MenuReorderService:
             
             if module_ids:
                 # Verify all module_ids exist and belong to the same application
-                from app.models.modules import Module
+                from app.modules.models.module import Module
                 modules = db.query(Module).filter(
                     Module.id.in_(module_ids),
                     Module.application_id == reorder_data.application_id,
@@ -1078,7 +1078,7 @@ class MenuReorderService:
             
             if module_ids:
                 # Verify all module_ids exist and belong to the same application
-                from app.models.modules import Module
+                from app.modules.models.module import Module
                 modules = db.query(Module).filter(
                     Module.id.in_(module_ids),
                     Module.application_id == update_data.application_id,

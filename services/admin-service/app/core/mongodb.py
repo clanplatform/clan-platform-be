@@ -16,9 +16,14 @@ class MongoDB:
         self.client: Optional[AsyncIOMotorClient] = None
         self.db: Optional[AsyncIOMotorDatabase] = None
         # Allow initialization with parameters or fall back to environment variables
-        self.enabled: bool = enabled if enabled is not None else os.getenv("MONGODB_ENABLED", "false").lower() == "true"
         self.url: str = url if url is not None else os.getenv("MONGODB_URL", "mongodb://localhost:27017")
         self.database_name: str = database_name if database_name is not None else os.getenv("MONGODB_DATABASE", "admin_service")
+        
+        # Enable MongoDB by default (can be disabled via MONGODB_ENABLED=false)
+        if enabled is not None:
+            self.enabled = enabled
+        else:
+            self.enabled = os.getenv("MONGODB_ENABLED", "true").lower() == "true"
         
     async def connect(self) -> bool:
         """Connect to MongoDB"""

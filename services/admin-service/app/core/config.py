@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Identity Service (external)
     IDENTITY_SERVICE_URL: Optional[str] = None
     
+    # Identity Database - Direct Connection (for syncing auth_users)
+    IDENTITY_DATABASE_URL: Optional[str] = None
+    
     # CORS
     CORS_ORIGINS: list = ["*"]
     

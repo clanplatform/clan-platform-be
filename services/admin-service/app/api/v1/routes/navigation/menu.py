@@ -1719,18 +1719,38 @@ async def create_single_menu_structured(
 
     # ✅ USE WORKING SYNC: Use working_sync_to_mongodb instead of broken MenuReorderService
     print(f"[Menu Create Structured] 🔄 Syncing to MongoDB using working sync function...")
+    print(f"[Menu Create Structured] Application ID: {menu.application_id}")
+    
+    # Check MongoDB connection first
+    from app.core.mongodb import mongodb
+    print(f"[Menu Create Structured] MongoDB enabled: {mongodb.enabled}")
+    print(f"[Menu Create Structured] MongoDB connected: {mongodb.is_connected()}")
+    
+    if not mongodb.enabled:
+        print(f"[Menu Create Structured] ⚠️ MongoDB is disabled - skipping sync")
+    elif not mongodb.is_connected():
+        print(f"[Menu Create Structured] ⚠️ MongoDB not connected - attempting to connect...")
+        try:
+            connect_result = await mongodb.connect()
+            print(f"[Menu Create Structured] MongoDB connection result: {connect_result}")
+        except Exception as conn_error:
+            print(f"[Menu Create Structured] ❌ Failed to connect to MongoDB: {conn_error}")
+    
     try:
         sync_success = await working_sync_to_mongodb(db, menu.application_id)
         
         if sync_success:
             print(f"[Menu Create Structured] ✅ MongoDB sync completed successfully")
+            print(f"[Menu Create Structured] ✅ Menu synced to mainNavigation in MongoDB")
         else:
-            print(f"[Menu Create Structured] ⚠️  MongoDB sync failed, but menu created in PostgreSQL")
+            print(f"[Menu Create Structured] ⚠️ MongoDB sync failed, but menu created in PostgreSQL")
+            logger.warning(f"Menu {menu.id} created in PostgreSQL but MongoDB sync failed for application {menu.application_id}")
             # Don't fail the request if MongoDB sync fails - menu is still created in PostgreSQL
             
     except Exception as sync_error:
         print(f"[Menu Create Structured] ❌ MongoDB sync error: {sync_error}")
-        print(f"[Menu Create Structured] ⚠️  Menu created in PostgreSQL but not synced to MongoDB")
+        print(f"[Menu Create Structured] ⚠️ Menu created in PostgreSQL but not synced to MongoDB")
+        logger.error(f"MongoDB sync error for menu {menu.id}: {sync_error}")
         # Log the error but don't fail the request
         import traceback
         traceback.print_exc()
@@ -3839,3 +3859,224 @@ async def reorder_menus(
         logger.info("[Menu Cleanup] ✅ Cleared navigation cache after cleanup")
     
     return result
+
+
+@router.get("/diagnostic/mongodb-sync-status")
+async def check_mongodb_sync_status(
+    application_id: Optional[str] = Query(None, description="Application ID to check (optional)"),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Diagnostic endpoint to check MongoDB sync status and troubleshoot sync issues.
+    
+    Returns:
+    - MongoDB connection status
+    - Database configuration
+    - Application document status in MongoDB
+    - MainNavigation array status
+    - Menus count in PostgreSQL vs MongoDB
+    """
+    from app.core.mongodb import mongodb, get_mongodb
+    from bson import ObjectId
+    
+    result = {
+        "mongodb_config": {
+            "enabled": mongodb.enabled,
+            "connected": mongodb.is_connected(),
+            "url": mongodb.url.split('@')[-1] if '@' in mongodb.url else mongodb.url,  # Hide credentials
+            "database_name": mongodb.database_name
+        },
+        "master_document_id": "69074724f217ab8fcb2e3b24",
+        "applications": []
+    }
+    
+    # Check MongoDB connection
+    if not mongodb.enabled:
+        result["error"] = "MongoDB is disabled in configuration (MONGODB_ENABLED=false)"
+        return result
+    
+    if not mongodb.is_connected():
+        result["warning"] = "MongoDB not connected, attempting connection..."
+        try:
+            await mongodb.connect()
+            result["mongodb_config"]["connected"] = mongodb.is_connected()
+        except Exception as e:
+            result["error"] = f"Failed to connect to MongoDB: {str(e)}"
+            return result
+    
+    # Get MongoDB database
+    try:
+        db_mongo = await get_mongodb()
+        if db_mongo is None:
+            result["error"] = "MongoDB database is None"
+            return result
+    except Exception as e:
+        result["error"] = f"Error getting MongoDB database: {str(e)}"
+        return result
+    
+    # Check master document
+    try:
+        master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
+        master_doc = await db_mongo.menu_details.find_one({"_id": master_doc_id})
+        
+        if not master_doc:
+            result["error"] = "Master navigation document not found in MongoDB"
+            return result
+        
+        main_navigation = master_doc.get("mainNavigation", [])
+        result["master_document"] = {
+            "found": True,
+            "mainNavigation_count": len(main_navigation),
+            "mainNavigation_refs": [str(ref) for ref in main_navigation]
+        }
+    except Exception as e:
+        result["error"] = f"Error checking master document: {str(e)}"
+        return result
+    
+    # Get applications from PostgreSQL
+    if application_id:
+        # Check specific application
+        try:
+            app_uuid = UUID(application_id)
+            apps = db.query(Application).filter(
+                Application.id == app_uuid,
+                Application.is_active == True,
+                Application.is_deleted == False
+            ).all()
+        except Exception as e:
+            result["error"] = f"Invalid application_id: {str(e)}"
+            return result
+    else:
+        # Check all applications
+        apps = db.query(Application).filter(
+            Application.is_active == True,
+            Application.is_deleted == False
+        ).all()
+    
+    result["applications_checked"] = len(apps)
+    
+    # Check each application's sync status
+    for app in apps:
+        app_info = {
+            "application_id": str(app.id),
+            "application_name": app.name,
+            "postgres_menus_count": 0,
+            "mongodb_document_found": False,
+            "mongodb_document_id": None,
+            "in_mainNavigation": False,
+            "mongodb_menus_count": 0
+        }
+        
+        # Count menus in PostgreSQL
+        menus_count = db.query(Menu).filter(
+            Menu.application_id == app.id,
+            Menu.deleted_at.is_(None)
+        ).count()
+        app_info["postgres_menus_count"] = menus_count
+        
+        # Check if application document exists in MongoDB
+        try:
+            app_doc = await db_mongo.menu_details.find_one({
+                "application_id": str(app.id),
+                "_id": {"$ne": master_doc_id}
+            })
+            
+            if app_doc:
+                app_info["mongodb_document_found"] = True
+                app_info["mongodb_document_id"] = str(app_doc["_id"])
+                
+                # Count menus in MongoDB (recursively count children)
+                def count_menus_recursive(children):
+                    count = 0
+                    for child in children:
+                        if isinstance(child, dict):
+                            count += 1
+                            if "children" in child:
+                                count += count_menus_recursive(child["children"])
+                    return count
+                
+                children = app_doc.get("children", [])
+                app_info["mongodb_menus_count"] = count_menus_recursive(children)
+                
+                # Check if in mainNavigation
+                app_object_id = app_doc["_id"]
+                app_info["in_mainNavigation"] = app_object_id in main_navigation
+                
+                # Sync status
+                if app_info["in_mainNavigation"]:
+                    if app_info["postgres_menus_count"] == app_info["mongodb_menus_count"]:
+                        app_info["sync_status"] = "✅ SYNCED"
+                    else:
+                        app_info["sync_status"] = "⚠️ PARTIAL - Count mismatch"
+                else:
+                    app_info["sync_status"] = "❌ NOT IN MAINNAVIGATION"
+            else:
+                app_info["sync_status"] = "❌ NO MONGODB DOCUMENT"
+                
+        except Exception as e:
+            app_info["error"] = f"Error checking MongoDB: {str(e)}"
+            app_info["sync_status"] = "❌ ERROR"
+        
+        result["applications"].append(app_info)
+    
+    return result
+
+
+@router.post("/diagnostic/force-sync/{application_id}")
+async def force_mongodb_sync(
+    application_id: UUID,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Force a complete MongoDB sync for a specific application.
+    Use this endpoint if menus are not syncing properly.
+    
+    This will:
+    1. Fetch all menus for the application from PostgreSQL
+    2. Build the complete navigation structure
+    3. Create/update the application document in MongoDB
+    4. Add the application to mainNavigation array
+    """
+    print(f"[Force Sync] Starting forced sync for application: {application_id}")
+    
+    # Verify application exists
+    app = db.query(Application).filter(
+        Application.id == application_id,
+        Application.is_active == True,
+        Application.is_deleted == False
+    ).first()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application {application_id} not found or inactive"
+        )
+    
+    # Use the working sync function
+    try:
+        sync_success = await working_sync_to_mongodb(db, application_id)
+        
+        if sync_success:
+            return {
+                "success": True,
+                "message": f"Successfully synced application '{app.name}' to MongoDB",
+                "application_id": str(application_id),
+                "application_name": app.name
+            }
+        else:
+            return {
+                "success": False,
+                "message": "MongoDB sync failed - check server logs for details",
+                "application_id": str(application_id),
+                "application_name": app.name
+            }
+    except Exception as e:
+        logger.error(f"Force sync error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Sync failed: {str(e)}"
+        )

@@ -70,3 +70,23 @@ def delete_user_setup(
 
 
 
+
+
+@router.get("/debug/sync-status")
+async def debug_sync_status():
+    """Debug endpoint to check if sync is enabled"""
+    try:
+        from app.user_setup.services.identity_db_sync import IdentityDbSync
+        from app.core.config import settings
+        
+        return {
+            "sync_module_loaded": True,
+            "sync_enabled": IdentityDbSync.sync_enabled(),
+            "identity_database_url_configured": settings.IDENTITY_DATABASE_URL is not None,
+            "identity_database_url": str(settings.IDENTITY_DATABASE_URL)[:60] + "..." if settings.IDENTITY_DATABASE_URL else None
+        }
+    except Exception as e:
+        return {
+            "sync_module_loaded": False,
+            "error": str(e)
+        }

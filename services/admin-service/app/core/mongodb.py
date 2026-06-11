@@ -17,7 +17,11 @@ class MongoDB:
         self.db: Optional[AsyncIOMotorDatabase] = None
         # Allow initialization with parameters or fall back to environment variables
         self.url: str = url if url is not None else os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-        self.database_name: str = database_name if database_name is not None else os.getenv("MONGODB_DATABASE", "admin_service")
+        # Support both MONGODB_DATABASE and MONGODB_DB_NAME environment variables
+        self.database_name: str = (
+            database_name if database_name is not None 
+            else os.getenv("MONGODB_DATABASE") or os.getenv("MONGODB_DB_NAME") or "admin_service"
+        )
         
         # Enable MongoDB by default (can be disabled via MONGODB_ENABLED=false)
         if enabled is not None:

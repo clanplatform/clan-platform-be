@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
+  # PostgreSQL Database for Admin Service
   postgres:
     image: postgres:15-alpine
     container_name: admin-service-postgres
@@ -16,6 +16,27 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-admin_service}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - admin-network
+
+  # PostgreSQL Database for Auth Service (Identity Domain)
+  identity-postgres:
+    image: postgres:15-alpine
+    container_name: clan-identity-postgres
+    environment:
+      POSTGRES_DB: ${IDENTITY_POSTGRES_DB:-auth_service}
+      POSTGRES_USER: ${IDENTITY_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${IDENTITY_POSTGRES_PASSWORD:-root}
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5433:5432"
+    volumes:
+      - identity_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${IDENTITY_POSTGRES_USER:-postgres} -d ${IDENTITY_POSTGRES_DB:-auth_service}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -75,12 +96,15 @@ services:
       # Database - PostgreSQL
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root}@postgres:5432/${POSTGRES_DB:-admin_service}
       
+      # Identity Database - Direct Connection (for syncing auth_users)
+      IDENTITY_DATABASE_URL: postgresql://${IDENTITY_POSTGRES_USER:-postgres}:${IDENTITY_POSTGRES_PASSWORD:-root}@identity-postgres:5432/${IDENTITY_POSTGRES_DB:-auth_service}
+      
       # Cache - Redis
       REDIS_URL: redis://redis:6379/0
       CACHE_DEFAULT_TTL: 1800
       
       # Database - MongoDB
-      MONGODB_URL: mongodb://mongodb:27017
+      MONGODB_URL: mongodb://admin:admin_pass@mongodb:27017
       MONGODB_DB_NAME: admin_service
       
       # Security
@@ -95,6 +119,8 @@ services:
       LOG_LEVEL: "DEBUG"
     depends_on:
       postgres:
+        condition: service_healthy
+      identity-postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -112,5 +138,6 @@ networks:
 
 volumes:
   postgres_data:
+  identity_postgres_data:
   redis_data:
   mongodb_data:

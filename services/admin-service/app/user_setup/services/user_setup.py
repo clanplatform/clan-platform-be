@@ -21,6 +21,7 @@ from app.user_setup.schemas.user_setup import (
 )
 from app.core.security import get_password_hash
 from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
+from app.user_setup.services.identity_db_sync import IdentityDbSync, IdentityDbSyncError
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +371,9 @@ class UserSetupService:
     @staticmethod
     def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
         """Create a user setup with roles, entities, and preferences in one transaction"""
+        print("="*80)
+        print(f"METHOD CALLED: create_user_setup_with_details for user: {user_data.basic.username}")
+        print("="*80)
         try:
             # Validate reporting_to if provided
             if user_data.basic.reporting_to:
@@ -434,31 +438,74 @@ class UserSetupService:
                 db.add(db_preference)
 
             # Commit the transaction to admin-service database
+            print(f"BEFORE COMMIT: About to commit user {user_data.basic.username}")
             db.commit()
             db.refresh(db_user_basic)
+            print(f"AFTER COMMIT: User {db_user_basic.username} committed, ID: {db_user_basic.id}")
             
-            # Sync with auth-service (async operation)
-            if AuthServiceSync.sync_enabled():
+            # DEBUG: Log before sync check
+            print("=" * 80)
+            print("SYNC DEBUG: Starting identity database sync check")
+            print(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
+            logger.info("=" * 80)
+            logger.info("SYNC DEBUG: Starting identity database sync check")
+            logger.info(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
+            
+            # Sync with identity database (direct database connection)
+            sync_enabled = IdentityDbSync.sync_enabled()
+            print(f"SYNC DEBUG: sync_enabled() returned: {sync_enabled}")
+            logger.info(f"SYNC DEBUG: sync_enabled() returned: {sync_enabled}")
+            
+            if sync_enabled:
                 try:
-                    # Run the async sync operation
-                    sync_result = asyncio.run(AuthServiceSync.create_auth_user(
+                    print("SYNC DEBUG: Attempting to sync user to identity database...")
+                    logger.info("SYNC DEBUG: Attempting to sync user to identity database...")
+                    # Direct database sync to clan-identity-postgres
+                    sync_result = IdentityDbSync.create_auth_user(
                         user_id=db_user_basic.id,
                         username=db_user_basic.username,
                         email=db_user_basic.email,
                         password_hash=password_hash,
                         firstname=db_user_basic.firstname,
                         lastname=db_user_basic.lastname,
+                        employee_id=db_user_basic.employee_id,
                         phone_number=db_user_basic.phone_number,
-                        is_active=(db_user_basic.status == 'active'),
-                        employee_id=db_user_basic.employee_id
-                    ))
-                    logger.info(f"User {db_user_basic.username} synced to auth-service: {sync_result}")
-                except AuthServiceSyncError as e:
+                        status=db_user_basic.status,
+                        start_date=db_user_basic.start_date,
+                        end_date=db_user_basic.end_date,
+                        tem_employee=db_user_basic.tem_employee,
+                        department=db_user_basic.department,
+                        division=db_user_basic.division,
+                        job_code=db_user_basic.job_code,
+                        manage_roles=db_user_basic.manage_roles,
+                        default_dept=db_user_basic.default_dept,
+                        reporting_to=db_user_basic.reporting_to,
+                        entities=db_user_basic.entities,
+                        default_entity=db_user_basic.default_entity,
+                        view=db_user_basic.view,
+                        dashboard_view=db_user_basic.dashboard_view
+                    )
+                    logger.info("=" * 80)
+                    logger.info(f"SYNC DEBUG: Sync completed successfully!")
+                    logger.info(f"SYNC DEBUG: Result: {sync_result}")
+                    logger.info("=" * 80)
+                except IdentityDbSyncError as e:
                     # Log the error but don't fail the user creation
-                    logger.error(f"Failed to sync user {db_user_basic.username} to auth-service: {str(e)}")
-                    logger.warning("User created in admin-service but not synced to auth-service. Manual sync may be required.")
+                    logger.error("=" * 80)
+                    logger.error(f"SYNC DEBUG: Sync failed with IdentityDbSyncError!")
+                    logger.error(f"SYNC DEBUG: Error: {str(e)}")
+                    logger.error("=" * 80)
+                    logger.warning("User created in admin-service but not synced to identity database. Manual sync may be required.")
+                except Exception as e:
+                    logger.error("=" * 80)
+                    logger.error(f"SYNC DEBUG: Sync failed with unexpected exception!")
+                    logger.error(f"SYNC DEBUG: Exception type: {type(e).__name__}")
+                    logger.error(f"SYNC DEBUG: Error: {str(e)}")
+                    logger.error("=" * 80)
             else:
-                logger.info("Auth service sync is disabled (IDENTITY_SERVICE_URL not configured)")
+                logger.warning("=" * 80)
+                logger.warning("SYNC DEBUG: Identity database sync is disabled (IDENTITY_DATABASE_URL not configured)")
+                logger.warning("=" * 80)
             
             return UserSetupService.get_user_setup_with_details(db, db_user_basic.id)
         except IntegrityError as e:

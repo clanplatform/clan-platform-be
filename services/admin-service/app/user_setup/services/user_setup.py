@@ -21,7 +21,6 @@ from app.user_setup.schemas.user_setup import (
 )
 from app.core.security import get_password_hash
 from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
-from app.user_setup.services.identity_db_sync import IdentityDbSync, IdentityDbSyncError
 
 logger = logging.getLogger(__name__)
 
@@ -447,65 +446,7 @@ class UserSetupService:
             print("=" * 80)
             print("SYNC DEBUG: Starting identity database sync check")
             print(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
-            logger.info("=" * 80)
-            logger.info("SYNC DEBUG: Starting identity database sync check")
-            logger.info(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
-            
-            # Sync with identity database (direct database connection)
-            sync_enabled = IdentityDbSync.sync_enabled()
-            print(f"SYNC DEBUG: sync_enabled() returned: {sync_enabled}")
-            logger.info(f"SYNC DEBUG: sync_enabled() returned: {sync_enabled}")
-            
-            if sync_enabled:
-                try:
-                    print("SYNC DEBUG: Attempting to sync user to identity database...")
-                    logger.info("SYNC DEBUG: Attempting to sync user to identity database...")
-                    # Direct database sync to clan-identity-postgres
-                    sync_result = IdentityDbSync.create_auth_user(
-                        user_id=db_user_basic.id,
-                        username=db_user_basic.username,
-                        email=db_user_basic.email,
-                        password_hash=password_hash,
-                        firstname=db_user_basic.firstname,
-                        lastname=db_user_basic.lastname,
-                        employee_id=db_user_basic.employee_id,
-                        phone_number=db_user_basic.phone_number,
-                        status=db_user_basic.status,
-                        start_date=db_user_basic.start_date,
-                        end_date=db_user_basic.end_date,
-                        tem_employee=db_user_basic.tem_employee,
-                        department=db_user_basic.department,
-                        division=db_user_basic.division,
-                        job_code=db_user_basic.job_code,
-                        manage_roles=db_user_basic.manage_roles,
-                        default_dept=db_user_basic.default_dept,
-                        reporting_to=db_user_basic.reporting_to,
-                        entities=db_user_basic.entities,
-                        default_entity=db_user_basic.default_entity,
-                        view=db_user_basic.view,
-                        dashboard_view=db_user_basic.dashboard_view
-                    )
-                    logger.info("=" * 80)
-                    logger.info(f"SYNC DEBUG: Sync completed successfully!")
-                    logger.info(f"SYNC DEBUG: Result: {sync_result}")
-                    logger.info("=" * 80)
-                except IdentityDbSyncError as e:
-                    # Log the error but don't fail the user creation
-                    logger.error("=" * 80)
-                    logger.error(f"SYNC DEBUG: Sync failed with IdentityDbSyncError!")
-                    logger.error(f"SYNC DEBUG: Error: {str(e)}")
-                    logger.error("=" * 80)
-                    logger.warning("User created in admin-service but not synced to identity database. Manual sync may be required.")
-                except Exception as e:
-                    logger.error("=" * 80)
-                    logger.error(f"SYNC DEBUG: Sync failed with unexpected exception!")
-                    logger.error(f"SYNC DEBUG: Exception type: {type(e).__name__}")
-                    logger.error(f"SYNC DEBUG: Error: {str(e)}")
-                    logger.error("=" * 80)
-            else:
-                logger.warning("=" * 80)
-                logger.warning("SYNC DEBUG: Identity database sync is disabled (IDENTITY_DATABASE_URL not configured)")
-                logger.warning("=" * 80)
+            logger.info("User created successfully in admin-service database")
             
             return UserSetupService.get_user_setup_with_details(db, db_user_basic.id)
         except IntegrityError as e:

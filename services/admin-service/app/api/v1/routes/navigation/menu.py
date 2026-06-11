@@ -144,7 +144,7 @@ async def working_sync_to_mongodb(db: Session, application_id: UUID) -> bool:
         print(f"[Working Sync] Starting sync for application: {application_id}")
         
         # Get MongoDB connection
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             print(f"[Working Sync] MongoDB not available")
             return False
@@ -414,7 +414,7 @@ async def get_menus(
     print(f"[GET Menus] ⚠️ Cache bypassed for debugging")
 
     # Fetch from MongoDB
-    db_mongo = await get_mongodb()
+    db_mongo = get_mongodb()
     if db_mongo is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -932,7 +932,7 @@ async def get_login_user_menus(
 
         # 5. Fetch the full mainNavigation structure from MongoDB
         print(f"[GET Login User Menus] 🔍 Connecting to MongoDB...")
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1471,7 +1471,7 @@ async def get_structured_navigation_hierarchy(
     }
 
     # Connect to MongoDB
-    db_mongo = await get_mongodb()
+    db_mongo = get_mongodb()
     if db_mongo is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1856,7 +1856,7 @@ async def update_mongodb_structured_hierarchy(
     Structure: Root Application -> children[Modules] -> children[Menus] -> children[Nested Menus]
     """
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
 
@@ -2449,7 +2449,7 @@ async def create_single_menu(
     print(f"[Menu Create] Processing application document in MongoDB")
 
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
 
@@ -2843,7 +2843,7 @@ async def create_menus_batch(
         print(f"[Menu Batch Create] ✅ Committed {len(created_menus)} parent menus to PostgreSQL")
         
         # Update MongoDB application document
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
         
@@ -3088,7 +3088,7 @@ async def update_menu(
     # 6️⃣ Update MongoDB mainNavigation tree
     # ✅ Find the application document and update the menu within it
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             print("[Menu Update] MongoDB not initialized, skipping navigation update")
             return menu
@@ -3233,7 +3233,7 @@ async def update_menu(
 
     # 8️⃣ Fetch children from MongoDB to include in response
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is not None and menu.mongo_id:
             # Find the application document to get the menu's children
             try:
@@ -3503,7 +3503,7 @@ async def delete_menu(
 
     # 5) Push into navigation structure in MongoDB under admin-app → app-management → children
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
 
@@ -3629,7 +3629,7 @@ async def delete_menu(
 
     # Fetch children from MongoDB to include in response
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is not None:
             try:
                 doc_id = ObjectId(nav_doc_id)
@@ -3907,7 +3907,7 @@ async def check_mongodb_sync_status(
     
     # Get MongoDB database
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             result["error"] = "MongoDB database is None"
             return result
@@ -4080,3 +4080,4 @@ async def force_mongodb_sync(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Sync failed: {str(e)}"
         )
+

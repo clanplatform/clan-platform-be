@@ -14,7 +14,6 @@ from app.core.middleware import setup_middleware
 from app.infrastructure.database.session import check_db_connection, create_tables
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.mongodb.mongodb_admin import mongodb_client
-from app.infrastructure.database.identity_db import get_identity_db
 from app.api.v1.router import api_v1_router
 
 # Setup logging
@@ -67,17 +66,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         startup_errors.append(f"MongoDB initialization error: {e}")
         logger.error(f"MongoDB initialization error: {e}", exc_info=True)
-    
-    # Initialize Identity Database connection (for user sync)
-    try:
-        logger.info("Initializing Identity Database connection...")
-        identity_db = get_identity_db()
-        if identity_db.initialize():
-            logger.info("Identity Database connection established successfully")
-        else:
-            logger.warning("Identity Database connection not configured - user sync disabled")
-    except Exception as e:
-        logger.warning(f"Identity Database initialization error: {e} - user sync disabled")
     
     # Check if any critical connections failed
     if startup_errors:

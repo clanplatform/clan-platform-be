@@ -12,12 +12,6 @@ from app.core.config import settings
 # HTTP Bearer token scheme
 security = HTTPBearer(auto_error=False)
 
-# ============================================
-# AUTHENTICATION BYPASS FOR SWAGGER TESTING
-# Set to True to disable authentication
-# ============================================
-DISABLE_AUTH_FOR_TESTING = True
-
 
 def get_password_hash(password: str) -> str:
     """
@@ -96,6 +90,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def decode_access_token(token: str) -> dict:
     """
     Decode and verify a JWT access token.
+    Supports both HS256 (shared secret) and RS256 (public key) algorithms.
     
     Args:
         token: JWT token string
@@ -107,12 +102,40 @@ def decode_access_token(token: str) -> dict:
         HTTPException: If token is invalid or expired
     """
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        # Determine the key to use for verification
+        if settings.JWT_ALGORITHM.startswith("RS") and settings.JWT_PUBLIC_KEY:
+            # Use public key for RS256/RS384/RS512
+            key = settings.JWT_PUBLIC_KEY
+            print(f"[JWT] Using RS256 public key verification")
+        else:
+            # Use shared secret for HS256/HS384/HS512
+            key = settings.SECRET_KEY
+            print(f"[JWT] Using HS256 shared secret verification")
+            print(f"[JWT] Algorithm: {settings.JWT_ALGORITHM}")
+            print(f"[JWT] Secret key (first 10 chars): {key[:10]}...")
+        
+        payload = jwt.decode(token, key, algorithms=[settings.JWT_ALGORITHM])
+        print(f"[JWT] Token decoded successfully. User: {payload.get('sub')}")
         return payload
-    except JWTError as e:
+    except jwt.ExpiredSignatureError as e:
+        print(f"[JWT] Token expired: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.JWTClaimsError as e:
+        print(f"[JWT] Invalid token claims: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token claims",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except JWTError as e:
+        print(f"[JWT] Token validation error: {type(e).__name__}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Could not validate credentials: {type(e).__name__}",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -132,10 +155,6 @@ async def get_current_user_id(
     Raises:
         HTTPException: If credentials are missing or invalid
     """
-    # BYPASS AUTHENTICATION FOR TESTING
-    if DISABLE_AUTH_FOR_TESTING:
-        return "test-user-id-123"
-    
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -146,11 +165,12 @@ async def get_current_user_id(
     token = credentials.credentials
     payload = decode_access_token(token)
     
-    user_id: str = payload.get("sub")
+    # Support both 'sub' (JWT standard) and 'user_id' (custom claim)
+    user_id: str = payload.get("sub") or payload.get("user_id")
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Could not validate credentials - missing user identifier",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -172,16 +192,10 @@ async def get_current_user(
     Raises:
         HTTPException: If credentials are missing or invalid
     """
-    # BYPASS AUTHENTICATION FOR TESTING
-    if DISABLE_AUTH_FOR_TESTING:
-        return {
-            "id": "test-user-id-123",
-            "username": "test_user",
-            "email": "test@example.com",
-            "roles": ["admin", "user"]
-        }
+    print(f"[AUTH] get_current_user called")
     
     if not credentials:
+        print(f"[AUTH] No credentials provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
@@ -189,23 +203,31 @@ async def get_current_user(
         )
     
     token = credentials.credentials
+    print(f"[AUTH] Token received (first 20 chars): {token[:20]}...")
+    
     payload = decode_access_token(token)
     
-    user_id: str = payload.get("sub")
+    # Support both 'sub' (JWT standard) and 'user_id' (custom claim)
+    user_id: str = payload.get("sub") or payload.get("user_id")
     if user_id is None:
+        print(f"[AUTH] Token payload missing both 'sub' and 'user_id' fields. Payload keys: {list(payload.keys())}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Could not validate credentials - missing user identifier",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Return user principal object
+    # Return user principal object with all available claims
     user = {
         "id": user_id,
+        "user_id": payload.get("user_id"),  # Keep original user_id if present
         "username": payload.get("username"),
         "email": payload.get("email"),
-        "roles": payload.get("roles", [])
+        "roles": payload.get("roles", []),
+        "user_setup_id": payload.get("user_setup_id")  # Include user_setup_id from token
     }
+    
+    print(f"[AUTH] User authenticated: {user_id} (username: {user.get('username')})")
     
     return user
 

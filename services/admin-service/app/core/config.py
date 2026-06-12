@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # JWT Public Key for RS256 verification (optional, for production)
+    # If using RS256, provide the public key from the auth service
+    JWT_PUBLIC_KEY: Optional[str] = None
+    
     # Identity Service (external)
     IDENTITY_SERVICE_URL: Optional[str] = None
     

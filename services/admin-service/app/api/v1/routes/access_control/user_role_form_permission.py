@@ -5,6 +5,7 @@ from uuid import UUID
 from math import ceil
 
 from app.infrastructure.database.session import get_db
+from app.core.security import get_current_user
 from app.user_role_form_permission.schemas.user_role_form_permission import (
     RoleFormPermissionCreate,
     RoleFormPermissionUpdate,
@@ -25,7 +26,8 @@ router = APIRouter()
 )
 async def create_role_form_permission(
     permission_data: RoleFormPermissionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Create a new role form permission based on selected menus.
@@ -67,7 +69,8 @@ async def create_role_form_permission(
 )
 async def get_role_form_permission(
     permission_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get a role form permission by ID.
@@ -103,7 +106,8 @@ async def get_all_role_form_permissions(
     form_access: Optional[str] = Query(None, description="Filter by form access level (read, write, disable)"),
     sort_by: str = Query("created_at", description="Sort by field"),
     sort_order: str = Query("desc", description="Sort order (asc, desc)"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get all role form permissions with optional filtering and pagination.
@@ -150,7 +154,8 @@ async def get_all_role_form_permissions(
 async def update_role_form_permission(
     permission_id: UUID,
     permission_data: RoleFormPermissionUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Update a role form permission.
@@ -192,7 +197,8 @@ async def update_role_form_permission(
 )
 async def delete_role_form_permission(
     permission_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Delete a role form permission.

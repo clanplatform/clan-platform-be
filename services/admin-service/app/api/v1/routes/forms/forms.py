@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import math
 from app.infrastructure.database.session import get_db
+from app.core.security import get_current_user
 from app.forms.services.forms import FormsService
 from app.forms_details.services.forms_details import forms_details_service
 from app.forms.schemas.forms import (
@@ -30,7 +31,8 @@ router = APIRouter()
 )
 async def create_form(
     form_data: FormCreateFromFrontend,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Create a new form from frontend payload.
@@ -147,6 +149,7 @@ async def import_form(
     menu_id: str,
     import_data: FormImport,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     created_by: Optional[str] = Query(None, description="User who is importing the form")
 ):
     """
@@ -206,6 +209,7 @@ async def import_form(
 )
 async def get_forms(
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     menu_id: Optional[str] = Query(None, description="Filter by menu ID"),
@@ -306,7 +310,8 @@ async def get_forms(
 )
 async def get_forms_by_menu(
     menu_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get forms collection for a specific menu from MongoDB.
@@ -382,7 +387,8 @@ async def get_forms_by_menu(
 async def update_form(
     form_id: str,
     form_data: FormUpdateSimple,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Update an existing form.
@@ -489,7 +495,8 @@ async def update_form(
 )
 async def delete_form(
     form_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Soft delete a form.

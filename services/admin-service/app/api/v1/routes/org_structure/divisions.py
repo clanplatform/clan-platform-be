@@ -2,10 +2,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.infrastructure.database.session import get_db
+from app.core.security import get_current_user
 from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate, DivisionResponse
 from app.divisions.services import divisions as division_service
-# Removed authentication imports since we're not using authentication for this endpoint
 import uuid
 
 router = APIRouter()
@@ -16,7 +16,8 @@ def get_divisions(
     limit: int = 100,
     client_id: Optional[uuid.UUID] = None,
     entity_id: Optional[uuid.UUID] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Get all divisions with pagination and optional client/entity filtering, sorted by newest first (FILO)"""
     try:
@@ -39,7 +40,8 @@ def get_divisions_by_department(
     department_id: uuid.UUID,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Get all divisions that are related to a specific department by entity/client"""
     try:
@@ -62,7 +64,8 @@ def get_divisions_by_department(
 @router.post("/", response_model=DivisionResponse, status_code=status.HTTP_201_CREATED)
 def create_division(
     division_data: DivisionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Create a new division"""
     try:
@@ -90,7 +93,8 @@ def create_division(
 def update_division(
     division_id: uuid.UUID,
     division_data: DivisionUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Update a division"""
     try:
@@ -116,7 +120,8 @@ def update_division(
 @router.delete("/{division_id}")
 async def delete_division(
     division_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Soft delete a division"""
     try:

@@ -18,7 +18,7 @@ from app.menu_reorder.schemas.menu_reorder import (
     MenuBatchUpdateItem
 )
 from app.menu_navigation.schemas.menu_navigation import create_navigation_item, validate_navigation_item  # ✅ Import validation helpers
-from app.core.security import get_current_user, get_current_user_id, decode_access_token, DISABLE_AUTH_FOR_TESTING  # Uses optional auth support
+from app.core.security import get_current_user, get_current_user_id, decode_access_token
 from app.core.config import settings
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.menu_details.services.menu_details import menu_details_service
@@ -708,44 +708,31 @@ async def get_login_user_menus(
     try:
         print(f"[GET Login User Menus] 🚀 Starting request with lang_code: {lang_code}...")
 
-        # BYPASS AUTHENTICATION FOR TESTING
-        if DISABLE_AUTH_FOR_TESTING:
-            print(f"[GET Login User Menus] ⚠️ Authentication is DISABLED for testing")
-            # Use a test user for development
-            current_user_id = None  # Will fallback to email/username lookup
-            user_email = "test@example.com"  # Default test email
-            username = "test_user"
-            payload = {
-                "user_id": None,
-                "email": user_email,
-                "username": username
-            }
-        else:
-            # Check if credentials are provided
-            if not credentials:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            
-            # Verify and decode the JWT token
-            token = credentials.credentials
-            print(f"[GET Login User Menus] 🔍 Token received (length: {len(token)})")
-            payload = decode_access_token(token)
-            print(f"[GET Login User Menus] ✅ Token verified successfully")
+        # Check if credentials are provided
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Verify and decode the JWT token
+        token = credentials.credentials
+        print(f"[GET Login User Menus] 🔍 Token received (length: {len(token)})")
+        payload = decode_access_token(token)
+        print(f"[GET Login User Menus] ✅ Token verified successfully")
 
-            if payload is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+        if payload is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-            # Extract user information from token
-            current_user_id = payload.get("user_id")
-            user_email = payload.get("email")
-            username = payload.get("username")
+        # Extract user information from token
+        current_user_id = payload.get("user_id")
+        user_email = payload.get("email")
+        username = payload.get("username")
 
         print(f"[GET Login User Menus] 🔍 Token payload: user_id={current_user_id}, email={user_email}, username={username}")
 

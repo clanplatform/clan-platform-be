@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.infrastructure.database.session import get_db
+from app.core.security import get_current_user
 from app.modules.services.module import ModuleService
 from app.modules.schemas.module import (
     ModuleCreate,
@@ -25,6 +26,7 @@ router = APIRouter()
 async def create_module(
     module_data: ModuleCreate,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     created_by: Optional[int] = Query(None, description="User ID who is creating the module")
 ):
     """
@@ -81,6 +83,7 @@ async def create_module(
 )
 async def get_modules(
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     application_id: Optional[str] = Query(None, description="Filter by application ID"),
@@ -142,6 +145,7 @@ async def get_modules(
 async def get_modules_by_application(
     application_id: str,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     is_active: Optional[bool] = Query(None, description="Filter by active status")
 ):
     """
@@ -171,6 +175,7 @@ async def update_module(
     module_id: str,
     module_data: ModuleUpdate,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     updated_by: Optional[int] = Query(None, description="User ID who is updating the module")
 ):
     """
@@ -224,6 +229,7 @@ async def update_module(
 async def delete_module(
     module_id: str,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     deleted_by: Optional[int] = Query(None, description="User ID who is deleting the module")
 ):
     """

@@ -314,6 +314,28 @@ async def get_menus_by_application(
     profile_section = master_doc.get("profileSection", {})
     config = master_doc.get("config", {})
     
+    # Populate profileSection with logged-in user's data dynamically
+    try:
+        from app.menu_details.services.menu_details import menu_details_service
+        from app.user_setup.models.user_setup import UserSetupBasic
+        from uuid import UUID
+        
+        # Get the user from database
+        user_id = current_user.get("user_id") or current_user.get("id")
+        if user_id:
+            try:
+                user_uuid = UUID(user_id)
+                user = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_uuid).first()
+                
+                if user:
+                    profile_section = menu_details_service.populate_profile_section_with_user_data(
+                        profile_section, user, db
+                    )
+            except Exception as e:
+                print(f"[Get Application Menus] ⚠️ Error fetching user: {str(e)}")
+    except Exception as e:
+        print(f"[Get Application Menus] ⚠️ Error populating profile section: {str(e)}")
+    
     # Clean userData fields (ensure simple strings, not {value, color} objects)
     if profile_section and "userData" in profile_section:
         user_data = profile_section["userData"]

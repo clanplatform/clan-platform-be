@@ -19,6 +19,7 @@ class UserData(BaseModel):
 
 class ProfileMenuItem(BaseModel):
     key: str
+    route: str = "/profile"
     label: str
     icon: str
     children: List[Any] = Field(default_factory=list)

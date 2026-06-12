@@ -25,7 +25,7 @@ from app.menu_details.services.menu_details import menu_details_service
 from app.menu_reorder.services.menu_reorder import MenuReorderService
 from app.menu_soft_delete.services.menu_soft_delete import menu_cleanup_service
 from app.infrastructure.redis_cache.redis_cache import redis_cache
-# from app.models.menu_language import MenuLanguage
+from app.menu_language.models.menu_language import MenuLanguage
 from bson import ObjectId
 from app.infrastructure.mongodb import get_mongodb
 from app.user_setup.models.user_setup import UserSetupBasic, UserSetupRolesEntity

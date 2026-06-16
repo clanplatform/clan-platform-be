@@ -91,6 +91,9 @@ services:
       # CORS
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080"]'
       
+      # Identity Service Integration
+      IDENTITY_SERVICE_URL: "http://host.docker.internal:8001"
+      
       # Logging
       LOG_LEVEL: "DEBUG"
     depends_on:

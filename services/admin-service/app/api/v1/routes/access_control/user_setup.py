@@ -36,7 +36,7 @@ async def create_user_setup_with_details(
 ):
     """Create a user setup with roles, entities, and preferences in one request.
     Also syncs the user to the identity-domain auth-service."""
-    return UserSetupService.create_user_setup_with_details(db, user_data)
+    return await UserSetupService.create_user_setup_with_details(db, user_data)
 
 
 
@@ -53,21 +53,21 @@ def get_user_setup_with_details(
 
 
 @router.put("/{user_id}", response_model=UserSetupBasicResponse)
-def update_user_setup(
+async def update_user_setup(
     user_id: UUID,
     user_data: UserSetupBasicUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Update a user setup"""
-    return UserSetupService.update_user_setup(db, user_id, user_data)
+    return await UserSetupService.update_user_setup(db, user_id, user_data)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_200_OK)
-def delete_user_setup(
+async def delete_user_setup(
     user_id: UUID,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Delete a user setup (cascades to roles_entities and preferences)"""
-    return UserSetupService.delete_user_setup(db, user_id)
+    return await UserSetupService.delete_user_setup(db, user_id)

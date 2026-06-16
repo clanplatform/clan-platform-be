@@ -3,7 +3,6 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 from typing import List, Optional
 from uuid import UUID
-import asyncio
 import logging
 
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
@@ -33,7 +32,7 @@ class UserSetupService:
     # ============================================================================
 
     @staticmethod
-    def create_user_setup(db: Session, user_data: UserSetupBasicCreate) -> UserSetupBasic:
+    async def create_user_setup(db: Session, user_data: UserSetupBasicCreate) -> UserSetupBasic:
         """Create a new user setup with parent UserSetup record"""
         try:
             # Validate reporting_to if provided
@@ -64,6 +63,28 @@ class UserSetupService:
             db.add(db_user_basic)
             db.commit()
             db.refresh(db_user_basic)
+            
+            # Sync user to identity-domain auth-service
+            if AuthServiceSync.sync_enabled():
+                try:
+                    sync_result = await AuthServiceSync.create_auth_user(
+                        user_id=db_user_basic.id,
+                        user_setup_id=db_user_basic.user_setup_id,  # Pass parent ID
+                        username=db_user_basic.username,
+                        email=db_user_basic.email,
+                        password_hash=db_user_basic.password_hash,
+                        firstname=db_user_basic.firstname,
+                        lastname=db_user_basic.lastname,
+                        phone_number=db_user_basic.phone_number,
+                        is_active=(db_user_basic.status == 'active'),
+                        employee_id=db_user_basic.employee_id
+                    )
+                    logger.info(f"User {db_user_basic.username} synced to identity-domain auth-service")
+                except AuthServiceSyncError as e:
+                    logger.error(f"Failed to sync user to auth-service: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during auth-service sync: {str(e)}")
+            
             return db_user_basic
         except IntegrityError as e:
             db.rollback()
@@ -149,7 +170,7 @@ class UserSetupService:
         )
 
     @staticmethod
-    def update_user_setup(db: Session, user_id: UUID, user_data: UserSetupBasicUpdate) -> UserSetupBasic:
+    async def update_user_setup(db: Session, user_id: UUID, user_data: UserSetupBasicUpdate) -> UserSetupBasic:
         """Update user setup"""
         db_user = UserSetupService.get_user_setup(db, user_id)
 
@@ -182,6 +203,38 @@ class UserSetupService:
 
             db.commit()
             db.refresh(db_user)
+            
+            # Sync updates to identity-domain auth-service
+            if AuthServiceSync.sync_enabled():
+                try:
+                    # Prepare sync data - only send fields that were updated
+                    sync_data = {}
+                    if "username" in update_data:
+                        sync_data["username"] = update_data["username"]
+                    if "email" in update_data:
+                        sync_data["email"] = update_data["email"]
+                    if "password_hash" in update_data:
+                        sync_data["password_hash"] = update_data["password_hash"]
+                    if "firstname" in update_data:
+                        sync_data["firstname"] = update_data["firstname"]
+                    if "lastname" in update_data:
+                        sync_data["lastname"] = update_data["lastname"]
+                    if "phone_number" in update_data:
+                        sync_data["phone_number"] = update_data["phone_number"]
+                    if "status" in update_data:
+                        sync_data["is_active"] = (update_data["status"] == "active")
+                    
+                    if sync_data:
+                        sync_result = await AuthServiceSync.update_auth_user(
+                            user_id=user_id,
+                            **sync_data
+                        )
+                        logger.info(f"User {user_id} updates synced to identity-domain auth-service")
+                except AuthServiceSyncError as e:
+                    logger.error(f"Failed to sync user updates to auth-service: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during auth-service sync: {str(e)}")
+            
             return db_user
         except IntegrityError as e:
             db.rollback()
@@ -207,12 +260,23 @@ class UserSetupService:
                 )
 
     @staticmethod
-    def delete_user_setup(db: Session, user_id: UUID) -> dict:
+    async def delete_user_setup(db: Session, user_id: UUID) -> dict:
         """Delete user setup (cascades to roles_entities and preferences)"""
         db_user = UserSetupService.get_user_setup(db, user_id)
         
         db.delete(db_user)
         db.commit()
+        
+        # Sync deletion to identity-domain auth-service
+        if AuthServiceSync.sync_enabled():
+            try:
+                sync_result = await AuthServiceSync.delete_auth_user(user_id)
+                logger.info(f"User {user_id} deletion synced to identity-domain auth-service")
+            except AuthServiceSyncError as e:
+                logger.error(f"Failed to sync user deletion to auth-service: {str(e)}")
+            except Exception as e:
+                logger.error(f"Unexpected error during auth-service sync: {str(e)}")
+        
         return {"message": f"User setup {user_id} deleted successfully"}
 
     # ============================================================================
@@ -368,7 +432,7 @@ class UserSetupService:
     # ============================================================================
 
     @staticmethod
-    def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
+    async def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
         """Create a user setup with roles, entities, and preferences in one transaction"""
         print("="*80)
         print(f"METHOD CALLED: create_user_setup_with_details for user: {user_data.basic.username}")
@@ -447,6 +511,34 @@ class UserSetupService:
             print("SYNC DEBUG: Starting identity database sync check")
             print(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
             logger.info("User created successfully in admin-service database")
+            
+            # Sync user to identity-domain auth-service
+            if AuthServiceSync.sync_enabled():
+                try:
+                    logger.info(f"SYNC: Attempting to sync user {db_user_basic.username} to auth-service")
+                    sync_result = await AuthServiceSync.create_auth_user(
+                        user_id=db_user_basic.id,
+                        user_setup_id=db_user_basic.user_setup_id,  # Pass parent ID
+                        username=db_user_basic.username,
+                        email=db_user_basic.email,
+                        password_hash=db_user_basic.password_hash,
+                        firstname=db_user_basic.firstname,
+                        lastname=db_user_basic.lastname,
+                        phone_number=db_user_basic.phone_number,
+                        is_active=(db_user_basic.status == 'active'),
+                        employee_id=db_user_basic.employee_id
+                    )
+                    logger.info(f"SYNC SUCCESS: User synced to auth-service - {sync_result}")
+                    logger.info(f"User {db_user_basic.username} synced to identity-domain auth-service")
+                except AuthServiceSyncError as e:
+                    # Log the error but don't rollback the admin-service transaction
+                    logger.error(f"SYNC ERROR - Failed to sync user to auth-service: {str(e)}")
+                    # Optionally, you can raise an exception or return a warning
+                    # For now, we'll continue and let the user be created in admin-service only
+                except Exception as e:
+                    logger.error(f"SYNC UNEXPECTED ERROR during auth-service sync: {str(e)}")
+            else:
+                logger.warning("SYNC DISABLED - Auth service sync is disabled (IDENTITY_SERVICE_URL not configured)")
             
             return UserSetupService.get_user_setup_with_details(db, db_user_basic.id)
         except IntegrityError as e:

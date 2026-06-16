@@ -36,6 +36,7 @@ class AuthServiceSync:
     @staticmethod
     async def create_auth_user(
         user_id: UUID,
+        user_setup_id: UUID,  # Added: parent user_setup ID
         username: str,
         email: str,
         password_hash: str,
@@ -69,15 +70,17 @@ class AuthServiceSync:
             auth_service_url = AuthServiceSync._get_auth_service_url()
             
             # Prepare payload for auth-service
+            # Auth-service uses 'status' field, not 'is_active'
             payload = {
                 "id": str(user_id),  # Use the same UUID from admin-service
+                "user_setup_id": str(user_setup_id),  # Parent user_setup ID
                 "username": username,
                 "email": email,
                 "password_hash": password_hash,  # Pass the already hashed password
-                "first_name": firstname,
-                "last_name": lastname,
+                "firstname": firstname,  # No underscore!
+                "lastname": lastname,   # No underscore!
                 "phone_number": phone_number,
-                "is_active": is_active,
+                "status": "active" if is_active else "inactive",  # Map is_active to status
                 "employee_id": employee_id,
                 "created_from": "admin-service"  # Track the source
             }
@@ -91,7 +94,7 @@ class AuthServiceSync:
                     json=payload
                 )
                 
-                if response.status_code == 201:
+                if response.status_code in [200, 201]:  # Accept both 200 and 201
                     logger.info(f"Successfully synced user {username} (ID: {user_id}) to auth-service")
                     return response.json()
                 elif response.status_code == 409:

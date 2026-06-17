@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     
     # Identity Service (external)
     IDENTITY_SERVICE_URL: Optional[str] = None
+
+    # Audit Service (internal)
+    AUDIT_SERVICE_URL: str = "http://audit-service:8000"
     
     # CORS
     CORS_ORIGINS: list = ["*"]

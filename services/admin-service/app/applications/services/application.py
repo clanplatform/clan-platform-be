@@ -7,6 +7,7 @@ from app.applications.models.application import Application
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.domains.services.domain import get_domain_by_name, get_domain
 from app.core.hybrid_encryption import hybrid_encryption
+from app.infrastructure.audit_client import fire_audit_log
 
 def get_application(db: Session, application_id: uuid.UUID) -> Optional[Application]:
     """Get an application by ID"""
@@ -70,7 +71,7 @@ def fetch_applications_by_domain_id(
 
 
 
-def create_application(db: Session, application: ApplicationCreate) -> Application:
+def create_application(db: Session, application: ApplicationCreate, user_id: Optional[uuid.UUID] = None) -> Application:
     """Create a new application"""
     # Check if domain exists by domain_id
     domain = get_domain(db, domain_id=application.domain_id)
@@ -110,9 +111,15 @@ def create_application(db: Session, application: ApplicationCreate) -> Applicati
     db.add(db_application)
     db.commit()
     db.refresh(db_application)
+    fire_audit_log(
+        action="CREATE", object_type="Application",
+        object_id=str(db_application.id),
+        user_id=str(user_id) if user_id else None,
+        new_values={"name": db_application.name, "domain_id": str(db_application.domain_id)},
+    )
     return db_application
 
-def update_application(db: Session, application_id: uuid.UUID, application: ApplicationUpdate) -> Application:
+def update_application(db: Session, application_id: uuid.UUID, application: ApplicationUpdate, user_id: Optional[uuid.UUID] = None) -> Application:
     """Update an application"""
     db_application = get_application(db, application_id=application_id)
     if not db_application:
@@ -146,10 +153,16 @@ def update_application(db: Session, application_id: uuid.UUID, application: Appl
     db.add(db_application)
     db.commit()
     db.refresh(db_application)
+    fire_audit_log(
+        action="UPDATE", object_type="Application",
+        object_id=str(application_id),
+        user_id=str(user_id) if user_id else None,
+        new_values=update_data,
+    )
     return db_application
 
 
-def delete_application(db: Session, application_id: uuid.UUID) -> None:
+def delete_application(db: Session, application_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> None:
     """Delete an application"""
     db_application = get_application(db, application_id=application_id)
     if not db_application:
@@ -157,4 +170,9 @@ def delete_application(db: Session, application_id: uuid.UUID) -> None:
     
     db.delete(db_application)
     db.commit()
+    fire_audit_log(
+        action="DELETE", object_type="Application",
+        object_id=str(application_id),
+        user_id=str(user_id) if user_id else None,
+    )
     return None

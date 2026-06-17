@@ -6,6 +6,8 @@ from sqlalchemy.sql import func
 from app.infrastructure.database.base import Base
 import uuid
 
+
+
 class Department(Base):
     __tablename__ = "departments"
     
@@ -43,29 +45,3 @@ class Department(Base):
     
     def __repr__(self):
         return f"<Department(id={self.department_id}, name={self.department_name}, entity_id={self.entity_id})>"
-
-class AuditLog(Base):
-    __tablename__ = "audit_logs"
-    
-    log_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint to non-existent users table
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
-    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
-    action = Column(String(100), nullable=False)
-    object_type = Column(String(100), nullable=False)
-    object_id = Column(String(255), nullable=True)
-    old_values = Column(JSON, default=dict)
-    new_values = Column(JSON, default=dict)
-    ip_address = Column(String(45), nullable=True)
-    user_agent = Column(Text, nullable=True)
-    session_id = Column(String(255), nullable=True)
-    risk_score = Column(String(20), nullable=True)
-    compliance_tags = Column(JSON, default=list)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relationships
-    client = relationship("Client")
-    entity = relationship("Entity")
-    
-    def __repr__(self):
-        return f"<AuditLog(id={self.log_id}, action={self.action}, user_id={self.user_id})>"

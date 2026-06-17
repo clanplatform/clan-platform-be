@@ -144,7 +144,7 @@ async def working_sync_to_mongodb(db: Session, application_id: UUID) -> bool:
         print(f"[Working Sync] Starting sync for application: {application_id}")
         
         # Get MongoDB connection
-        db_mongo = get_mongodb()
+        db_mongo = await get_mongodb()
         if db_mongo is None:
             print(f"[Working Sync] MongoDB not available")
             return False

@@ -6,6 +6,7 @@ from uuid import UUID
 from app.clients.models.clients import Client
 from app.clients.schemas.clients import ClientCreate, ClientUpdate
 from app.core.hybrid_encryption import hybrid_encryption
+from app.infrastructure.audit_client import fire_audit_log
 
 # TODO: ClientApplication and DomainApplication models and schemas need to be created
 # Placeholder types for now - functions using these will raise NotImplementedError
@@ -61,7 +62,7 @@ def get_clients_by_domain(db: Session, domain_id: int, skip: int = 0, limit: int
     
     return clients
 
-def create_client(db: Session, client: ClientCreate) -> Client:
+def create_client(db: Session, client: ClientCreate, user_id: Optional[UUID] = None) -> Client:
     """Create a new client"""
     # Check if client with same email already exists
     existing_client = get_client_by_email(db, client.email)
@@ -77,9 +78,16 @@ def create_client(db: Session, client: ClientCreate) -> Client:
     db.add(db_client)
     db.commit()
     db.refresh(db_client)
+    fire_audit_log(
+        action="CREATE", object_type="Client",
+        object_id=str(db_client.client_id),
+        client_id=str(db_client.client_id),
+        user_id=str(user_id) if user_id else None,
+        new_values={"company_name": db_client.company_name, "email": db_client.email},
+    )
     return db_client
 
-def update_client(db: Session, client_id: UUID, client_update: ClientUpdate) -> Optional[Client]:
+def update_client(db: Session, client_id: UUID, client_update: ClientUpdate, user_id: Optional[UUID] = None) -> Optional[Client]:
     """Update an existing client"""
     db_client = get_client(db, client_id)
     if not db_client:
@@ -104,9 +112,16 @@ def update_client(db: Session, client_id: UUID, client_update: ClientUpdate) -> 
     
     db.commit()
     db.refresh(db_client)
+    fire_audit_log(
+        action="UPDATE", object_type="Client",
+        object_id=str(client_id),
+        client_id=str(client_id),
+        user_id=str(user_id) if user_id else None,
+        new_values=update_data,
+    )
     return db_client
 
-def delete_client(db: Session, client_id: UUID) -> bool:
+def delete_client(db: Session, client_id: UUID, user_id: Optional[UUID] = None) -> bool:
     """Soft delete a client (mark as deleted)"""
     db_client = get_client(db, client_id)
     if not db_client:
@@ -115,6 +130,13 @@ def delete_client(db: Session, client_id: UUID) -> bool:
     db_client.deleted = "Y"
     db_client.active = "false"
     db.commit()
+    fire_audit_log(
+        action="DELETE", object_type="Client",
+        object_id=str(client_id),
+        client_id=str(client_id),
+        user_id=str(user_id) if user_id else None,
+        old_values={"deleted": "N"}, new_values={"deleted": "Y"},
+    )
     return True
 
 def hard_delete_client(db: Session, client_id: UUID) -> bool:

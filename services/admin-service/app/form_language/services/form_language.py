@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from app.form_language.models.form_language import FormLanguage
 from app.form_language.schemas.form_language import FormLanguageCreate, FormLanguageUpdate
+from app.infrastructure.audit_client import fire_audit_log
 
 
 class FormLanguageService:
@@ -18,6 +19,11 @@ class FormLanguageService:
         db.add(db_form_language)
         db.commit()
         db.refresh(db_form_language)
+        fire_audit_log(
+            action="CREATE", object_type="FormLanguage",
+            object_id=str(db_form_language.id),
+            new_values={"lang_code": db_form_language.lang_code, "entity_id": str(db_form_language.app_form_entity_id)},
+        )
         return db_form_language
 
     @staticmethod
@@ -111,6 +117,11 @@ class FormLanguageService:
         db_form_language.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(db_form_language)
+        fire_audit_log(
+            action="UPDATE", object_type="FormLanguage",
+            object_id=str(form_language_id),
+            new_values=update_data,
+        )
         return db_form_language
 
     @staticmethod
@@ -123,6 +134,10 @@ class FormLanguageService:
         
         db_form_language.deleted_at = datetime.now(timezone.utc)
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="FormLanguage",
+            object_id=str(form_language_id),
+        )
         return True
 
     @staticmethod

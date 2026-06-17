@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc
 from app.modules.models.module import Module
 from app.modules.schemas.module import ModuleCreate, ModuleUpdate
+from app.infrastructure.audit_client import fire_audit_log
 from datetime import datetime
 
 class ModuleService:
@@ -18,6 +19,11 @@ class ModuleService:
         db.add(db_module)
         db.commit()
         db.refresh(db_module)
+        fire_audit_log(
+            action="CREATE", object_type="Module",
+            object_id=str(db_module.id),
+            new_values={"name": db_module.name, "code": db_module.code},
+        )
         return db_module
 
     @staticmethod
@@ -141,6 +147,11 @@ class ModuleService:
         
         db.commit()
         db.refresh(db_module)
+        fire_audit_log(
+            action="UPDATE", object_type="Module",
+            object_id=str(module_id),
+            new_values=update_data,
+        )
         return db_module
 
     @staticmethod
@@ -154,8 +165,13 @@ class ModuleService:
         db_module.is_active = False
         if deleted_by:
             db_module.updated_by = deleted_by
-        
+
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="Module",
+            object_id=str(module_id),
+            old_values={"is_deleted": False}, new_values={"is_deleted": True},
+        )
         return True
 
     @staticmethod

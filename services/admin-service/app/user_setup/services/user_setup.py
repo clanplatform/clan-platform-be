@@ -20,6 +20,7 @@ from app.user_setup.schemas.user_setup import (
 )
 from app.core.security import get_password_hash
 from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
+from app.infrastructure.audit_client import fire_audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,12 @@ class UserSetupService:
                     logger.error(f"Failed to sync user to auth-service: {str(e)}")
                 except Exception as e:
                     logger.error(f"Unexpected error during auth-service sync: {str(e)}")
-            
+
+            fire_audit_log(
+                action="CREATE", object_type="UserSetup",
+                object_id=str(db_user_basic.id),
+                new_values={"username": db_user_basic.username, "email": db_user_basic.email},
+            )
             return db_user_basic
         except IntegrityError as e:
             db.rollback()
@@ -234,7 +240,12 @@ class UserSetupService:
                     logger.error(f"Failed to sync user updates to auth-service: {str(e)}")
                 except Exception as e:
                     logger.error(f"Unexpected error during auth-service sync: {str(e)}")
-            
+
+            fire_audit_log(
+                action="UPDATE", object_type="UserSetup",
+                object_id=str(user_id),
+                new_values={k: v for k, v in update_data.items() if k != "password_hash"},
+            )
             return db_user
         except IntegrityError as e:
             db.rollback()
@@ -266,7 +277,11 @@ class UserSetupService:
         
         db.delete(db_user)
         db.commit()
-        
+        fire_audit_log(
+            action="DELETE", object_type="UserSetup",
+            object_id=str(user_id),
+        )
+
         # Sync deletion to identity-domain auth-service
         if AuthServiceSync.sync_enabled():
             try:

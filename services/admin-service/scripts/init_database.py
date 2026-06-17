@@ -37,7 +37,7 @@ from sqlalchemy import inspect, text
 from app.clients.models.clients import Client
 from app.domains.models.domain import Domain
 from app.entities.models.entity import Entity
-from app.departments.models.departments import Department, AuditLog
+from app.departments.models.departments import Department
 from app.divisions.models.divisions import Division
 from app.applications.models.application import Application
 from app.modules.models.module import Module

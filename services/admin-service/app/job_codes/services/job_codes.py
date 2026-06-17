@@ -14,6 +14,7 @@ from datetime import datetime
 
 from app.job_codes.models.job_codes import JobCode, JobCodeBasicInfo, JobCodeSkills, JobCodeBenefits
 from app.job_codes.schemas.job_codes import JobCodeCreate, JobCodeUpdate
+from app.infrastructure.audit_client import fire_audit_log
 
 
 def get_job_code_by_id(db: Session, job_code_id: UUID, load_relationships: bool = True) -> Optional[JobCode]:
@@ -178,10 +179,16 @@ def create_job_code(db: Session, job_code_data: JobCodeCreate, user_id: Optional
         
         db.commit()
         db.refresh(job_code)
-        
+
+        fire_audit_log(
+            action="CREATE", object_type="JobCode",
+            object_id=str(job_code.id),
+            user_id=str(user_id) if user_id else None,
+            new_values={"job_code": job_code.job_code, "job_title": job_code.job_title},
+        )
         # Return with relationships loaded
         return get_job_code_by_id(db, job_code.id, load_relationships=True)
-        
+
     except HTTPException:
         db.rollback()
         raise
@@ -297,9 +304,14 @@ def update_job_code(
         db.commit()
         db.refresh(job_code)
 
+        fire_audit_log(
+            action="UPDATE", object_type="JobCode",
+            object_id=str(job_code_id),
+            user_id=str(user_id) if user_id else None,
+        )
         # Return with relationships loaded
         return get_job_code_by_id(db, job_code_id, load_relationships=True)
-        
+
     except HTTPException:
         db.rollback()
         raise
@@ -367,8 +379,13 @@ def delete_job_code(db: Session, job_code_id: UUID, user_id: Optional[UUID] = No
     try:
         db.delete(job_code)  # Cascade delete handles nested relationships
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="JobCode",
+            object_id=str(job_code_id),
+            user_id=str(user_id) if user_id else None,
+        )
         return True
-        
+
     except Exception as e:
         db.rollback()
         raise HTTPException(

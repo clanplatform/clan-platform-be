@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate
+from app.infrastructure.audit_client import fire_audit_log
 
 
 def get_division(db: Session, division_id: UUID) -> Optional[Division]:
@@ -271,7 +272,14 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
     db.add(db_division)
     db.commit()
     db.refresh(db_division)
-    
+    fire_audit_log(
+        action="CREATE", object_type="Division",
+        object_id=str(db_division.id),
+        client_id=str(db_division.client_id),
+        entity_id=str(db_division.entity_id) if db_division.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        new_values={"division_name": db_division.division_name, "division_code": db_division.division_code},
+    )
     return db_division
 
 
@@ -335,7 +343,14 @@ def update_division(
     db.add(db_division)
     db.commit()
     db.refresh(db_division)
-    
+    fire_audit_log(
+        action="UPDATE", object_type="Division",
+        object_id=str(division_id),
+        client_id=str(db_division.client_id),
+        entity_id=str(db_division.entity_id) if db_division.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        new_values=update_data,
+    )
     return db_division
 
 
@@ -361,10 +376,17 @@ def delete_division(db: Session, division_id: UUID, user_id: Optional[UUID] = No
     # Perform soft delete
     db_division.is_active = False
     db_division.deleted_at = datetime.utcnow()
-    
+
     db.add(db_division)
     db.commit()
-    
+    fire_audit_log(
+        action="DELETE", object_type="Division",
+        object_id=str(division_id),
+        client_id=str(db_division.client_id),
+        entity_id=str(db_division.entity_id) if db_division.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        old_values={"is_active": True}, new_values={"is_active": False},
+    )
     return True
 
 
@@ -382,11 +404,18 @@ def restore_division(db: Session, division_id: UUID, user_id: Optional[UUID] = N
 
     db_division.is_active = True
     db_division.deleted_at = None
-    
+
     db.add(db_division)
     db.commit()
     db.refresh(db_division)
-    
+    fire_audit_log(
+        action="RESTORE", object_type="Division",
+        object_id=str(division_id),
+        client_id=str(db_division.client_id),
+        entity_id=str(db_division.entity_id) if db_division.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        old_values={"is_active": False}, new_values={"is_active": True},
+    )
     return db_division
 
 

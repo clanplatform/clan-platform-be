@@ -4,8 +4,9 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 
-from app.departments.models.departments import Department, AuditLog
+from app.departments.models.departments import Department
 from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate
+from app.infrastructure.audit_client import fire_audit_log
 
 
 def get_department(db: Session, department_id: UUID) -> Optional[Department]:
@@ -136,18 +137,15 @@ def create_department(db: Session, department: DepartmentCreate, user_id: Option
     db.commit()
     db.refresh(db_department)
     
-    # Log the creation
-    if user_id:
-        _log_audit(
-            db=db,
-            user_id=user_id,
-            client_id=department.client_id,
-            entity_id=department.entity_id,
-            action="CREATE",
-            object_type="Department",
-            object_id=str(db_department.department_id),
-            new_values=department_data
-        )
+    fire_audit_log(
+        action="CREATE",
+        object_type="Department",
+        object_id=str(db_department.department_id),
+        client_id=str(department.client_id),
+        entity_id=str(department.entity_id) if department.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        new_values=department_data,
+    )
     
     return db_department
 
@@ -194,19 +192,16 @@ def update_department(
     db.commit()
     db.refresh(db_department)
     
-    # Log the update
-    if user_id:
-        _log_audit(
-            db=db,
-            user_id=user_id,
-            client_id=db_department.client_id,
-            entity_id=db_department.entity_id,
-            action="UPDATE",
-            object_type="Department",
-            object_id=str(department_id),
-            old_values=old_values,
-            new_values=update_data
-        )
+    fire_audit_log(
+        action="UPDATE",
+        object_type="Department",
+        object_id=str(department_id),
+        client_id=str(db_department.client_id),
+        entity_id=str(db_department.entity_id) if db_department.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        old_values=old_values,
+        new_values=update_data,
+    )
     
     return db_department
 
@@ -258,19 +253,16 @@ def delete_department(db: Session, department_id: UUID, user_id: Optional[UUID] 
     db.add(db_department)
     db.commit()
     
-    # Log the deletion
-    if user_id:
-        _log_audit(
-            db=db,
-            user_id=user_id,
-            client_id=db_department.client_id,
-            entity_id=db_department.entity_id,
-            action="DELETE",
-            object_type="Department",
-            object_id=str(department_id),
-            old_values=old_values,
-            new_values={"is_deleted": True, "is_active": False}
-        )
+    fire_audit_log(
+        action="DELETE",
+        object_type="Department",
+        object_id=str(department_id),
+        client_id=str(db_department.client_id),
+        entity_id=str(db_department.entity_id) if db_department.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        old_values=old_values,
+        new_values={"is_deleted": True, "is_active": False},
+    )
     
     return True
 
@@ -296,19 +288,16 @@ def restore_department(db: Session, department_id: UUID, user_id: Optional[UUID]
     db.commit()
     db.refresh(db_department)
     
-    # Log the restoration
-    if user_id:
-        _log_audit(
-            db=db,
-            user_id=user_id,
-            client_id=db_department.client_id,
-            entity_id=db_department.entity_id,
-            action="RESTORE",
-            object_type="Department",
-            object_id=str(department_id),
-            old_values={"is_deleted": True},
-            new_values={"is_deleted": False, "is_active": True}
-        )
+    fire_audit_log(
+        action="RESTORE",
+        object_type="Department",
+        object_id=str(department_id),
+        client_id=str(db_department.client_id),
+        entity_id=str(db_department.entity_id) if db_department.entity_id else None,
+        user_id=str(user_id) if user_id else None,
+        old_values={"is_deleted": True},
+        new_values={"is_deleted": False, "is_active": True},
+    )
     
     return db_department
 
@@ -404,37 +393,3 @@ def search_departments(
     departments = query.offset(skip).limit(limit).all()
     return departments
 
-
-def _log_audit(
-    db: Session,
-    user_id: UUID,
-    client_id: UUID,
-    entity_id: Optional[UUID],
-    action: str,
-    object_type: str,
-    object_id: str,
-    old_values: Optional[dict] = None,
-    new_values: Optional[dict] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None
-) -> None:
-    """Helper function to log audit entries"""
-    try:
-        audit_log = AuditLog(
-            user_id=user_id,
-            client_id=client_id,
-            entity_id=entity_id,
-            action=action,
-            object_type=object_type,
-            object_id=object_id,
-            old_values=old_values or {},
-            new_values=new_values or {},
-            ip_address=ip_address,
-            user_agent=user_agent
-        )
-        db.add(audit_log)
-        db.commit()
-    except Exception as e:
-        # Log audit failure but don't fail the main operation
-        print(f"Audit log failed: {str(e)}")
-        db.rollback()

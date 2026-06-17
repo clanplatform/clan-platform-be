@@ -2,9 +2,11 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from typing import List, Optional
 
+from uuid import UUID
 from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate
 from app.core.hybrid_encryption import hybrid_encryption
+from app.infrastructure.audit_client import fire_audit_log
 
 def get_domain(db: Session, domain_id: int) -> Optional[Domain]:
     """Get a domain by ID"""
@@ -43,7 +45,7 @@ def get_domains(db: Session, skip: int = 0, limit: int = 100) -> List[Domain]:
         _decrypt_domain_fields(domain)
     return domains
 
-def create_domain(db: Session, domain: DomainCreate) -> Domain:
+def create_domain(db: Session, domain: DomainCreate, user_id: Optional[UUID] = None) -> Domain:
     """Create a new domain"""
     # Check if domain code already exists
     db_domain = get_domain_by_code(db, domain_code=domain.domain_code)
@@ -70,9 +72,15 @@ def create_domain(db: Session, domain: DomainCreate) -> Domain:
     db.add(db_domain)
     db.commit()
     db.refresh(db_domain)
+    fire_audit_log(
+        action="CREATE", object_type="Domain",
+        object_id=str(db_domain.id),
+        user_id=str(user_id) if user_id else None,
+        new_values={"domain_name": db_domain.domain_name, "domain_code": db_domain.domain_code},
+    )
     return db_domain
 
-def update_domain(db: Session, domain_id: int, domain: DomainUpdate) -> Domain:
+def update_domain(db: Session, domain_id: int, domain: DomainUpdate, user_id: Optional[UUID] = None) -> Domain:
     """Update a domain"""
     db_domain = get_domain(db, domain_id=domain_id)
     if not db_domain:
@@ -100,9 +108,15 @@ def update_domain(db: Session, domain_id: int, domain: DomainUpdate) -> Domain:
     db.add(db_domain)
     db.commit()
     db.refresh(db_domain)
+    fire_audit_log(
+        action="UPDATE", object_type="Domain",
+        object_id=str(domain_id),
+        user_id=str(user_id) if user_id else None,
+        new_values=update_data,
+    )
     return db_domain
 
-def delete_domain(db: Session, domain_id: int) -> None:
+def delete_domain(db: Session, domain_id: int, user_id: Optional[UUID] = None) -> None:
     """Delete a domain"""
     db_domain = get_domain(db, domain_id=domain_id)
     if not db_domain:
@@ -110,4 +124,9 @@ def delete_domain(db: Session, domain_id: int) -> None:
     
     db.delete(db_domain)
     db.commit()
+    fire_audit_log(
+        action="DELETE", object_type="Domain",
+        object_id=str(domain_id),
+        user_id=str(user_id) if user_id else None,
+    )
     return None

@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+from app.infrastructure.audit_client import fire_audit_log
 from app.menus.models.menu import Menu
 from app.forms.models.forms import Form
 from app.user_role.schemas.user_role import (
@@ -44,6 +45,11 @@ class UserRoleService:
             db.add(db_role)
             db.commit()
             db.refresh(db_role)
+            fire_audit_log(
+                action="CREATE", object_type="UserRole",
+                object_id=str(db_role.id),
+                new_values={"role_name": db_role.role_name, "role_code": db_role.role_code},
+            )
             return db_role
         except IntegrityError as e:
             db.rollback()
@@ -122,6 +128,11 @@ class UserRoleService:
             
             db.commit()
             db.refresh(db_role)
+            fire_audit_log(
+                action="UPDATE", object_type="UserRole",
+                object_id=str(role_id),
+                new_values=update_data,
+            )
             return db_role
         except IntegrityError as e:
             db.rollback()
@@ -147,6 +158,10 @@ class UserRoleService:
         
         db.delete(db_role_main)
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="UserRole",
+            object_id=str(role_id),
+        )
         return True
 
     # ============================================================================

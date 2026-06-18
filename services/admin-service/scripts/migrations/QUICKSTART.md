@@ -4,7 +4,7 @@
 
 ### Step 1: Navigate to the Project
 ```bash
-cd c:\Users\arung\OneDrive\Documents\clan_archi\platform-domain-be\clan-platform-domain-be\services\admin-service
+cd c:\Users\arung\OneDrive\Documents\clan_archi\clan-platform-be\clan-clan-platform-be\services\admin-service
 ```
 
 ### Step 2: Run the Migration Script

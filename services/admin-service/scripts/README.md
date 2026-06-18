@@ -124,7 +124,7 @@ DATABASE_URL=postgresql://postgres:root@localhost:5432/clan_platform
 
 ### From project root:
 ```bash
-cd /path/to/clan-platform-domain-be
+cd /path/to/clan-clan-platform-be
 python services/admin-service/scripts/sync_existing_users.py --all
 ```
 

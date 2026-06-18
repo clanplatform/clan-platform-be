@@ -1,5 +1,5 @@
 # ================================================
-# Render Blueprint — clan-platform-domain-be
+# Render Blueprint — clan-clan-platform-be
 # Defines two admin-service deployments:
 #   1. admin-service-dev  → development  (encryption OFF)
 #   2. admin-service-prod → production   (encryption ON)

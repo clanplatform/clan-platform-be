@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 import os
@@ -14,6 +14,8 @@ from app.entities.schemas.entity import (
     EntityResponse,
     EntityListResponse
 )
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 
 # Check if authentication is required
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
@@ -29,7 +31,12 @@ def require_admin_role(current_user=Depends(get_current_user)):
 router = APIRouter()
 
 @router.post("/", response_model=EntityResponse)
-async def create_entity(entity: EntityCreate, db: Session = Depends(get_db)):
+async def create_entity(
+    request: Request,
+    entity: EntityCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
     """Create a new entity"""
     try:
         # Validate client exists
@@ -42,6 +49,29 @@ async def create_entity(entity: EntityCreate, db: Session = Depends(get_db)):
         db.add(db_entity)
         db.commit()
         db.refresh(db_entity)
+
+        # Audit log: entity created
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Entity",
+                object_id=str(db_entity.entity_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={
+                    "name": db_entity.name,
+                    "client_id": str(db_entity.client_id),
+                    "entity_type": db_entity.entity_type,
+                },
+            )
+        except Exception:
+            pass
 
         return db_entity
     except HTTPException:
@@ -135,6 +165,7 @@ async def get_entity(
 
 @router.put("/{entity_id}", response_model=EntityResponse)
 async def update_entity(
+    request: Request,
     entity_id: UUID,
     entity_data: EntityUpdate,
     db: Session = Depends(get_db),
@@ -157,6 +188,13 @@ async def update_entity(
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
+    # Capture old values before update for audit
+    old_values = {
+        "name": entity.name,
+        "client_id": str(entity.client_id),
+        "entity_type": entity.entity_type,
+    }
+
     # Update fields
     update_data = entity_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -165,10 +203,31 @@ async def update_entity(
     db.commit()
     db.refresh(entity)
 
+    # Audit log: entity updated
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="UPDATE",
+            object_type="Entity",
+            object_id=str(entity_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            old_values=old_values,
+            new_values=update_data,
+        )
+    except Exception:
+        pass
+
     return entity
 
 @router.delete("/{entity_id}")
 async def delete_entity(
+    request: Request,
     entity_id: UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -204,11 +263,33 @@ async def delete_entity(
             detail="Cannot delete entity with active child entities"
         )
 
+    # Snapshot name before soft delete for audit
+    old_entity_name = entity.name
+
     # Perform soft delete
     entity.active = False
-    
+
     db.commit()
-    
+
+    # Audit log: entity deleted
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="Entity",
+            object_id=str(entity_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={"name": old_entity_name, "id": str(entity_id)},
+        )
+    except Exception:
+        pass
+
     return {"message": "Entity deleted successfully"}
 
 # @router.get("/by-client/{client_id}", response_model=EntityListResponse)

@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # AES-256-GCM field encryption key
+    # base64url-encoded 32-byte key — generate with:
+    #   python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+    # If absent, key is derived from SECRET_KEY via HKDF (not recommended for production).
+    ENCRYPTION_KEY: Optional[str] = None
     
     # JWT Public Key for RS256 verification (optional, for production)
     # If using RS256, provide the public key from the auth service

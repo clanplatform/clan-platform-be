@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 import os
@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user  # Uses optional auth support
 from app.core.config import settings
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 # User model not in scope - commenting out for now
 # from app.models.user import User
 from app.clients.models.clients import Client
@@ -38,6 +40,7 @@ router = APIRouter()
 
 @router.post("/", response_model=ClientResponse)
 async def create_client(
+    request: Request,
     client_data: ClientCreate,
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)
@@ -62,6 +65,28 @@ async def create_client(
 
     # Cache removed (redis_cache not in scope)
     # Invalidate clients list cache removed
+
+    # Audit log: client created
+    try:
+        client_id_audit, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="CREATE",
+            object_type="Client",
+            object_id=str(db_client.client_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["CREATE"],
+            new_values={
+                "client_name": db_client.client_name,
+                "contact_email": db_client.contact_email,
+            },
+        )
+    except Exception:
+        pass
 
     return db_client
 
@@ -125,6 +150,7 @@ async def list_clients(
 
 @router.put("/{client_id}", response_model=ClientResponse)
 async def update_client(
+    request: Request,
     client_id: UUID,
     client_data: ClientUpdate,
     db: Session = Depends(get_db),
@@ -135,6 +161,12 @@ async def update_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    # Capture old values before update for audit
+    old_values = {
+        "client_name": client.client_name,
+        "contact_email": client.contact_email,
+    }
+
     # Update fields
     update_data = client_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -143,10 +175,31 @@ async def update_client(
     db.commit()
     db.refresh(client)
 
+    # Audit log: client updated
+    try:
+        client_id_audit, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="UPDATE",
+            object_type="Client",
+            object_id=str(client_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            old_values=old_values,
+            new_values=update_data,
+        )
+    except Exception:
+        pass
+
     return client
 
 @router.delete("/{client_id}")
 async def delete_client(
+    request: Request,
     client_id: UUID,
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)
@@ -159,9 +212,31 @@ async def delete_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    # Snapshot name before soft delete for audit
+    old_client_name = client.client_name
+
     # Perform soft delete
     client.is_active = False
 
     db.commit()
+
+    # Audit log: client deleted
+    try:
+        client_id_audit, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="Client",
+            object_id=str(client_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={"name": old_client_name},
+        )
+    except Exception:
+        pass
 
     return {"message": "Client deleted successfully"}

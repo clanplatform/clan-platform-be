@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 
@@ -13,6 +13,8 @@ from app.menu_language.schemas.menu_language import (
     TranslationMapResponse
 )
 from app.core.security import get_current_user
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 
 router = APIRouter()
 
@@ -24,6 +26,7 @@ router = APIRouter()
     summary="Create a new menu language entry"
 )
 def create_menu_language(
+    request: Request,
     menu_language_data: MenuLanguageCreate,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -42,6 +45,30 @@ def create_menu_language(
             db=db,
             menu_language_data=menu_language_data
         )
+
+        # Audit log: menu language created
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="MenuLanguage",
+                object_id=str(menu_language.id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={
+                    "lang_code": menu_language.lang_code,
+                    "language": menu_language.language,
+                    "translated_name": menu_language.translated_name,
+                },
+            )
+        except Exception:
+            pass
+
         return menu_language
     except Exception as e:
         raise HTTPException(
@@ -132,6 +159,7 @@ def get_menu_languages_by_lang_code(
     summary="Update a menu language entry"
 )
 def update_menu_language(
+    request: Request,
     menu_language_id: UUID,
     menu_language_data: MenuLanguageUpdate,
     db: Session = Depends(get_db),
@@ -148,13 +176,36 @@ def update_menu_language(
         menu_language_id=menu_language_id,
         menu_language_data=menu_language_data
     )
-    
+
     if not menu_language:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu language entry not found"
         )
-    
+
+    # Audit log: menu language updated
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="UPDATE",
+            object_type="MenuLanguage",
+            object_id=str(menu_language_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            new_values={
+                "lang_code": menu_language.lang_code,
+                "language": menu_language.language,
+                "translated_name": menu_language.translated_name,
+            },
+        )
+    except Exception:
+        pass
+
     return menu_language
 
 
@@ -164,26 +215,46 @@ def update_menu_language(
     summary="Soft delete a menu language entry"
 )
 def delete_menu_language(
+    request: Request,
     menu_language_id: UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
     Soft delete a menu language entry (sets deleted_at timestamp).
-    
+
     - **menu_language_id**: ID of the menu language entry to delete
     """
     success = menu_language_service.delete_menu_language(
         db=db,
         menu_language_id=menu_language_id
     )
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu language entry not found"
         )
-    
+
+    # Audit log: menu language deleted
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="MenuLanguage",
+            object_id=str(menu_language_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={"id": str(menu_language_id)},
+        )
+    except Exception:
+        pass
+
     return None
 
 

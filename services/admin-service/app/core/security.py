@@ -3,6 +3,7 @@ Authentication and security utilities
 """
 from datetime import datetime, timedelta
 from typing import Optional
+import hashlib
 from jose import JWTError, jwt
 import bcrypt
 from fastapi import Depends, HTTPException, status
@@ -217,14 +218,18 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Stable per-token session ID: SHA-256 of the raw token (first 32 hex chars)
+    session_id = hashlib.sha256(token.encode()).hexdigest()[:32]
+
     # Return user principal object with all available claims
     user = {
         "id": user_id,
-        "user_id": payload.get("user_id"),  # Keep original user_id if present
+        "user_id": payload.get("user_id"),
         "username": payload.get("username"),
         "email": payload.get("email"),
         "roles": payload.get("roles", []),
-        "user_setup_id": payload.get("user_setup_id")  # Include user_setup_id from token
+        "user_setup_id": payload.get("user_setup_id"),
+        "session_id": payload.get("jti") or session_id,
     }
     
     print(f"[AUTH] User authenticated: {user_id} (username: {user.get('username')})")

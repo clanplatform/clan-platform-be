@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Union
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, and_
 from datetime import datetime, timezone
@@ -25,6 +25,8 @@ from app.menu_details.services.menu_details import menu_details_service
 from app.menu_reorder.services.menu_reorder import MenuReorderService
 from app.menu_soft_delete.services.menu_soft_delete import menu_cleanup_service
 from app.infrastructure.redis_cache.redis_cache import redis_cache
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 from app.menu_language.models.menu_language import MenuLanguage
 from bson import ObjectId
 from app.infrastructure.mongodb import get_mongodb
@@ -1557,6 +1559,7 @@ async def get_structured_navigation_hierarchy(
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_menu(
+    request: Request,
     menu_data: Union[MenuCreate, MenuBatchCreate],
     nav_doc_id: Optional[str] = Query("69074724f217ab8fcb2e3b24", description="Mongo navigation doc ObjectId (defaults to known id)"),
     db: Session = Depends(get_db),
@@ -1602,14 +1605,15 @@ async def create_menu(
         return await create_menus_batch_structured(menu_data, nav_doc_id, db, current_user)
     else:
         print(f"[Menu Create] 🚀 Single menu creation")
-        return await create_single_menu_structured(menu_data, nav_doc_id, db, current_user)
+        return await create_single_menu_structured(menu_data, nav_doc_id, db, current_user, request)
 
 
 async def create_single_menu_structured(
     menu_data: MenuCreate,
     nav_doc_id: str,
     db: Session,
-    current_user
+    current_user,
+    request: Optional[Request] = None
 ) -> MenuResponse:
     """
     Create a single menu with structured hierarchy support
@@ -1727,6 +1731,22 @@ async def create_single_menu_structured(
     db.refresh(menu)
 
     print(f"[Menu Create Structured] ✅ Created menu in PostgreSQL: {menu.id}")
+
+    try:
+        _uid = get_user_id(current_user)
+        _cid, _eid = get_audit_org_context(db, _uid)
+        fire_audit_log(
+            action="CREATE", object_type="Menu",
+            object_id=str(menu.id),
+            user_id=_uid, client_id=_cid, entity_id=_eid,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request) if request else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+            risk_score=RISK_SCORE["CREATE"],
+            new_values={"name": menu.name, "label": menu.label, "application_id": str(menu.application_id)},
+        )
+    except Exception:
+        pass
 
     # Process children recursively
     processed_children = await process_children_recursive_structured(
@@ -3021,6 +3041,7 @@ async def create_menus_batch(
 
 @router.put("/{menu_id}", response_model=MenuResponse)
 async def update_menu(
+    request: Request,
     menu_id: uuid.UUID,
     menu_data: MenuUpdate,
     nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
@@ -3048,6 +3069,7 @@ async def update_menu(
 
     # 2️⃣ Prepare update data
     update_data = menu_data.dict(exclude_unset=True, by_alias=False)
+    old_values = {f: getattr(menu, f, None) for f in update_data if f != "children"}
 
     # ✅ Access is now a list of strings, no enum conversion needed
     if 'access' in update_data and update_data['access'] is not None:
@@ -3082,7 +3104,24 @@ async def update_menu(
     db.commit()
     db.refresh(menu)
     print(f"[Menu Update] ✅ Updated PostgreSQL for menu_id: {menu.id}")
-    
+
+    try:
+        _uid = get_user_id(current_user)
+        _cid, _eid = get_audit_org_context(db, _uid)
+        fire_audit_log(
+            action="UPDATE", object_type="Menu",
+            object_id=str(menu_id),
+            user_id=_uid, client_id=_cid, entity_id=_eid,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            old_values={k: str(v) if v is not None else None for k, v in old_values.items()},
+            new_values={k: str(v) if v is not None else None for k, v in update_data.items() if k != "children"},
+        )
+    except Exception:
+        pass
+
     # 4.5️⃣ If order_index or parent_menu_id changed, trigger full reorder sync
     if order_changed:
         print(f"[Menu Update] 🔄 Order or parent changed, triggering full reorder sync...")
@@ -3298,6 +3337,7 @@ async def update_menu(
 
 @router.delete("/{menu_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_menu(
+    request: Request,
     menu_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -3318,7 +3358,9 @@ async def delete_menu(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu not found"
         )
-    
+
+    menu_snapshot = {"name": menu.name, "label": menu.label}
+
     # Recursive function to collect all descendant menu IDs
     def get_all_descendant_ids(parent_id):
         """Recursively get all descendant menu IDs"""
@@ -3357,6 +3399,22 @@ async def delete_menu(
     
     db.commit()
     print(f"[Menu Delete] ✅ Soft deleted {deleted_count} menus in PostgreSQL")
+
+    try:
+        _uid = get_user_id(current_user)
+        _cid, _eid = get_audit_org_context(db, _uid)
+        fire_audit_log(
+            action="DELETE", object_type="Menu",
+            object_id=str(menu_id),
+            user_id=_uid, client_id=_cid, entity_id=_eid,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values=menu_snapshot,
+        )
+    except Exception:
+        pass
 
     # ✅ PROPER SYNC: Use MenuReorderService to rebuild the complete tree without deleted menus
     print(f"[Menu Delete] 🔄 Syncing deletion to MongoDB using MenuReorderService...")

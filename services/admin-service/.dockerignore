@@ -1,0 +1,82 @@
+# ================================================
+# .dockerignore — admin-service build context
+# Build context: services/admin-service/
+# ================================================
+
+# ==================== ENV FILES ====================
+# NEVER bake environment files into the image.
+# Production secrets are injected by Render (or any PaaS) at runtime.
+.env
+.env.*
+*.env
+.env.local
+.env.prod
+.env.dev
+.env.uat
+
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+.eggs/
+wheels/
+
+# ==================== Virtual environments ====================
+venv/
+env/
+ENV/
+.venv/
+
+# ==================== Testing ====================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# ==================== IDE ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==================== Docs / markdown ====================
+docs/
+md-files/
+*.md
+README.md
+
+# ==================== Git ====================
+.git/
+.gitignore
+
+# ==================== Logs ====================
+*.log
+
+# ==================== Database ====================
+*.db
+*.sqlite
+
+# ==================== Docker files ====================
+deploy/Dockerfile
+deploy/.dockerignore
+docker-compose*.yml
+.dockerignore
+
+# ==================== Misc ====================
+.DS_Store
+Thumbs.db
+Makefile
+bat-files/
+sh-files/
+sql-files/
+scripts/

@@ -1,11 +1,13 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
 import math
 from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user
 from app.forms.services.forms import FormsService
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 from app.forms_details.services.forms_details import forms_details_service
 from app.forms.schemas.forms import (
     FormCreate,
@@ -30,6 +32,7 @@ router = APIRouter()
     description="Create a new form from frontend payload structure"
 )
 async def create_form(
+    request: Request,
     form_data: FormCreateFromFrontend,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -129,7 +132,26 @@ async def create_form(
             import traceback
             traceback.print_exc()
             # Continue without MongoDB - form is still created in PostgreSQL
-        
+
+        # Audit log: form created
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Form",
+                object_id=str(form.id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"name": form.name, "menu_id": str(form.menu_id)},
+            )
+        except Exception:
+            pass
+
         return form
     except Exception as e:
         db.rollback()
@@ -146,6 +168,7 @@ async def create_form(
     description="Import a form from the provided JSON structure"
 )
 async def import_form(
+    request: Request,
     menu_id: str,
     import_data: FormImport,
     db: Session = Depends(get_db),
@@ -194,7 +217,26 @@ async def import_form(
         form.mongo_id = mongo_id
         db.commit()
         db.refresh(form)
-        
+
+        # Audit log: form imported (CREATE action)
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Form",
+                object_id=str(form.id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"name": form.name, "menu_id": str(form.menu_id)},
+            )
+        except Exception:
+            pass
+
         return form
     except Exception as e:
         raise HTTPException(
@@ -385,6 +427,7 @@ async def get_forms_by_menu(
     description="Update an existing form with the provided details"
 )
 async def update_form(
+    request: Request,
     form_id: str,
     form_data: FormUpdateSimple,
     db: Session = Depends(get_db),
@@ -481,6 +524,25 @@ async def update_form(
                 }
             )
         
+        # Audit log: form updated
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="UPDATE",
+                object_type="Form",
+                object_id=str(form_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["UPDATE"],
+                new_values={"form_id": form_id, "menu_id": str(form_data.menu_id) if form_data.menu_id else None},
+            )
+        except Exception:
+            pass
+
         return {"message": "Form updated successfully", "form_id": form_id}
     except Exception as e:
         raise HTTPException(
@@ -494,6 +556,7 @@ async def update_form(
     description="Soft delete a form (marks as deleted but keeps in database)"
 )
 async def delete_form(
+    request: Request,
     form_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -525,7 +588,26 @@ async def delete_form(
         
         # Delete from MongoDB (remove from collection)
         await forms_details_service.delete_form_details(form_id, str(db_form.menu_id))
-        
+
+        # Audit log: form deleted
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="DELETE",
+                object_type="Form",
+                object_id=str(form_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["DELETE"],
+                old_values={"id": str(form_id)},
+            )
+        except Exception:
+            pass
+
     except HTTPException:
         raise
     except Exception as e:

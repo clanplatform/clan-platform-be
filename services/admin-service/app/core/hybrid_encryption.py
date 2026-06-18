@@ -1,76 +1,94 @@
 """
-Hybrid encryption for sensitive fields
-Uses symmetric encryption (Fernet) for data encryption
+AES-256-GCM authenticated encryption for sensitive fields.
+
+Algorithm : AES (Advanced Encryption Standard)
+Key size  : 256 bits (32 bytes)
+Mode      : GCM (Galois/Counter Mode) — provides confidentiality + integrity in one pass
+
+Wire format: base64url( nonce[12] || ciphertext_with_tag[n+16] )
+
+Activation : ONLY when ENCRYPTION_KEY is set in the environment.
+             In local / dev environments (no ENCRYPTION_KEY), the class operates in
+             passthrough mode — encrypt/decrypt return the value unchanged.
 """
-from cryptography.fernet import Fernet
-from typing import Optional
+import os
 import base64
-import hashlib
-from app.core.config import settings
 import logging
+from typing import Optional
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+_NONCE_SIZE = 12   # 96-bit nonce — GCM recommended length
+_KEY_SIZE   = 32   # 256-bit key — AES-256
+
 
 class HybridEncryption:
-    """Hybrid encryption utility for sensitive data"""
-    
-    def __init__(self, secret_key: str):
-        """
-        Initialize encryption with a secret key.
-        
-        Args:
-            secret_key: Secret key for encryption (will be derived into Fernet key)
-        """
-        # Derive a Fernet key from the secret
-        key_bytes = secret_key.encode('utf-8')
-        derived_key = hashlib.sha256(key_bytes).digest()
-        fernet_key = base64.urlsafe_b64encode(derived_key)
-        self.fernet = Fernet(fernet_key)
-    
+    """
+    AES-256-GCM encryption for sensitive data fields.
+
+    Enabled  : ENCRYPTION_KEY env var is set (production only).
+    Disabled : ENCRYPTION_KEY is absent — encrypt/decrypt are no-ops (plaintext passthrough).
+    """
+
+    def __init__(self, encryption_key: Optional[str]):
+        if encryption_key:
+            raw = base64.urlsafe_b64decode(encryption_key + "==")
+            if len(raw) != _KEY_SIZE:
+                raise ValueError(
+                    f"ENCRYPTION_KEY must decode to {_KEY_SIZE} bytes, got {len(raw)}"
+                )
+            self._aesgcm = AESGCM(raw)
+            self._enabled = True
+            logger.info("AES-256-GCM encryption: ENABLED (production key loaded)")
+        else:
+            self._aesgcm = None
+            self._enabled = False
+            logger.info("AES-256-GCM encryption: DISABLED (no ENCRYPTION_KEY set — plaintext passthrough)")
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
     def encrypt_sensitive_field(self, value: str) -> str:
         """
-        Encrypt a sensitive field value.
-        
-        Args:
-            value: Plain text value to encrypt
-            
-        Returns:
-            Encrypted value as base64 string
+        Encrypt a plaintext string.
+
+        Returns base64url(nonce || ciphertext_with_tag) when enabled.
+        Returns the original value unchanged when encryption is disabled.
         """
+        if not value or not self._enabled:
+            return value
         try:
-            if not value:
-                return value
-            
-            encrypted_bytes = self.fernet.encrypt(value.encode('utf-8'))
-            return encrypted_bytes.decode('utf-8')
+            nonce = os.urandom(_NONCE_SIZE)
+            ct    = self._aesgcm.encrypt(nonce, value.encode(), None)
+            return base64.urlsafe_b64encode(nonce + ct).decode()
         except Exception as e:
-            logger.error(f"Encryption error: {e}")
-            raise ValueError(f"Failed to encrypt field: {e}")
-    
-    def decrypt_sensitive_field(self, encrypted_value: str) -> str:
+            logger.error("AES-256-GCM encryption failed")
+            raise ValueError("Failed to encrypt field") from e
+
+    def decrypt_sensitive_field(self, token: str) -> str:
         """
-        Decrypt a sensitive field value.
-        
-        Args:
-            encrypted_value: Encrypted value as base64 string
-            
-        Returns:
-            Decrypted plain text value
-            
-        Raises:
-            ValueError: If decryption fails
+        Decrypt a base64url(nonce || ciphertext_with_tag) token.
+
+        GCM authentication tag is verified automatically; raises ValueError
+        on any tampering or wrong key.
+        Returns the original value unchanged when encryption is disabled.
         """
+        if not token or not self._enabled:
+            return token
         try:
-            if not encrypted_value:
-                return encrypted_value
-            
-            decrypted_bytes = self.fernet.decrypt(encrypted_value.encode('utf-8'))
-            return decrypted_bytes.decode('utf-8')
+            raw       = base64.urlsafe_b64decode(token + "==")
+            nonce, ct = raw[:_NONCE_SIZE], raw[_NONCE_SIZE:]
+            return self._aesgcm.decrypt(nonce, ct, None).decode()
         except Exception as e:
-            logger.error(f"Decryption error: {e}")
-            raise ValueError(f"Failed to decrypt field: {e}")
+            logger.error("AES-256-GCM decryption failed")
+            raise ValueError("Failed to decrypt field") from e
 
 
-# Global encryption instance
-hybrid_encryption = HybridEncryption(settings.SECRET_KEY)
+# Global singleton — used across the application.
+# Enabled only when ENCRYPTION_KEY is present in the environment (production).
+hybrid_encryption = HybridEncryption(encryption_key=settings.ENCRYPTION_KEY)

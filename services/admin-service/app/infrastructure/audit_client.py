@@ -20,7 +20,9 @@ def fire_audit_log(
     old_values: Optional[Dict[str, Any]] = None,
     new_values: Optional[Dict[str, Any]] = None,
     ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
     session_id: Optional[str] = None,
+    risk_score: Optional[str] = None,
 ) -> None:
     """
     POST a single audit log entry to the audit-service.
@@ -41,7 +43,9 @@ def fire_audit_log(
                 "old_values": old_values or {},
                 "new_values": new_values or {},
                 "ip_address": ip_address,
+                "user_agent": user_agent,
                 "session_id": session_id,
+                "risk_score": risk_score,
             },
             timeout=2.0,
         )

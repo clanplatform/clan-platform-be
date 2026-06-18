@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.infrastructure.database.session import get_db
@@ -11,6 +11,8 @@ from app.modules.schemas.module import (
     ModuleResponse,
     ModuleListResponse
 )
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 import math
 
 router = APIRouter()
@@ -24,6 +26,7 @@ router = APIRouter()
     description="Create a new module with the provided details"
 )
 async def create_module(
+    request: Request,
     module_data: ModuleCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -68,6 +71,26 @@ async def create_module(
     
     try:
         module = ModuleService.create_module(db, module_data, created_by)
+
+        # Audit log: module created
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Module",
+                object_id=str(module.id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"name": module.name},
+            )
+        except Exception:
+            pass
+
         return module
     except Exception as e:
         raise HTTPException(
@@ -172,6 +195,7 @@ async def get_modules_by_application(
     description="Update an existing module with the provided details"
 )
 async def update_module(
+    request: Request,
     module_id: str,
     module_data: ModuleUpdate,
     db: Session = Depends(get_db),
@@ -213,6 +237,26 @@ async def update_module(
     
     try:
         updated_module = ModuleService.update_module(db, module_id, module_data, updated_by)
+
+        # Audit log: module updated
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="UPDATE",
+                object_type="Module",
+                object_id=str(module_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["UPDATE"],
+                new_values={"name": updated_module.name},
+            )
+        except Exception:
+            pass
+
         return updated_module
     except Exception as e:
         raise HTTPException(
@@ -227,6 +271,7 @@ async def update_module(
     description="Soft delete a module (marks as deleted but keeps in database)"
 )
 async def delete_module(
+    request: Request,
     module_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -234,19 +279,42 @@ async def delete_module(
 ):
     """
     Soft delete a module.
-    
+
     - **module_id**: The UUID of the module to delete
     - **deleted_by**: User ID who is performing the deletion
-    
+
     This performs a soft delete - the module is marked as deleted but remains in the database.
     """
-    
+
+    # Fetch module before delete for audit snapshot
+    existing_module = ModuleService.get_module(db, module_id)
+    old_module_name = existing_module.name if existing_module else None
+
     success = ModuleService.delete_module(db, module_id, deleted_by)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Module with ID {module_id} not found"
         )
+
+    # Audit log: module deleted
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="Module",
+            object_id=str(module_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={"name": old_module_name, "id": str(module_id)},
+        )
+    except Exception:
+        pass
 
 
     """

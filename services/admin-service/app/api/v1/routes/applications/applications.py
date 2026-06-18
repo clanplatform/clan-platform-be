@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from app.infrastructure.database.session import get_db
 from app.applications.models.application import Application
@@ -10,6 +10,8 @@ from app.core.security import get_current_user
 from app.core.config import settings
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.mongodb.mongodb_admin import get_mongodb
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_client import fire_audit_log
 from bson import ObjectId
 import uuid
 
@@ -446,6 +448,7 @@ def get_applications_by_domain(
 
 @router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
 def create_application(
+    request: Request,
     application_data: ApplicationCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -497,6 +500,30 @@ def create_application(
         # Invalidate applications list cache
         redis_cache.delete_pattern("applications:list:*")
 
+        # Audit log: application created
+        try:
+            client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Application",
+                object_id=str(application.id),
+                user_id=get_user_id(current_user),
+                client_id=client_id,
+                entity_id=entity_id,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={
+                    "name": application.name,
+                    "domain_id": str(application.domain_id),
+                    "status": application.status,
+                    "is_active": application.is_active,
+                },
+            )
+        except Exception:
+            pass
+
         return application
         
     except HTTPException:
@@ -518,6 +545,7 @@ def create_application(
 
 @router.put("/{application_id}", response_model=ApplicationResponse)
 async def update_application(
+    request: Request,
     application_id: uuid.UUID,
     application_data: ApplicationUpdate,
     nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
@@ -557,6 +585,14 @@ async def update_application(
                 detail="Application with this name already exists in the domain"
             )
 
+    # Capture old values before update for audit
+    old_values = {
+        "name": application.name,
+        "domain_id": str(application.domain_id),
+        "status": application.status,
+        "is_active": application.is_active,
+    }
+
     # Update PostgreSQL
     update_data = application_data.dict(exclude_unset=True)
     for field, value in update_data.items():
@@ -566,6 +602,26 @@ async def update_application(
     db.refresh(application)
 
     print(f"[Application Update] ✅ PostgreSQL updated")
+
+    # Audit log: application updated
+    try:
+        client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="UPDATE",
+            object_type="Application",
+            object_id=str(application.id),
+            user_id=get_user_id(current_user),
+            client_id=client_id,
+            entity_id=entity_id,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            old_values=old_values,
+            new_values=update_data,
+        )
+    except Exception:
+        pass
 
     # Sync to MongoDB navigation structure
     try:
@@ -639,6 +695,7 @@ async def update_application(
 
 @router.delete("/{application_id}", status_code=status.HTTP_200_OK)
 def delete_application(
+    request: Request,
     application_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -658,13 +715,36 @@ def delete_application(
     try:
         # Import datetime for soft delete
         from datetime import datetime
-        
+
+        # Snapshot name before soft delete for audit
+        old_name = application.name
+
         # Soft delete - set flags and timestamp
         application.is_active = False
         application.is_deleted = True
         application.deleted_at = datetime.utcnow()
-        
+
         db.commit()
+
+        # Audit log: application deleted
+        try:
+            client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="DELETE",
+                object_type="Application",
+                object_id=str(application_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id,
+                entity_id=entity_id,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["DELETE"],
+                old_values={"name": old_name, "id": str(application_id)},
+            )
+        except Exception:
+            pass
+
         return {"message": "Application deleted successfully", "application_id": str(application_id)}
     except Exception as e:
         db.rollback()

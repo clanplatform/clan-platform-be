@@ -138,11 +138,10 @@ Complete implementation of the Admin Service with full domain CRUD functionality
 ### 6. Configuration Files ✅
 
 #### Environment Files (`config/environments/`)
-- **.env.example**: Generic template
-- **.env.local.example**: Local development (comprehensive)
-- **.env.dev.example**: Development environment
-- **.env.uat.example**: UAT/Staging environment
-- **.env.prod.example**: Production (with security notes)
+- **.env.local**: Local development (comprehensive)
+- **.env.dev**: Development environment (Render dev service)
+- **.env.uat**: UAT/Staging environment (Render UAT service)
+- **.env.prod**: Production — encryption ENABLED (Render prod service)
 
 #### Docker Files
 - **docker-compose.yml**: Full stack with PostgreSQL, Redis, MongoDB, Admin Service

@@ -8,9 +8,9 @@
 .env.*
 *.env
 config/environments/.env.local
-config/environments/.env.prod
-config/environments/.env.uat
 config/environments/.env.dev
+config/environments/.env.uat
+config/environments/.env.prod
 
 # ==================== Python ====================
 __pycache__/

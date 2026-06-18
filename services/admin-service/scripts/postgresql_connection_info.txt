@@ -65,9 +65,9 @@ All environment example files have been standardized with:
 - Database: admin_service
 
 Files updated:
-- config/environments/.env.local.example
-- config/environments/.env.dev.example
-- config/environments/.env.uat.example
-- config/environments/.env.prod.example
+- config/environments/.env.local
+- config/environments/.env.dev
+- config/environments/.env.uat
+- config/environments/.env.prod
 
 ================================================================

@@ -10,9 +10,9 @@
 .env.*
 *.env
 .env.local
-.env.prod
 .env.dev
 .env.uat
+.env.prod
 
 # ==================== Python ====================
 __pycache__/

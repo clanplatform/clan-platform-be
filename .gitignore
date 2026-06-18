@@ -2,17 +2,15 @@
 # .gitignore — clan-platform-domain-be
 # ================================================
 
-# ==================== ENV FILES (NEVER COMMIT) ====================
-# .env.local  — local dev config (contains dev secrets)
-# .env.prod   — production config (contains ENCRYPTION_KEY and prod secrets)
-# Allow only *.example files to be committed as reference templates
+# ==================== ENV FILES ====================
+# .env.local  — local dev config       → NOT committed (real DB passwords)
+# .env.prod   — production config      → NOT committed (ENCRYPTION_KEY + prod secrets)
+# .env.dev    — dev template           → committed (placeholder values only)
+# .env.uat    — UAT template           → committed (placeholder values only)
 .env
 .env.local
 .env.prod
-.env.uat
-.env.dev
 *.env
-!*.env.example
 
 # ==================== Python ====================
 __pycache__/

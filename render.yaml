@@ -53,7 +53,7 @@ services:
       - key: MONGODB_URL
         sync: false
       - key: MONGODB_DB_NAME
-        value: admin_service_dev
+        value: clan_platform_dev
 
       # Security
       - key: SECRET_KEY
@@ -139,7 +139,7 @@ services:
       - key: MONGODB_URL
         sync: false
       - key: MONGODB_DB_NAME
-        value: admin_service_prod
+        value: clan_platform_prod
 
       # Security
       - key: SECRET_KEY

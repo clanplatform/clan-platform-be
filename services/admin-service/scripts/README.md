@@ -115,7 +115,7 @@ curl -X POST http://localhost:8001/api/v1/auth/users/sync
 
 **Solution**: Verify database configuration in `.env`:
 ```env
-DATABASE_URL=postgresql://postgres:root@localhost:5432/admin_service
+DATABASE_URL=postgresql://postgres:root@localhost:5432/clan_platform
 ```
 
 ---

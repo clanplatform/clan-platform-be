@@ -42,9 +42,9 @@ This directory contains MongoDB migration scripts for the admin service.
 
 1. **Set up environment variables** in your `.env` file or export them:
    ```bash
-   DATABASE_URL=postgresql://postgres:root@localhost:5432/admin_service
+   DATABASE_URL=postgresql://postgres:root@localhost:5432/clan_platform
    MONGODB_URL=mongodb://admin:admin_pass@localhost:27017
-   MONGODB_DB_NAME=admin_service
+   MONGODB_DB_NAME=clan_platform
    REDIS_URL=redis://localhost:6379/0
    SECRET_KEY=your-secret-key
    ENVIRONMENT=local
@@ -156,7 +156,7 @@ After running the migration, you can verify it worked by:
 1. **Using MongoDB shell:**
    ```bash
    mongosh
-   use admin_service
+   use clan_platform
    db.menu_details.findOne({_id: ObjectId("69074724f217ab8fcb2e3b24")}, {profileSection: 1})
    ```
 

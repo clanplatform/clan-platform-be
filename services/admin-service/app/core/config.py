@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     
     # MongoDB
     MONGODB_URL: str
-    MONGODB_DB_NAME: str = "admin_service"
+    MONGODB_DB_NAME: str = "clan_platform"
     
     # Security
     SECRET_KEY: str

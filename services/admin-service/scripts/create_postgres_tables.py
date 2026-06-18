@@ -12,7 +12,7 @@ Environment Variables Required:
     DATABASE_URL - PostgreSQL connection string
     
 Example:
-    DATABASE_URL=postgresql://postgres:root@localhost:5432/admin_service
+    DATABASE_URL=postgresql://postgres:root@localhost:5432/clan_platform
 
 Tables Created (in dependency order):
     1. clients
@@ -288,7 +288,7 @@ def main():
     print("\n📖 Connection Info:")
     print("   Host: localhost")
     print("   Port: 5432")
-    print("   Database: admin_service")
+    print("   Database: clan_platform")
     print("   Username: postgres")
     print("   Password: root")
     

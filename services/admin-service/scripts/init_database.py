@@ -22,10 +22,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Set environment variables before importing app modules
-os.environ.setdefault('DATABASE_URL', 'postgresql://postgres:root@localhost:5432/admin_service')
+os.environ.setdefault('DATABASE_URL', 'postgresql://postgres:root@localhost:5432/clan_platform')
 os.environ.setdefault('REDIS_URL', 'redis://localhost:6379/0')
 os.environ.setdefault('MONGODB_URL', 'mongodb://admin:admin_pass@localhost:27017')
-os.environ.setdefault('MONGODB_DB_NAME', 'admin_service')
+os.environ.setdefault('MONGODB_DB_NAME', 'clan_platform')
 os.environ.setdefault('SECRET_KEY', 'local-dev-secret-key-for-script-execution-only')
 os.environ.setdefault('ENVIRONMENT', 'local')
 

@@ -18,7 +18,7 @@ For Python/Application Code:
 ----------------------------
 mongodb://admin:admin_pass@localhost:27017
 
-Database Name: admin_service
+Database Name: clan_platform
 
 ================================================================
 CREDENTIALS

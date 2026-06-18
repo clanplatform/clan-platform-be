@@ -45,7 +45,7 @@ CREATE SEQUENCE IF NOT EXISTS role_form_permission_sino_seq
 
 **Command Used:**
 ```bash
-docker exec admin-service-postgres psql -U postgres -d admin_service \
+docker exec admin-service-postgres psql -U postgres -d clan_platform \
   -c "CREATE SEQUENCE IF NOT EXISTS role_form_permission_sino_seq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;"
 ```
 
@@ -192,7 +192,7 @@ initContainers:
 
 ### Check if sequence exists:
 ```bash
-docker exec admin-service-postgres psql -U postgres -d admin_service -c "\ds"
+docker exec admin-service-postgres psql -U postgres -d clan_platform -c "\ds"
 ```
 
 **Expected Output:**
@@ -204,13 +204,13 @@ docker exec admin-service-postgres psql -U postgres -d admin_service -c "\ds"
 
 ### Check sequence current value:
 ```bash
-docker exec admin-service-postgres psql -U postgres -d admin_service \
+docker exec admin-service-postgres psql -U postgres -d clan_platform \
   -c "SELECT last_value FROM role_form_permission_sino_seq;"
 ```
 
 ### Test sequence generation:
 ```bash
-docker exec admin-service-postgres psql -U postgres -d admin_service \
+docker exec admin-service-postgres psql -U postgres -d clan_platform \
   -c "SELECT nextval('role_form_permission_sino_seq');"
 ```
 

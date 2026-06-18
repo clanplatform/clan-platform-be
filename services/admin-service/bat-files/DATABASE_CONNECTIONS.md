@@ -10,7 +10,7 @@ This project uses TWO separate PostgreSQL instances running in Docker containers
 **Connection Details**:
 - Host: `localhost`
 - Port: `5432`
-- Database: `admin_service`
+- Database: `clan_platform`
 - Username: `postgres`
 - Password: `root`
 
@@ -44,7 +44,7 @@ This project uses TWO separate PostgreSQL instances running in Docker containers
 
 ## How User Sync Works
 
-1. User created in `admin_service.usersetup_basic` (localhost:5432)
+1. User created in `clan_platform.usersetup_basic` (localhost:5432)
 2. Admin service calls Identity service HTTP API
 3. Identity service creates user in `auth_service.auth_users` (localhost:5433)
 4. Both records have the same `id` (UUID)
@@ -62,7 +62,7 @@ Create **TWO separate connections**:
 Name: Admin Service
 Host: localhost
 Port: 5432
-Database: admin_service
+Database: clan_platform
 User: postgres
 Password: root
 ```
@@ -83,7 +83,7 @@ Password: root
 
 ### Check Admin Service (Port 5432)
 ```sql
--- Connect to localhost:5432, database: admin_service
+-- Connect to localhost:5432, database: clan_platform
 SELECT COUNT(*) FROM usersetup_basic;
 SELECT id, username, email FROM usersetup_basic ORDER BY created_at DESC LIMIT 5;
 ```
@@ -106,7 +106,7 @@ docker ps
 
 ### Check Admin DB
 ```bash
-docker exec -it admin-service-postgres psql -U postgres -d admin_service
+docker exec -it admin-service-postgres psql -U postgres -d clan_platform
 ```
 
 ### Check Identity DB
@@ -126,7 +126,7 @@ docker logs admin-service 2>&1 | grep "SYNC"
 
 ### auth_users table appears empty in local client
 - ✅ Make sure you're connected to **port 5433** (not 5432)
-- ✅ Make sure database is **auth_service** (not admin_service)
+- ✅ Make sure database is **auth_service** (not clan_platform)
 - ✅ Refresh the schema/table list in your client
 
 ### Users not syncing

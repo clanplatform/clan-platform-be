@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs once on first volume init (postgres Docker entrypoint behaviour).
 # Creates the audit_service database if it does not already exist.
-# The main admin_service database is already created by POSTGRES_DB env var.
+# The main clan_platform database is already created by POSTGRES_DB env var.
 set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL

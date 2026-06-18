@@ -63,7 +63,7 @@ You should see:
 ### Option 1: Using MongoDB Shell
 ```bash
 mongosh
-use admin_service
+use clan_platform
 db.menu_details.findOne({_id: ObjectId("69074724f217ab8fcb2e3b24")}).profileSection.menuItems
 ```
 
@@ -92,7 +92,7 @@ mongosh --eval "db.adminCommand('ping')"
 - Make sure your `.env` file has correct MongoDB settings:
   ```
   MONGODB_URL=mongodb://admin:admin_pass@localhost:27017
-  MONGODB_DB_NAME=admin_service
+  MONGODB_DB_NAME=clan_platform
   ```
 
 **Document not found?**

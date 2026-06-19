@@ -54,18 +54,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Redis initialization error: {e} - continuing without cache")
     
-    # Initialize MongoDB connection
+    # Initialize MongoDB connection (non-fatal — service runs without it)
     try:
         logger.info("Initializing MongoDB connection...")
         mongodb_client.connect()
         if mongodb_client.db is None:
-            startup_errors.append("MongoDB connection failed")
-            logger.error("MongoDB connection failed")
+            logger.warning("MongoDB connection failed - continuing without MongoDB")
         else:
             logger.info("MongoDB connection established successfully")
     except Exception as e:
-        startup_errors.append(f"MongoDB initialization error: {e}")
-        logger.error(f"MongoDB initialization error: {e}", exc_info=True)
+        logger.warning(f"MongoDB initialization error: {e} - continuing without MongoDB")
     
     # Check if any critical connections failed
     if startup_errors:

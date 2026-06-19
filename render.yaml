@@ -10,7 +10,7 @@
 services:
 
   # ──────────────────────────────────────────────
-  # SERVICE 1: Development / Staging
+  # SERVICE 1: Development / Stagings
   # Encryption : DISABLED (no ENCRYPTION_KEY)
   # ──────────────────────────────────────────────
   - type: web

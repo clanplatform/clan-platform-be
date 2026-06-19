@@ -48,9 +48,8 @@ def create_tables():
     from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
     
-    # Note: UserRoleFormPermission is handled by Alembic migration
-    # Do not import it here to avoid sequence dependency issues
-    
+    from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
 
 

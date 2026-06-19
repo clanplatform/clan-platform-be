@@ -160,9 +160,9 @@ class AuthServiceSync:
             if password_hash is not None:
                 payload["password_hash"] = password_hash
             if firstname is not None:
-                payload["first_name"] = firstname
+                payload["firstname"] = firstname
             if lastname is not None:
-                payload["last_name"] = lastname
+                payload["lastname"] = lastname
             if phone_number is not None:
                 payload["phone_number"] = phone_number
             if is_active is not None:

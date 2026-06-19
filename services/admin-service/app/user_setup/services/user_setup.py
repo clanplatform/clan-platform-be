@@ -449,9 +449,6 @@ class UserSetupService:
     @staticmethod
     async def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
         """Create a user setup with roles, entities, and preferences in one transaction"""
-        print("="*80)
-        print(f"METHOD CALLED: create_user_setup_with_details for user: {user_data.basic.username}")
-        print("="*80)
         try:
             # Validate reporting_to if provided
             if user_data.basic.reporting_to:
@@ -516,15 +513,8 @@ class UserSetupService:
                 db.add(db_preference)
 
             # Commit the transaction to admin-service database
-            print(f"BEFORE COMMIT: About to commit user {user_data.basic.username}")
             db.commit()
             db.refresh(db_user_basic)
-            print(f"AFTER COMMIT: User {db_user_basic.username} committed, ID: {db_user_basic.id}")
-            
-            # DEBUG: Log before sync check
-            print("=" * 80)
-            print("SYNC DEBUG: Starting identity database sync check")
-            print(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
             logger.info("User created successfully in admin-service database")
             
             # Sync user to identity-domain auth-service

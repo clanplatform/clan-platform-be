@@ -91,7 +91,7 @@ services:
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080"]'
       
       # Identity Service Integration
-      IDENTITY_SERVICE_URL: "http://host.docker.internal:8007"
+      IDENTITY_SERVICE_URL: "http://host.docker.internal:8001"
 
       # Audit Service (separate repo — runs on host port 8007)
       AUDIT_SERVICE_URL: "http://host.docker.internal:8007"

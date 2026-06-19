@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
 from typing import Optional
 from app.core.config import settings
+import certifi
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,13 +25,15 @@ class MongoDBadmin:
             # Async client for async operations
             self.client = AsyncIOMotorClient(
                 settings.MONGODB_URL,
-                serverSelectionTimeoutMS=5000
+                serverSelectionTimeoutMS=5000,
+                tlsCAFile=certifi.where()
             )
-            
+
             # Sync client for sync operations
             self.sync_client = MongoClient(
                 settings.MONGODB_URL,
-                serverSelectionTimeoutMS=5000
+                serverSelectionTimeoutMS=5000,
+                tlsCAFile=certifi.where()
             )
             
             # Get database

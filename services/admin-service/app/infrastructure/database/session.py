@@ -3,8 +3,12 @@ Database session management - SQLAlchemy engine and session configuration
 """
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.exc import IntegrityError
 from typing import Generator
+import logging
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Create SQLAlchemy engine
 engine = create_engine(
@@ -50,7 +54,11 @@ def create_tables():
     
     from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine, checkfirst=True)
+    except IntegrityError:
+        # Race condition: another worker already created the tables
+        logger.warning("Tables already exist (created by another worker), skipping")
 
 
 def check_db_connection() -> bool:

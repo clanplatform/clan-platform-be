@@ -178,6 +178,7 @@ def decode_access_token(token: str) -> dict:
         else:
             key = settings.SECRET_KEY
 
+        print(f"[AUTH] decode alg={settings.JWT_ALGORITHM} issuer={settings.JWT_ISSUER} audience={settings.JWT_AUDIENCE} key_prefix={str(key)[:10]}")
         decode_kwargs: dict = {"algorithms": [settings.JWT_ALGORITHM]}
         if settings.JWT_ISSUER:
             decode_kwargs["issuer"] = settings.JWT_ISSUER
@@ -202,7 +203,7 @@ def decode_access_token(token: str) -> dict:
     except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Could not validate credentials: {type(e).__name__}",
+            detail=f"Could not validate credentials: {type(e).__name__}: {e}",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

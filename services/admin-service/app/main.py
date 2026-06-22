@@ -6,7 +6,6 @@ from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
-import sys
 
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -65,12 +64,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"MongoDB initialization error: {e} - continuing without MongoDB")
     
-    # Check if any critical connections failed
+    # Log critical connection failures but keep the service running so Render can bind the port.
+    # Requests that require DB will return 503 until the database is reachable.
     if startup_errors:
-        logger.error(f"Startup failed with {len(startup_errors)} error(s): {', '.join(startup_errors)}")
-        sys.exit(1)
-    
-    logger.info("Admin Service started successfully")
+        logger.error(f"Service started with {len(startup_errors)} degraded connection(s): {', '.join(startup_errors)}")
+    else:
+        logger.info("Admin Service started successfully")
     
     yield
     

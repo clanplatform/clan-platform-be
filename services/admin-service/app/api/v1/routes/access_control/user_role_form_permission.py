@@ -83,7 +83,7 @@ async def create_role_form_permission(
             detail=f"Failed to create role form permission: {str(e)}"
         )
 
-# Get Role Form Permission by ID
+
 @router.get(
     "/{permission_id}",
     response_model=RoleFormPermissionResponse,

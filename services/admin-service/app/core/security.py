@@ -4,11 +4,85 @@ Authentication and security utilities
 from datetime import datetime, timedelta
 from typing import Optional
 import hashlib
+import time
+import base64
+
 from jose import JWTError, jwt
 import bcrypt
+import requests as _requests
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
+
+# ---------------------------------------------------------------------------
+# JWKS cache — re-fetched every 5 minutes so key rotations are picked up.
+# Only used when JWT_PUBLIC_KEY is not set (local dev via JWKS_URI).
+# ---------------------------------------------------------------------------
+_jwks_cache: dict = {"keys": [], "ts": 0.0}
+_JWKS_TTL = 300
+
+
+def _b64_to_int(b64: str) -> int:
+    padded = b64 + "=" * (-len(b64) % 4)
+    return int.from_bytes(base64.urlsafe_b64decode(padded), "big")
+
+
+def _jwk_to_pem(jwk_key: dict) -> str:
+    n = _b64_to_int(jwk_key["n"])
+    e = _b64_to_int(jwk_key["e"])
+    pub = RSAPublicNumbers(e, n).public_key(default_backend())
+    return pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+
+
+def _get_rsa_key(token: str) -> str:
+    """
+    Return the RSA public key (PEM) for verifying `token`.
+
+    Priority:
+      1. JWT_PUBLIC_KEY env var  → production, static PEM in .env.prod
+      2. JWKS_URI env var        → local dev, auto-fetched from auth-service
+    """
+    if settings.JWT_PUBLIC_KEY:
+        return settings.JWT_PUBLIC_KEY
+
+    if not settings.JWKS_URI:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RS256 requires JWT_PUBLIC_KEY or JWKS_URI to be configured",
+        )
+
+    now = time.time()
+    if not _jwks_cache["keys"] or now - _jwks_cache["ts"] > _JWKS_TTL:
+        try:
+            resp = _requests.get(settings.JWKS_URI, timeout=5.0)
+            resp.raise_for_status()
+            _jwks_cache["keys"] = resp.json().get("keys", [])
+            _jwks_cache["ts"] = now
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Unable to fetch JWKS from {settings.JWKS_URI}: {exc}",
+            )
+
+    try:
+        kid = jwt.get_unverified_header(token).get("kid")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token header")
+
+    for jwk_key in _jwks_cache["keys"]:
+        if not kid or jwk_key.get("kid") == kid:
+            return _jwk_to_pem(jwk_key)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No matching key found in JWKS — auth-service may have restarted; retry",
+    )
 
 # HTTP Bearer token scheme
 security = HTTPBearer(auto_error=False)
@@ -91,49 +165,41 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def decode_access_token(token: str) -> dict:
     """
     Decode and verify a JWT access token.
-    Supports both HS256 (shared secret) and RS256 (public key) algorithms.
-    
-    Args:
-        token: JWT token string
-        
-    Returns:
-        Decoded token payload
-        
-    Raises:
-        HTTPException: If token is invalid or expired
+
+    Algorithm routing:
+      RS256 → _get_rsa_key() (JWT_PUBLIC_KEY in prod, JWKS_URI in local)
+      HS256 → SECRET_KEY (shared secret, local dev only)
+
+    Also validates iss/aud when JWT_ISSUER/JWT_AUDIENCE are configured.
     """
     try:
-        # Determine the key to use for verification
-        if settings.JWT_ALGORITHM.startswith("RS") and settings.JWT_PUBLIC_KEY:
-            # Use public key for RS256/RS384/RS512
-            key = settings.JWT_PUBLIC_KEY
-            print(f"[JWT] Using RS256 public key verification")
+        if settings.JWT_ALGORITHM.startswith("RS"):
+            key = _get_rsa_key(token)
         else:
-            # Use shared secret for HS256/HS384/HS512
             key = settings.SECRET_KEY
-            print(f"[JWT] Using HS256 shared secret verification")
-            print(f"[JWT] Algorithm: {settings.JWT_ALGORITHM}")
-            print(f"[JWT] Secret key (first 10 chars): {key[:10]}...")
-        
-        payload = jwt.decode(token, key, algorithms=[settings.JWT_ALGORITHM])
-        print(f"[JWT] Token decoded successfully. User: {payload.get('sub')}")
+
+        decode_kwargs: dict = {"algorithms": [settings.JWT_ALGORITHM]}
+        if settings.JWT_ISSUER:
+            decode_kwargs["issuer"] = settings.JWT_ISSUER
+        if settings.JWT_AUDIENCE:
+            decode_kwargs["audience"] = settings.JWT_AUDIENCE
+
+        payload = jwt.decode(token, key, **decode_kwargs)
         return payload
-    except jwt.ExpiredSignatureError as e:
-        print(f"[JWT] Token expired: {str(e)}")
+
+    except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.JWTClaimsError as e:
-        print(f"[JWT] Invalid token claims: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token claims",
+            detail=f"Invalid token claims: {e}",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except JWTError as e:
-        print(f"[JWT] Token validation error: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Could not validate credentials: {type(e).__name__}",
@@ -229,6 +295,7 @@ async def get_current_user(
         "email": payload.get("email"),
         "roles": payload.get("roles", []),
         "user_setup_id": payload.get("user_setup_id"),
+        "client_id": payload.get("client_id"),
         "session_id": payload.get("jti") or session_id,
     }
     

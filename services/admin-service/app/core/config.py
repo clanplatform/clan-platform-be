@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
+    JWT_ISSUER: Optional[str] = None      # e.g. "clan-identity" — validates iss claim
+    JWT_AUDIENCE: Optional[str] = None    # e.g. "api-gateway"  — validates aud claim
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # AES-256-GCM field encryption key
@@ -37,10 +39,12 @@ class Settings(BaseSettings):
     #   python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
     # If absent, key is derived from SECRET_KEY via HKDF (not recommended for production).
     ENCRYPTION_KEY: Optional[str] = None
-    
-    # JWT Public Key for RS256 verification (optional, for production)
-    # If using RS256, provide the public key from the auth service
+
+    # RS256 public key — two mutually exclusive sources (first wins):
+    #   JWT_PUBLIC_KEY : PEM string set in .env.prod (production)
+    #   JWKS_URI       : auto-fetched in local dev via clan-network
     JWT_PUBLIC_KEY: Optional[str] = None
+    JWKS_URI: Optional[str] = None
     
     # Identity Service (external)
     IDENTITY_SERVICE_URL: Optional[str] = None

@@ -3,9 +3,12 @@ Custom middleware for request processing
 """
 import time
 import uuid
+import os
+import json
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 logger = logging.getLogger(__name__)
@@ -86,14 +89,45 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             raise
 
 
+def _clan_cors_origins() -> list:
+    """Allowed CORS origins from the CORS_ORIGINS env var (JSON list or CSV).
+
+    Empty => no CORS (production default-deny); dev falls back to localhost.
+    Authoritative CORS is the API gateway (Envoy); this only applies while
+    admin-service is exposed directly (Render).
+    """
+    raw = (os.getenv("CORS_ORIGINS") or "").strip()
+    if raw.startswith("["):
+        try:
+            return [str(o).strip() for o in json.loads(raw) if str(o).strip()]
+        except Exception:
+            return []
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if not origins and os.getenv("ENVIRONMENT", "development").lower().startswith(("dev", "local")):
+        origins = ["http://localhost:3000", "http://localhost:8080"]
+    return origins
+
+
 def setup_middleware(app: FastAPI):
     """
     Setup all middleware for the application.
-    
+
     Args:
         app: FastAPI application instance
     """
     # Add request context middleware
     app.add_middleware(RequestContextMiddleware)
-    
+
+    # CORS (env-driven). Added last so it is the outermost layer and sets
+    # headers on every response.
+    origins = _clan_cors_origins()
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials="*" not in origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
     logger.info("Middleware configured successfully")

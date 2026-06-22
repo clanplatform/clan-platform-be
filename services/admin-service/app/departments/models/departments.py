@@ -13,7 +13,7 @@ class Department(Base):
     
     department_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
-    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
+    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=False)
     parent_department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
     department_name = Column(String(100), nullable=False)
     department_code = Column(String(50), nullable=True)

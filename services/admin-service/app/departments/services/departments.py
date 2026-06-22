@@ -18,23 +18,27 @@ def get_department(db: Session, department_id: UUID) -> Optional[Department]:
     return department
 
 
-def get_department_by_code(db: Session, department_code: str, client_id: UUID) -> Optional[Department]:
-    """Get a department by code within a client"""
-    department = db.query(Department).filter(
+def get_department_by_code(db: Session, department_code: str, client_id: UUID, entity_id: Optional[UUID] = None) -> Optional[Department]:
+    """Get a department by code, scoped to entity when provided"""
+    query = db.query(Department).filter(
         Department.department_code == department_code,
         Department.client_id == client_id,
         Department.is_deleted == False
-    ).first()
-    return department
+    )
+    if entity_id:
+        query = query.filter(Department.entity_id == entity_id)
+    return query.first()
 
 
-def get_departments_by_client(db: Session, client_id: UUID, skip: int = 0, limit: int = 100) -> List[Department]:
-    """Get all departments for a specific client"""
-    departments = db.query(Department).filter(
+def get_departments_by_client(db: Session, client_id: UUID, entity_id: Optional[UUID] = None, skip: int = 0, limit: int = 100) -> List[Department]:
+    """Get all departments for a client, filtered by entity when provided"""
+    query = db.query(Department).filter(
         Department.client_id == client_id,
         Department.is_deleted == False
-    ).offset(skip).limit(limit).all()
-    return departments
+    )
+    if entity_id:
+        query = query.filter(Department.entity_id == entity_id)
+    return query.offset(skip).limit(limit).all()
 
 
 def get_departments_by_entity(db: Session, entity_id: UUID, skip: int = 0, limit: int = 100) -> List[Department]:
@@ -55,14 +59,16 @@ def get_departments_by_parent(db: Session, parent_department_id: UUID, skip: int
     return departments
 
 
-def get_active_departments(db: Session, client_id: UUID, skip: int = 0, limit: int = 100) -> List[Department]:
-    """Get all active departments for a client"""
-    departments = db.query(Department).filter(
+def get_active_departments(db: Session, client_id: UUID, entity_id: Optional[UUID] = None, skip: int = 0, limit: int = 100) -> List[Department]:
+    """Get all active departments for a client, filtered by entity when provided"""
+    query = db.query(Department).filter(
         Department.client_id == client_id,
         Department.is_active == True,
         Department.is_deleted == False
-    ).offset(skip).limit(limit).all()
-    return departments
+    )
+    if entity_id:
+        query = query.filter(Department.entity_id == entity_id)
+    return query.offset(skip).limit(limit).all()
 
 
 def get_all_departments(db: Session, skip: int = 0, limit: int = 100) -> List[Department]:
@@ -91,11 +97,11 @@ def create_department(db: Session, department: DepartmentCreate, user_id: Option
         if entity.client_id != department.client_id:
             raise HTTPException(status_code=400, detail="Entity does not belong to the specified client")
 
-    # Check if department code already exists within the client
+    # Check if department code already exists within the entity
     if department.department_code:
-        existing_dept = get_department_by_code(db, department.department_code, department.client_id)
+        existing_dept = get_department_by_code(db, department.department_code, department.client_id, department.entity_id)
         if existing_dept:
-            raise HTTPException(status_code=400, detail="Department code already exists for this client")
+            raise HTTPException(status_code=400, detail="Department code already exists for this entity")
 
     # Verify parent department exists and belongs to same client/entity if provided
     if department.parent_department_id:
@@ -164,11 +170,11 @@ def update_department(
     update_data = department.model_dump(exclude_unset=True)
     old_values = {key: getattr(db_department, key) for key in update_data.keys() if hasattr(db_department, key)}
 
-    # Check department code uniqueness if being updated
+    # Check department code uniqueness if being updated (scoped to entity)
     if "department_code" in update_data and update_data["department_code"] != db_department.department_code:
-        existing_dept = get_department_by_code(db, update_data["department_code"], db_department.client_id)
+        existing_dept = get_department_by_code(db, update_data["department_code"], db_department.client_id, db_department.entity_id)
         if existing_dept:
-            raise HTTPException(status_code=400, detail="Department code already exists for this client")
+            raise HTTPException(status_code=400, detail="Department code already exists for this entity")
 
     # Verify parent department if being updated
     if "parent_department_id" in update_data and update_data["parent_department_id"]:

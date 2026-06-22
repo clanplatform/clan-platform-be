@@ -33,36 +33,38 @@ target_metadata = Base.metadata
 
 # Import all model modules here
 try:
-    # User role models
-    from app.user_role.models.user_role import UserRoleMain
-    from app.user_role.models.userrole_basic import UserRoleBasic
-    from app.user_role.models.userrole_permission import UserRolePermission
-    
+    # User role models (all defined in user_role.py)
+    from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+
     # User role form permission model
     from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
-    
+
+    # Org structure models
+    from app.clients.models.clients import Client
+    from app.entities.models.entity import Entity
+    from app.departments.models.departments import Department
+    from app.divisions.models.divisions import Division
+
     # Domain models
     from app.domains.models.domain import Domain
-    
+
     # Application models
-    from app.applications.models.applications import Application
-    
+    from app.applications.models.application import Application
+
     # Module models
-    from app.modules.models.modules import Module
-    
-    # Menu models
-    from app.menu.models.menu import Menu
-    
-    # Form models
-    from app.form.models.form import Form
-    
+    from app.modules.models.module import Module
+
+    # Menu / Form models
+    from app.menus.models.menu import Menu
+    from app.forms.models.forms import Form
+
     # User setup models
-    from app.user_setup.models.user_setup import UserSetup
-    
-    print("✓ All models imported successfully")
+    from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
+
+    print("All models imported successfully")
 except ImportError as e:
-    print(f"⚠ Warning: Could not import some models: {e}")
-    print("  This is normal if those models don't exist yet")
+    print(f"Warning: Could not import some models: {e}")
+    print("  This is normal if those models do not exist yet")
 
 # Get database URL from settings
 settings = get_settings()

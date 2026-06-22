@@ -56,12 +56,12 @@ class UserRoleService:
             if "role_name" in str(e.orig):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Role name '{role_data.role_name}' already exists"
+                    detail=f"Role name '{role_data.role_name}' already exists for this client"
                 )
             elif "role_code" in str(e.orig):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Role code '{role_data.role_code}' already exists"
+                    detail=f"Role code '{role_data.role_code}' already exists for this client"
                 )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -99,14 +99,18 @@ class UserRoleService:
         db: Session,
         skip: int = 0,
         limit: int = 100,
-        active_only: bool = False
+        active_only: bool = False,
+        client_id: Optional[UUID] = None
     ) -> List[UserRoleBasic]:
-        """Get all user roles with optional filtering"""
+        """Get all user roles, filtered by client when provided"""
         query = db.query(UserRoleBasic)
-        
+
+        if client_id:
+            query = query.filter(UserRoleBasic.client_id == client_id)
+
         if active_only:
             query = query.filter(UserRoleBasic.active == True)
-        
+
         return query.offset(skip).limit(limit).all()
 
     @staticmethod

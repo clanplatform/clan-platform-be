@@ -8,7 +8,7 @@ class DepartmentBase(BaseModel):
     department_name: str = Field(..., min_length=1, max_length=100, description="Department name")
     description: Optional[str] = Field(None, description="Department description")
     department_code: Optional[str] = Field(None, min_length=1, max_length=20, description="Department code")
-    entity_id: Optional[uuid.UUID] = Field(None, description="Entity ID this department belongs to")
+    entity_id: uuid.UUID = Field(..., description="Entity ID this department belongs to")
     parent_department_id: Optional[uuid.UUID] = Field(None, description="Parent department ID for hierarchy")
     # manager_id removed - column doesn't exist in database
     department_type: Optional[str] = Field(None, max_length=50, description="Department type")
@@ -31,12 +31,7 @@ class DepartmentBase(BaseModel):
         return v
 
 class DepartmentCreate(DepartmentBase):
-    @validator('entity_id', pre=True)
-    def validate_entity_id(cls, v):
-        # Convert empty string to None
-        if v == '':
-            return None
-        return v
+    pass
 
 class DepartmentUpdate(BaseModel):
     department_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Department name")

@@ -38,19 +38,12 @@ class DivisionBase(BaseModel):
     division_code: str = Field(..., min_length=1, max_length=20, description="Division code")
     description: Optional[str] = Field(None, description="Division description")
     client_id: uuid.UUID = Field(..., description="Client ID this division belongs to")
-    entity_id: Optional[uuid.UUID] = Field(None, description="Entity ID this division belongs to")
+    entity_id: uuid.UUID = Field(..., description="Entity ID this division belongs to")
     department_id: Optional[uuid.UUID] = Field(None, description="Department ID this division belongs to")
     parent_division_id: Optional[uuid.UUID] = Field(None, description="Parent division ID")
     hierarchy_level: Optional[str] = Field("1", max_length=10, description="Hierarchy level")
     division_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Division metadata")
     is_active: Optional[bool] = Field(True, description="Whether the division is active")
-
-    @validator('entity_id', pre=True)
-    def validate_entity_id(cls, v):
-        # Convert empty string to None
-        if v == '':
-            return None
-        return v
 
     @validator('department_id', pre=True)
     def validate_department_id(cls, v):
@@ -76,18 +69,12 @@ class DivisionUpdate(BaseModel):
     division_code: Optional[str] = Field(None, min_length=1, max_length=20, description="Division code")
     description: Optional[str] = Field(None, description="Division description")
     client_id: Optional[uuid.UUID] = Field(None, description="Client ID this division belongs to")
-    entity_id: Optional[uuid.UUID] = Field(None, description="Entity ID this division belongs to")
+    entity_id: Optional[uuid.UUID] = Field(None, description="Entity ID this division belongs to (cannot be changed after creation)")
     department_id: Optional[uuid.UUID] = Field(None, description="Department ID this division belongs to")
     parent_division_id: Optional[uuid.UUID] = Field(None, description="Parent division ID")
     hierarchy_level: Optional[str] = Field(None, max_length=10, description="Hierarchy level")
     division_metadata: Optional[Dict[str, Any]] = Field(None, description="Division metadata")
     is_active: Optional[bool] = Field(None, description="Whether the division is active")
-
-    @validator('entity_id', pre=True)
-    def validate_entity_id(cls, v):
-        if v == '':
-            return None
-        return v
 
     @validator('department_id', pre=True)
     def validate_department_id(cls, v):

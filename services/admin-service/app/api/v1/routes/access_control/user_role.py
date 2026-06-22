@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
@@ -79,11 +79,12 @@ def get_all_user_roles(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     active_only: bool = Query(False, description="Filter to only active roles"),
+    client_id: Optional[UUID] = Query(None, description="Filter roles by client"),
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id)
 ):
-    """Get all user roles"""
-    return UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only)
+    """Get all user roles, optionally filtered by client"""
+    return UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only, client_id=client_id)
 
 
 # @router.get("/{role_id}", response_model=UserRoleBasicResponse)

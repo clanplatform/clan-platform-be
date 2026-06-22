@@ -252,10 +252,10 @@ def get_departments_by_client(
         
         # Use service layer with appropriate filters
         if entity_id:
-            departments = department_service.get_departments_by_entity(
-                db, entity_id=entity_id, skip=skip, limit=limit
+            # Use client-scoped query so entity_id is validated against client_id
+            departments = department_service.get_departments_by_client(
+                db, client_id=client_id, entity_id=entity_id, skip=skip, limit=limit
             )
-            # Additional filter by parent if specified
             if parent_department_id:
                 departments = [d for d in departments if d.parent_department_id == parent_department_id]
         elif parent_department_id:

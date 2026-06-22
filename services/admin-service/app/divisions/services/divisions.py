@@ -24,14 +24,16 @@ def get_division(db: Session, division_id: UUID) -> Optional[Division]:
     return division
 
 
-def get_division_by_code(db: Session, division_code: str, client_id: UUID) -> Optional[Division]:
-    """Get a division by code within a client"""
-    division = db.query(Division).filter(
+def get_division_by_code(db: Session, division_code: str, client_id: UUID, entity_id: Optional[UUID] = None) -> Optional[Division]:
+    """Get a division by code, scoped to entity when provided"""
+    query = db.query(Division).filter(
         Division.division_code == division_code,
         Division.client_id == client_id,
         Division.deleted_at.is_(None)
-    ).first()
-    return division
+    )
+    if entity_id:
+        query = query.filter(Division.entity_id == entity_id)
+    return query.first()
 
 
 def get_divisions_by_client(
@@ -243,19 +245,19 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
         if department.client_id != division.client_id:
             raise HTTPException(status_code=400, detail="Department does not belong to the specified client")
 
-    # Check if division name already exists in the same client
+    # Check if division name already exists in the same entity
     existing_division = db.query(Division).filter(
         Division.division_name == division.division_name,
-        Division.client_id == division.client_id,
+        Division.entity_id == division.entity_id,
         Division.deleted_at.is_(None)
     ).first()
     if existing_division:
-        raise HTTPException(status_code=400, detail="Division with this name already exists in the client")
+        raise HTTPException(status_code=400, detail="Division with this name already exists in this entity")
 
-    # Check if division code already exists in the same client
-    existing_code = get_division_by_code(db, division.division_code, division.client_id)
+    # Check if division code already exists in the same entity
+    existing_code = get_division_by_code(db, division.division_code, division.client_id, division.entity_id)
     if existing_code:
-        raise HTTPException(status_code=400, detail="Division code already exists for this client")
+        raise HTTPException(status_code=400, detail="Division code already exists for this entity")
 
     # Verify parent division exists and belongs to same client if provided
     if division.parent_division_id:
@@ -301,21 +303,21 @@ def update_division(
 
     update_data = division.model_dump(exclude_unset=True)
 
-    # Check division name uniqueness if being updated
+    # Check division name uniqueness if being updated (scoped to entity)
     if "division_name" in update_data and update_data["division_name"] != db_division.division_name:
         existing_division = db.query(Division).filter(
             Division.division_name == update_data["division_name"],
-            Division.client_id == db_division.client_id,
+            Division.entity_id == db_division.entity_id,
             Division.deleted_at.is_(None)
         ).first()
         if existing_division:
-            raise HTTPException(status_code=400, detail="Division with this name already exists in the client")
+            raise HTTPException(status_code=400, detail="Division with this name already exists in this entity")
 
-    # Check division code uniqueness if being updated
+    # Check division code uniqueness if being updated (scoped to entity)
     if "division_code" in update_data and update_data["division_code"] != db_division.division_code:
-        existing_code = get_division_by_code(db, update_data["division_code"], db_division.client_id)
+        existing_code = get_division_by_code(db, update_data["division_code"], db_division.client_id, db_division.entity_id)
         if existing_code:
-            raise HTTPException(status_code=400, detail="Division code already exists for this client")
+            raise HTTPException(status_code=400, detail="Division code already exists for this entity")
 
     # Verify parent division if being updated
     if "parent_division_id" in update_data and update_data["parent_division_id"]:

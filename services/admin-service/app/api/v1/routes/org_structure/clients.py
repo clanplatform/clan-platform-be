@@ -92,6 +92,7 @@ async def create_client(
 
 @router.get("/", response_model=ClientListResponse)
 async def list_clients(
+    request: Request,
     response: Response,
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
@@ -125,13 +126,29 @@ async def list_clients(
     # Apply pagination
     clients = query.offset((page - 1) * size).limit(size).all()
     
-    return ClientListResponse(
+    result = ClientListResponse(
         clients=clients,
         total=total,
         page=page,
         page_size=size,
         total_pages=(total + size - 1) // size
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Client",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 # @router.get("/{client_id}", response_model=ClientResponse)
 # async def get_client(

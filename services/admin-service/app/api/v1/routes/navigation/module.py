@@ -105,6 +105,7 @@ async def create_module(
     description="Retrieve modules with optional filtering, searching, and pagination"
 )
 async def get_modules(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
@@ -145,14 +146,30 @@ async def get_modules(
         )
         
         total_pages = math.ceil(total / size) if total > 0 else 0
-        
-        return ModuleListResponse(
+
+        result = ModuleListResponse(
             modules=modules,
             total=total,
             page=page,
             size=size,
             total_pages=total_pages
         )
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Module",
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -166,6 +183,7 @@ async def get_modules(
     description="Retrieve all modules for a specific application"
 )
 async def get_modules_by_application(
+    request: Request,
     application_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -173,13 +191,29 @@ async def get_modules_by_application(
 ):
     """
     Get all modules for a specific application.
-    
+
     - **application_id**: The UUID of the application
     - **is_active**: Filter by active status (optional)
     """
-    
+
     try:
         modules = ModuleService.get_modules_by_application(db, application_id, is_active)
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Module",
+                object_id=application_id,
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return modules
     except Exception as e:
         raise HTTPException(

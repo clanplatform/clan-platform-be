@@ -14,6 +14,7 @@ router = APIRouter()
 
 @router.get("/", response_model=List[DepartmentResponse])
 def get_departments(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     entity_id: Optional[uuid.UUID] = None,
@@ -33,7 +34,22 @@ def get_departments(
             )
         else:
             departments = department_service.get_all_departments(db, skip=skip, limit=limit)
-        
+
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Department",
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return departments
         
     except Exception as e:
@@ -47,6 +63,7 @@ def get_departments(
 
 @router.get("/{department_id}", response_model=DepartmentResponse)
 def get_department(
+    request: Request,
     department_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -59,6 +76,22 @@ def get_department(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Department not found"
             )
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Department",
+                object_id=str(department_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return department
         
     except HTTPException:
@@ -236,6 +269,7 @@ async def delete_department(
 
 @router.get("/by-client/{client_id}", response_model=List[DepartmentResponse])
 def get_departments_by_client(
+    request: Request,
     client_id: uuid.UUID,
     skip: int = 0,
     limit: int = 100,
@@ -249,7 +283,7 @@ def get_departments_by_client(
         # Check if user has access to this client
         if hasattr(current_user, 'is_admin') and not current_user.is_admin() and hasattr(current_user, 'client_id') and current_user.client_id != client_id:
             raise HTTPException(status_code=403, detail="Access denied")
-        
+
         # Use service layer with appropriate filters
         if entity_id:
             # Use client-scoped query so entity_id is validated against client_id
@@ -266,7 +300,23 @@ def get_departments_by_client(
             departments = department_service.get_departments_by_client(
                 db, client_id=client_id, skip=skip, limit=limit
             )
-        
+
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Department",
+                object_id=str(client_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return departments
         
     except HTTPException:

@@ -14,6 +14,7 @@ router = APIRouter()
 
 @router.get("/", response_model=List[DivisionResponse])
 def get_divisions(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     client_id: Optional[uuid.UUID] = None,
@@ -26,6 +27,21 @@ def get_divisions(
         divisions = division_service.get_all_divisions(
             db, client_id=client_id, entity_id=entity_id, skip=skip, limit=limit
         )
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Division",
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return divisions
         
     except Exception as e:
@@ -39,6 +55,7 @@ def get_divisions(
 
 @router.get("/by-department/{department_id}", response_model=List[DivisionResponse])
 def get_divisions_by_department(
+    request: Request,
     department_id: uuid.UUID,
     skip: int = 0,
     limit: int = 100,
@@ -50,6 +67,22 @@ def get_divisions_by_department(
         divisions = division_service.get_divisions_by_department(
             db, department_id=department_id, skip=skip, limit=limit
         )
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Division",
+                object_id=str(department_id),
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return divisions
     except HTTPException:
         raise

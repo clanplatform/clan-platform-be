@@ -187,6 +187,7 @@ def create_form_language(
     }
 )
 def get_all_form_languages(
+    request: Request,
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return (max: 1000)"),
     lang_code: Optional[str] = Query(None, description="Filter by language code (e.g., 'en', 'fr', 'es')", example="fr"),
@@ -197,7 +198,7 @@ def get_all_form_languages(
 ):
     """
     Get all form language translations with optional filters.
-    
+
     - **skip**: Number of records to skip (pagination)
     - **limit**: Maximum number of records to return
     - **lang_code**: Filter by language code (e.g., 'en', 'fr')
@@ -212,6 +213,21 @@ def get_all_form_languages(
         entity_type=entity_type,
         entity_id=entity_id
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="FormLanguage",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return form_languages
 
 
@@ -242,6 +258,7 @@ def get_all_form_languages(
     }
 )
 def get_form_language(
+    request: Request,
     form_language_id: UUID = Path(..., description="UUID of the form language translation"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -255,6 +272,22 @@ def get_form_language(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Form language translation with ID {form_language_id} not found"
         )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="FormLanguage",
+            object_id=str(form_language_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return db_form_language
 
 
@@ -267,16 +300,32 @@ def get_form_language(
     description="Get all translations for a specific language"
 )
 def get_form_languages_by_lang_code(
+    request: Request,
     lang_code: str,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
     Get all translations for a specific language.
-    
+
     - **lang_code**: Language code (e.g., 'en', 'fr', 'es')
     """
     form_languages = FormLanguageService.get_by_lang_code(db, lang_code)
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="FormLanguage",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return form_languages
 
 

@@ -381,6 +381,7 @@ async def working_sync_to_mongodb(db: Session, application_id: UUID) -> bool:
 
 @router.get("/")
 async def get_menus(
+    request: Request,
     lang_code: Optional[str] = Query(None, description="Language code for menu translations (e.g., 'en', 'es', 'fr')"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -684,6 +685,22 @@ async def get_menus(
 
     # Cache the result for configured TTL (default 5 minutes)
     redis_cache.set(cache_key, response_data, ttl=settings.CACHE_DEFAULT_TTL)
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Menu",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
 
     print(f"[GET Menus] ✅ Returning {len(application_documents)} application structures with inline menu data and access permissions")
     return response_data

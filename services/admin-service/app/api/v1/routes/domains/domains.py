@@ -13,6 +13,8 @@ from app.infrastructure.audit_helpers import (
     RISK_SCORE as _RISK_SCORE,
     get_client_ip as _client_ip,
     get_audit_org_context as _get_audit_org_context,
+    get_user_id as _get_user_id,
+    get_session_id as _get_session_id,
 )
 
 # Disable internal trailing-slash redirects for this router
@@ -21,12 +23,13 @@ router = APIRouter(redirect_slashes=False)
 # List domains without trailing slash to avoid redirects
 @router.get("", response_model=List[DomainResponse])
 async def get_domains(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get all domains with pagination, sorted by newest first (FILO)"""
     # Create cache key based on query parameters
@@ -71,13 +74,29 @@ async def get_domains(
     # Cache the result for 30 minutes
     redis_cache.set(cache_key, domains_list, ttl=settings.CACHE_DEFAULT_TTL)
 
+    try:
+        client_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Domain",
+            user_id=_get_user_id(current_user),
+            client_id=client_id,
+            entity_id=entity_id,
+            session_id=_get_session_id(current_user),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return domains
 
 @router.get("/{domain_id}", response_model=DomainResponse)
 async def get_domain(
+    request: Request,
     domain_id: UUID,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get a specific domain by ID"""
     # Try to get from cache
@@ -108,6 +127,22 @@ async def get_domain(
     }
     redis_cache.cache_domain(str(domain_id), domain_dict, ttl=settings.CACHE_DEFAULT_TTL)
 
+    try:
+        client_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Domain",
+            object_id=str(domain_id),
+            user_id=_get_user_id(current_user),
+            client_id=client_id,
+            entity_id=entity_id,
+            session_id=_get_session_id(current_user),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return domain
 
 @router.post("", response_model=DomainResponse)

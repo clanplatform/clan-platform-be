@@ -250,6 +250,7 @@ async def import_form(
     description="Retrieve forms grouped by menu from MongoDB in the new structure"
 )
 async def get_forms(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
@@ -325,15 +326,30 @@ async def get_forms(
         
         total_pages = math.ceil(total / size) if total > 0 else 0
         
-        # Return the exact MongoDB structure
-        return {
+        result = {
             "forms": forms_data,
             "total": total,
             "page": page,
             "size": size,
             "total_pages": total_pages
         }
-        
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Form",
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
+        return result
+
     except Exception as e:
         print(f"ERROR: Failed to retrieve forms from MongoDB: {str(e)}")
         import traceback
@@ -351,6 +367,7 @@ async def get_forms(
     description="Retrieve forms collection for a specific menu from MongoDB"
 )
 async def get_forms_by_menu(
+    request: Request,
     menu_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -406,7 +423,22 @@ async def get_forms_by_menu(
             "access": forms_collection.get("access", []),
             "forms": forms_collection.get("forms", [])
         }
-        
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Form",
+                object_id=menu_id,
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return response
         
     except HTTPException:

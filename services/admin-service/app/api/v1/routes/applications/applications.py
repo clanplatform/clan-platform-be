@@ -19,6 +19,7 @@ router = APIRouter()
 
 @router.get("/", response_model=List[ApplicationResponse])
 def get_applications(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     domain_id: Optional[uuid.UUID] = None,
@@ -40,7 +41,7 @@ def get_applications(
 
         # Query database if not in cache
         query = db.query(Application).filter(Application.is_active == True)
-        
+
         # Check if is_deleted column exists before filtering
         try:
             query = query.filter(Application.is_deleted == False)
@@ -92,6 +93,21 @@ def get_applications(
         except Exception as cache_error:
             print(f"Redis cache set error (continuing without cache): {str(cache_error)}")
 
+        try:
+            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Application",
+                user_id=get_user_id(current_user),
+                client_id=client_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return applications
         
     except Exception as e:
@@ -371,6 +387,7 @@ async def get_menus_by_application(
 
 @router.get("/domain/{domain_id}", response_model=List[ApplicationResponse])
 def get_applications_by_domain(
+    request: Request,
     domain_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
@@ -443,7 +460,23 @@ def get_applications_by_domain(
     
     # Cache the result for 30 minutes
     redis_cache.set(cache_key, apps_list, ttl=settings.CACHE_DEFAULT_TTL)
-    
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Application",
+            object_id=str(domain_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return applications
 
 @router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)

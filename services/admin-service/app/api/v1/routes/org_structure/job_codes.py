@@ -34,6 +34,7 @@ router = APIRouter()
 
 @router.get("/", response_model=JobCodeListResponse)
 async def get_job_codes(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
     search: Optional[str] = Query(None, description="Search term"),
@@ -43,11 +44,11 @@ async def get_job_codes(
     current_user = Depends(get_current_user)
 ):
     """Get paginated list of job codes with optional filtering and all nested relationships"""
-    
+
     job_codes, total = job_code_service.get_job_codes_paginated(
         db, page=page, size=size, search=search, category=category, active_status=active_status
     )
-    
+
     # Build minimal response objects without nested relationships to avoid validation issues
     items = [{
         "id": jc.id,
@@ -58,30 +59,63 @@ async def get_job_codes(
         "updated_at": jc.updated_at
     } for jc in job_codes]
 
-    return JobCodeListResponse(
+    result = JobCodeListResponse(
         data=[JobCodeRead.model_validate(item) for item in items],
         total=total,
         page=page,
         per_page=size
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="JobCode",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/{job_code_id}", response_model=JobCodeResponse)
 async def get_job_code(
+    request: Request,
     job_code_id: UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Get a specific job code with all nested relationships"""
-    
+
     job_code = job_code_service.get_job_code_by_id(db, job_code_id=job_code_id, load_relationships=True)
-    
+
     if not job_code:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job code with ID {job_code_id} not found"
         )
-    
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="JobCode",
+            object_id=str(job_code_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return JobCodeResponse(
         data=JobCodeRead.model_validate(job_code)
     )

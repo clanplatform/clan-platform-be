@@ -76,6 +76,7 @@ def create_user_role_with_details(
 
 @router.get("/", response_model=List[UserRoleBasicResponse])
 def get_all_user_roles(
+    request: Request,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     active_only: bool = Query(False, description="Filter to only active roles"),
@@ -84,7 +85,19 @@ def get_all_user_roles(
     current_user_id: str = Depends(get_current_user_id)
 ):
     """Get all user roles, optionally filtered by client"""
-    return UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only, client_id=client_id)
+    result = UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only, client_id=client_id)
+    try:
+        fire_audit_log(
+            action="READ",
+            object_type="UserRole",
+            user_id=current_user_id,
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 
 # @router.get("/{role_id}", response_model=UserRoleBasicResponse)
@@ -105,6 +118,7 @@ def get_all_user_roles(
 
 @router.get("/{role_id}/details", response_model=UserRoleWithDetails)
 def get_user_role_with_details(
+    request: Request,
     role_id: UUID,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id)
@@ -116,6 +130,18 @@ def get_user_role_with_details(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User role with ID {role_id} not found"
         )
+    try:
+        fire_audit_log(
+            action="READ",
+            object_type="UserRole",
+            object_id=str(role_id),
+            user_id=current_user_id,
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return role
 
 

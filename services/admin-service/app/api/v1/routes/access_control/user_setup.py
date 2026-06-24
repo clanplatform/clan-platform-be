@@ -67,12 +67,30 @@ async def create_user_setup_with_details(
 
 @router.get("/{user_id}/details", response_model=UserSetupWithDetails)
 def get_user_setup_with_details(
+    request: Request,
     user_id: UUID,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get a user setup with all related data (roles, entities, preferences)"""
-    return UserSetupService.get_user_setup_with_details(db, user_id)
+    result = UserSetupService.get_user_setup_with_details(db, user_id)
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="UserSetup",
+            object_id=str(user_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.put("/{user_id}", response_model=UserSetupBasicResponse)

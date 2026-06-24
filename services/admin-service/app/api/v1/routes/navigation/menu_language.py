@@ -83,6 +83,7 @@ def create_menu_language(
     summary="Get a menu language entry by ID"
 )
 def get_menu_language(
+    request: Request,
     menu_language_id: UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -94,13 +95,29 @@ def get_menu_language(
         db=db,
         menu_language_id=menu_language_id
     )
-    
+
     if not menu_language:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu language entry not found"
         )
-    
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="MenuLanguage",
+            object_id=str(menu_language_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return menu_language
 
 
@@ -110,6 +127,7 @@ def get_menu_language(
     summary="Get all menu language entries"
 )
 def get_all_menu_languages(
+    request: Request,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     db: Session = Depends(get_db),
@@ -117,7 +135,7 @@ def get_all_menu_languages(
 ):
     """
     Get all menu language entries with pagination.
-    
+
     - **skip**: Number of records to skip (default: 0)
     - **limit**: Maximum number of records to return (default: 100, max: 1000)
     """
@@ -126,6 +144,21 @@ def get_all_menu_languages(
         skip=skip,
         limit=limit
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="MenuLanguage",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return menu_languages
 
 
@@ -135,19 +168,35 @@ def get_all_menu_languages(
     summary="Get menu language entries by language code"
 )
 def get_menu_languages_by_lang_code(
+    request: Request,
     lang_code: str,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
     Get all menu language entries for a specific language code.
-    
+
     - **lang_code**: Language code (e.g., 'en', 'es', 'fr')
     """
     menu_languages = menu_language_service.get_menu_languages_by_lang_code(
         db=db,
         lang_code=lang_code
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="MenuLanguage",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return menu_languages
 
 

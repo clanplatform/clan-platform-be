@@ -91,25 +91,42 @@ async def create_role_form_permission(
     description="Retrieve a specific role form permission by its ID"
 )
 async def get_role_form_permission(
+    request: Request,
     permission_id: UUID,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
     Get a role form permission by ID.
-    
+
     - **permission_id**: UUID of the role form permission
-    
+
     Returns the role form permission record.
     """
     permission = RoleFormPermissionService.get_role_form_permission(db, permission_id)
-    
+
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Role form permission with ID {permission_id} not found"
         )
-    
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="RoleFormPermission",
+            object_id=str(permission_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return permission
 
 
@@ -122,6 +139,7 @@ async def get_role_form_permission(
     description="Retrieve all role form permissions with optional filtering"
 )
 async def get_all_role_form_permissions(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(100, ge=1, le=1000, description="Page size"),
     user_role_id: Optional[UUID] = Query(None, description="Filter by user role ID"),
@@ -158,14 +176,30 @@ async def get_all_role_form_permissions(
     )
     
     total_pages = ceil(total / size) if size > 0 else 0
-    
-    return RoleFormPermissionListResponse(
+
+    result = RoleFormPermissionListResponse(
         items=permissions,
         total=total,
         page=page,
         size=size,
         total_pages=total_pages
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="RoleFormPermission",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.put(

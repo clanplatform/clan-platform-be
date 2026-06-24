@@ -86,6 +86,7 @@ async def create_entity(
 
 @router.get("/", response_model=EntityListResponse)
 async def list_entities(
+    request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None),
@@ -127,16 +128,33 @@ async def list_entities(
     # Apply pagination
     entities = query.offset((page - 1) * size).limit(size).all()
     
-    return EntityListResponse(
+    result = EntityListResponse(
         entities=entities,
         total=total,
         page=page,
         size=size,
         pages=(total + size - 1) // size
     )
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Entity",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 @router.get("/{entity_id}", response_model=EntityResponse)
 async def get_entity(
+    request: Request,
     entity_id: UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -160,7 +178,23 @@ async def get_entity(
     entity = query.first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
-    
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Entity",
+            object_id=str(entity_id),
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return entity
 
 @router.put("/{entity_id}", response_model=EntityResponse)

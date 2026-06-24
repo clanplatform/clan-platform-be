@@ -2,31 +2,32 @@
 Application configuration management's
 """
 from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic import field_validator
+from typing import Any, List, Optional
 from functools import lru_cache
 from pathlib import Path
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
-    
+
     # Application
     APP_NAME: str = "Admin Service"
     APP_VERSION: str = "1.0.0"
     APP_DESCRIPTION: str = "Platform Admin Service for managing domains and applications"
     DEBUG: bool = False
-    
+
     # Database - PostgreSQL
     DATABASE_URL: str
-    
+
     # Redis Cache
     REDIS_URL: str
-    CACHE_DEFAULT_TTL: int = 10  # 10  seconds 
-    
+    CACHE_DEFAULT_TTL: int = 10  # 10  seconds
+
     # MongoDB
     MONGODB_URL: str
     MONGODB_DB_NAME: str = "clan_platform"
-    
+
     # Security
     SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
@@ -45,20 +46,37 @@ class Settings(BaseSettings):
     #   JWKS_URI       : auto-fetched in local dev via clan-network
     JWT_PUBLIC_KEY: Optional[str] = None
     JWKS_URI: Optional[str] = None
-    
+
     # Identity Service (external)
     IDENTITY_SERVICE_URL: Optional[str] = None
 
     # Audit Service (internal)
     AUDIT_SERVICE_URL: str = "http://audit-service:8000"
-    
+
     # CORS
-    CORS_ORIGINS: list = ["*"]
-    
+    CORS_ORIGINS: List[str] = ["*"]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> Any:
+        """Accept JSON array string, comma-separated string, or empty → default ['*']."""
+        if not v or v == "":
+            return ["*"]
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                return json.loads(v)
+            # comma-separated: "https://a.com,https://b.com"
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
+
     # Kafka (optional)
     KAFKA_BOOTSTRAP_SERVERS: Optional[str] = None
     KAFKA_TOPIC_PREFIX: str = "admin-service"
-    
+
     class Config:
         # Path to .env.local in config/environments directory (relative to project root)
         env_file = Path(__file__).parent.parent.parent.parent.parent / "config" / "environments" / ".env.local"

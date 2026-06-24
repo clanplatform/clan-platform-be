@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, JSON, ARRAY
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -25,6 +25,7 @@ class Client(Base):
     location = Column(String(255), nullable=True)
     status = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
+    allowed_origins = Column(ARRAY(Text), nullable=True, default=list)
     is_active = Column(Boolean, nullable=True, server_default='true')
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)

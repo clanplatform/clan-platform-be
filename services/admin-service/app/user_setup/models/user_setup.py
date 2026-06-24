@@ -70,6 +70,9 @@ class UserSetupBasic(Base):
     entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of entity IDs
     default_entity = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
 
+    # Tenant
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=True, index=True)
+
     # View Preferences
     view = Column(String(50), nullable=True)  # e.g., 'grid', 'list', 'card'
     dashboard_view = Column(String(50), nullable=True)  # e.g., 'default', 'compact', 'detailed'
@@ -79,6 +82,7 @@ class UserSetupBasic(Base):
 
     # Relationships
     user_setup = relationship("UserSetup", back_populates="basic")
+    client = relationship("Client", foreign_keys=[client_id])
     department_rel = relationship("Department", foreign_keys=[department])
     default_dept_rel = relationship("Department", foreign_keys=[default_dept])
     division_rel = relationship("Division", foreign_keys=[division])
@@ -96,12 +100,12 @@ class UserSetupBasic(Base):
         # Check if email contains 'admin' (for development/testing)
         if self.email and 'admin' in self.email.lower():
             return True
-        
+
         # Check if user has admin roles assigned
         if hasattr(self, 'roles_entities') and self.roles_entities:
             from app.models.user_role import UserRoleBasic
             from app.db.database import SessionLocal
-            
+
             db = SessionLocal()
             try:
                 for role_entity in self.roles_entities:
@@ -112,22 +116,13 @@ class UserSetupBasic(Base):
                             UserRoleBasic.is_admin == True,
                             UserRoleBasic.active == True
                         ).first()
-                        
+
                         if admin_roles:
                             return True
             finally:
                 db.close()
-        
-        return False
 
-    @property
-    def client_id(self):
-        """Get client_id from roles_entities relationship"""
-        if hasattr(self, 'roles_entities') and self.roles_entities:
-            for role_entity in self.roles_entities:
-                if role_entity.assigned_client_id:
-                    return role_entity.assigned_client_id
-        return None
+        return False
 
 
 class UserSetupRolesEntity(Base):

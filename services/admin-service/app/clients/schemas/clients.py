@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AnyHttpUrl
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -6,7 +6,7 @@ from uuid import UUID
 class ClientBase(BaseModel):
     client_name: str
     client_code: Optional[str] = None
-    contact_email: str  # Changed from EmailStr to str
+    contact_email: str
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -21,6 +21,11 @@ class ClientBase(BaseModel):
     status: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = True
+    allowed_origins: Optional[List[str]] = Field(
+        default=None,
+        description="List of allowed CORS origins for this client's frontend apps.",
+        json_schema_extra={"example": ["https://app.customer.com", "https://portal.customer.org"]},
+    )
 
 class ClientCreate(ClientBase):
     pass
@@ -28,7 +33,7 @@ class ClientCreate(ClientBase):
 class ClientUpdate(BaseModel):
     client_name: Optional[str] = None
     client_code: Optional[str] = None
-    contact_email: Optional[str] = None  # Changed from EmailStr to str
+    contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -43,6 +48,7 @@ class ClientUpdate(BaseModel):
     status: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    allowed_origins: Optional[List[str]] = None
 
 class ClientResponse(ClientBase):
     client_id: UUID

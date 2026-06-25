@@ -54,7 +54,7 @@ async def create_user_setup_with_details(
             ip_address=get_client_ip(request),
             user_agent=request.headers.get("user-agent"),
             risk_score=RISK_SCORE["CREATE"],
-            new_values={"email": user_data.email, "username": user_data.username},
+            new_values={"email": user_data.basic.email, "username": user_data.basic.username},
         )
     except Exception:
         pass

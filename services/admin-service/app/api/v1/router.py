@@ -18,6 +18,8 @@ from app.api.v1.routes.access_control.user_role import router as user_role_route
 from app.api.v1.routes.access_control.user_setup import router as user_setup_router
 from app.api.v1.routes.access_control.user_role_form_permission import router as user_role_form_permission_router
 from app.api.v1.routes.audit_logs.audit_logs import router as audit_logs_router
+from app.api.v1.routes.navigation.button import router as buttons_router
+from app.api.v1.routes.org_structure.client_modules import router as client_modules_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -131,4 +133,18 @@ api_v1_router.include_router(
     audit_logs_router,
     prefix="/audit-logs",
     tags=["audit-logs"]
+)
+
+# include buttons routes
+api_v1_router.include_router(
+    buttons_router,
+    prefix="/buttons",
+    tags=["buttons"]
+)
+
+# include client-module assignment routes
+api_v1_router.include_router(
+    client_modules_router,
+    prefix="/client_modules",
+    tags=["client_modules"]
 )

@@ -49,10 +49,14 @@ def create_tables():
     from app.applications.models.application import Application
     from app.modules.models.module import Module
     from app.menus.models.menu import Menu
+    from app.forms.models.forms import Form
+    from app.clients.models.clients import Client
+    from app.entities.models.entity import Entity
     from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
-    
-    from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission  # noqa: F401
+    from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
+    from app.buttons.models.button import Button
+    from app.client_modules.models.client_module import ClientModule
 
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)

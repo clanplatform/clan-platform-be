@@ -25,6 +25,7 @@ class Client(Base):
     location = Column(String(255), nullable=True)
     status = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
+    tenant_id = Column(UUID(as_uuid=True), unique=True, nullable=False, default=uuid.uuid4, index=True)
     allowed_origins = Column(ARRAY(Text), nullable=True, default=list)
     is_active = Column(Boolean, nullable=True, server_default='true')
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -34,6 +35,7 @@ class Client(Base):
 
     # Relationships
     entities = relationship("Entity", back_populates="client")
+    client_modules = relationship("ClientModule", back_populates="client", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Client(client_name='{self.client_name}', is_active='{self.is_active}')>"

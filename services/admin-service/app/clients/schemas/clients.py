@@ -52,6 +52,7 @@ class ClientUpdate(BaseModel):
 
 class ClientResponse(ClientBase):
     client_id: UUID
+    tenant_id: UUID
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     deleted_at: Optional[datetime] = None

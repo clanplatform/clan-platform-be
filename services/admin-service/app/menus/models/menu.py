@@ -62,6 +62,7 @@ class Menu(Base):
     )
 
     forms = relationship("Form", back_populates="menu")
+    buttons = relationship("Button", back_populates="menu", cascade="all, delete-orphan")
 
     def get_effective_access(self):
         """

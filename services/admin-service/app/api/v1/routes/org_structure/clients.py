@@ -12,6 +12,7 @@ from app.core.security import get_current_user  # Uses optional auth support
 from app.core.config import settings
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.tenant_sync_client import sync_tenant_profile
 # User model not in scope - commenting out for now
 # from app.models.user import User
 from app.clients.models.clients import Client
@@ -87,6 +88,17 @@ async def create_client(
         )
     except Exception:
         pass
+
+    # Sync to tenant-portal so TenantProfile is created automatically
+    sync_tenant_profile(
+        client_id=str(db_client.client_id),
+        client_name=db_client.client_name,
+        client_code=db_client.client_code,
+        contact_email=db_client.contact_email,
+        contact_phone=db_client.contact_phone,
+        subscription_plan=db_client.subscription_plan,
+        is_active=bool(db_client.is_active),
+    )
 
     return db_client
 
@@ -211,6 +223,17 @@ async def update_client(
         )
     except Exception:
         pass
+
+    # Sync updated data to tenant-portal
+    sync_tenant_profile(
+        client_id=str(client.client_id),
+        client_name=client.client_name,
+        client_code=client.client_code,
+        contact_email=client.contact_email,
+        contact_phone=client.contact_phone,
+        subscription_plan=client.subscription_plan,
+        is_active=bool(client.is_active),
+    )
 
     return client
 

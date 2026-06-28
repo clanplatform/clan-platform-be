@@ -32,7 +32,8 @@ class Module(Base):
 
     # Relationships
     application = relationship("Application", back_populates="modules")
-    menus = relationship("Menu", back_populates="module", cascade="all, delete-orphan")  # New: Menus relationship
+    menus = relationship("Menu", back_populates="module", cascade="all, delete-orphan")
+    client_modules = relationship("ClientModule", back_populates="module", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Module(id={self.id}, name={self.name}, code={self.code}, application_id={self.application_id})>"

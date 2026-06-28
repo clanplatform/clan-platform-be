@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Audit Service (internal)
     AUDIT_SERVICE_URL: str = "http://audit-service:8000"
 
+    # Tenant Portal Service (internal sync)
+    TENANT_PORTAL_SERVICE_URL: str = "http://tenant-portal-service:8000"
+    INTERNAL_API_KEY: str = "internal-secret-key"
+
     # CORS
     CORS_ORIGINS: List[str] = ["*"]
 

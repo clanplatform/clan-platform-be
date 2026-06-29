@@ -2,6 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
+import asyncio
 import os
 import logging
 
@@ -89,8 +90,8 @@ async def create_client(
     except Exception:
         pass
 
-    # Sync to tenant-portal so TenantProfile is created automatically
-    sync_tenant_profile(
+    # Sync to gateway (non-blocking background task)
+    asyncio.create_task(sync_tenant_profile(
         client_id=str(db_client.client_id),
         client_name=db_client.client_name,
         client_code=db_client.client_code,
@@ -98,7 +99,7 @@ async def create_client(
         contact_phone=db_client.contact_phone,
         subscription_plan=db_client.subscription_plan,
         is_active=bool(db_client.is_active),
-    )
+    ))
 
     return db_client
 
@@ -224,8 +225,8 @@ async def update_client(
     except Exception:
         pass
 
-    # Sync updated data to tenant-portal
-    sync_tenant_profile(
+    # Sync updated data to gateway (non-blocking background task)
+    asyncio.create_task(sync_tenant_profile(
         client_id=str(client.client_id),
         client_name=client.client_name,
         client_code=client.client_code,
@@ -233,7 +234,7 @@ async def update_client(
         contact_phone=client.contact_phone,
         subscription_plan=client.subscription_plan,
         is_active=bool(client.is_active),
-    )
+    ))
 
     return client
 

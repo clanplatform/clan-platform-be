@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc
 from app.modules.models.module import Module
+from app.client_modules.models.client_module import ClientModule
 from app.modules.schemas.module import ModuleCreate, ModuleUpdate
 from app.infrastructure.audit_client import fire_audit_log
 from datetime import datetime
@@ -66,12 +67,25 @@ class ModuleService:
         is_public: Optional[bool] = None,
         search: Optional[str] = None,
         sort_by: str = "created_at",
-        sort_order: str = "desc"
+        sort_order: str = "desc",
+        client_id: Optional[str] = None,
     ) -> tuple[List[Module], int]:
-        """Get modules with filtering and pagination"""
-        
+        """Get modules with filtering and pagination.
+        When client_id is provided, only returns modules licensed to that client."""
+
         query = db.query(Module).filter(Module.is_deleted == False)
-        
+
+        # Tenant isolation: restrict to modules the client has licensed
+        if client_id:
+            query = query.join(
+                ClientModule,
+                and_(
+                    ClientModule.module_id == Module.id,
+                    ClientModule.client_id == client_id,
+                    ClientModule.is_active == True,
+                )
+            )
+
         # Apply filters
         if application_id:
             query = query.filter(Module.application_id == application_id)

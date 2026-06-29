@@ -131,7 +131,11 @@ async def get_modules(
     """
     
     skip = (page - 1) * size
-    
+
+    # Resolve the requesting user's client_id for tenant isolation.
+    # Platform admins (no client_id in token) see all modules.
+    requester_client_id = current_user.get("client_id") if current_user else None
+
     try:
         modules, total = ModuleService.get_modules(
             db=db,
@@ -142,7 +146,8 @@ async def get_modules(
             is_public=is_public,
             search=search,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            client_id=requester_client_id,
         )
         
         total_pages = math.ceil(total / size) if total > 0 else 0

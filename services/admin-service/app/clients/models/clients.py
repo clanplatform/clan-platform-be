@@ -25,7 +25,7 @@ class Client(Base):
     location = Column(String(255), nullable=True)
     status = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
-    tenant_id = Column(UUID(as_uuid=True), unique=True, nullable=False, default=uuid.uuid4, index=True)
+    gateway_tenant_ref = Column(UUID(as_uuid=True), unique=True, nullable=True, default=None, index=True)
     allowed_origins = Column(ARRAY(Text), nullable=True, default=list)
     is_active = Column(Boolean, nullable=True, server_default='true')
     deleted_at = Column(DateTime(timezone=True), nullable=True)

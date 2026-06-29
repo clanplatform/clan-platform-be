@@ -43,7 +43,7 @@ class UserRoleBasic(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_role_id = Column(UUID(as_uuid=True), ForeignKey("user_role.id", ondelete="CASCADE"), nullable=False, unique=True)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="SET NULL"), nullable=True, index=True)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="CASCADE"), nullable=True, index=True)
 
     role_name = Column(String(100), nullable=False)
     role_code = Column(String(50), nullable=False)

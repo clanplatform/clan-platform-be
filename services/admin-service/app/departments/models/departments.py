@@ -12,7 +12,7 @@ class Department(Base):
     __tablename__ = "departments"
     
     department_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=False)
     entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=False)
     parent_department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
     department_name = Column(String(100), nullable=False)
@@ -37,7 +37,7 @@ class Department(Base):
     updated_by = Column(UUID(as_uuid=True), nullable=True)
     
     # Relationships
-    client = relationship("Client")
+    tenant = relationship("Tenant")
     entity = relationship("Entity", back_populates="departments")
     divisions = relationship("Division", back_populates="department")
     parent_department = relationship("Department", remote_side=[department_id], foreign_keys=[parent_department_id])

@@ -95,8 +95,8 @@ class JobCodeBasicInfo(Base):
     description = Column(Text, comment="Job description")
     
     # Client and entity references with proper UUID foreign keys
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="CASCADE"), 
-                      nullable=False, index=True, comment="Foreign key to clients table")
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+                      nullable=False, index=True, comment="Foreign key to tenants table")
     entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id", ondelete="CASCADE"), 
                       nullable=False, index=True, comment="Foreign key to entities table")
     department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id", ondelete="CASCADE"), 
@@ -129,7 +129,7 @@ class JobCodeBasicInfo(Base):
     job_code = relationship("JobCode", back_populates="basic_info")
     
     # Relationships to organizational entities
-    client = relationship("Client", foreign_keys=[client_id])
+    tenant = relationship("Tenant", foreign_keys=[tenant_id])
     entity = relationship("Entity", foreign_keys=[entity_id])
     department = relationship("Department", foreign_keys=[department_id])
     division = relationship("Division", foreign_keys=[division_id])

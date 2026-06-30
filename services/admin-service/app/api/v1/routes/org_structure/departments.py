@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.departments.models.departments import Department
 from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate, DepartmentResponse
 from app.departments.services import departments as department_service
@@ -19,7 +19,7 @@ def get_departments(
     limit: int = 100,
     entity_id: Optional[uuid.UUID] = None,
     parent_department_id: Optional[uuid.UUID] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Get all departments with pagination and optional filtering"""
@@ -65,7 +65,7 @@ def get_departments(
 def get_department(
     request: Request,
     department_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Get a specific department by ID"""
@@ -110,7 +110,7 @@ def get_department(
 def create_department(
     request: Request,
     department_data: DepartmentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Create a new department"""
@@ -163,7 +163,7 @@ def update_department(
     request: Request,
     department_id: uuid.UUID,
     department_data: DepartmentUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Update a department"""
@@ -212,7 +212,7 @@ def update_department(
 async def delete_department(
     request: Request,
     department_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Soft delete department"""
@@ -275,7 +275,7 @@ def get_departments_by_client(
     limit: int = 100,
     entity_id: Optional[uuid.UUID] = None,
     parent_department_id: Optional[uuid.UUID] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Get all departments for a specific client (supports both entity-based and entity-less clients)"""

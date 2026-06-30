@@ -174,13 +174,13 @@ class RedisCache:
         key = f"application:{app_id}"
         return self.get(key)
     
-    def cache_client_applications(self, client_id: int, applications_data: List[Dict], ttl: int = 1800) -> bool:
-        """Cache applications for a specific client."""
-        key = f"client:{client_id}:applications"
+    def cache_tenant_applications(self, tenant_id: int, applications_data: List[Dict], ttl: int = 1800) -> bool:
+        """Cache applications for a specific tenant."""
+        key = f"tenant:{tenant_id}:applications"
         return self.set(key, applications_data, ttl)
-    
-    def get_cached_client_applications(self, client_id: int) -> Optional[List[Dict]]:
-        """Get cached applications for a client."""
+
+    def get_cached_tenant_applications(self, tenant_id: int) -> Optional[List[Dict]]:
+        """Get cached applications for a tenant."""
         key = f"client:{client_id}:applications"
         return self.get(key)
     

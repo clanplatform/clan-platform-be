@@ -45,13 +45,13 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         try:
             db = self.session_factory()
             try:
-                from app.clients.models.clients import Client
+                from app.tenants.models.tenants import Tenant
                 rows = (
-                    db.query(Client.allowed_origins)
+                    db.query(Tenant.allowed_origins)
                     .filter(
-                        Client.is_active == True,
-                        Client.deleted_at == None,
-                        Client.allowed_origins != None,
+                        Tenant.is_active == True,
+                        Tenant.deleted_at == None,
+                        Tenant.allowed_origins != None,
                     )
                     .all()
                 )

@@ -71,7 +71,7 @@ class UserSetupBasic(Base):
     default_entity = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
 
     # Tenant
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=True, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=True, index=True)
 
     # View Preferences
     view = Column(String(50), nullable=True)  # e.g., 'grid', 'list', 'card'
@@ -82,7 +82,7 @@ class UserSetupBasic(Base):
 
     # Relationships
     user_setup = relationship("UserSetup", back_populates="basic")
-    client = relationship("Client", foreign_keys=[client_id])
+    tenant = relationship("Tenant", foreign_keys=[tenant_id])
     department_rel = relationship("Department", foreign_keys=[department])
     default_dept_rel = relationship("Department", foreign_keys=[default_dept])
     division_rel = relationship("Division", foreign_keys=[division])
@@ -143,8 +143,8 @@ class UserSetupRolesEntity(Base):
     # Assigned Entities - Array of entity IDs
     assigned_entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
 
-    # Assigned Client - Foreign key to clients table
-    assigned_client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="SET NULL"), nullable=True)
+    # Assigned Tenant - Foreign key to tenants table
+    assigned_tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="SET NULL"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -152,10 +152,10 @@ class UserSetupRolesEntity(Base):
     # Relationships
     user_setup = relationship("UserSetup", back_populates="roles_entities")
     usersetup_basic = relationship("UserSetupBasic", backref="roles_entities")
-    assigned_client = relationship("Client", foreign_keys=[assigned_client_id])
+    assigned_tenant = relationship("Tenant", foreign_keys=[assigned_tenant_id])
 
     def __repr__(self):
-        return f"<UserSetupRolesEntity(id={self.id}, user_setup_id={self.user_setup_id}, usersetup_basic_id={self.usersetup_basic_id}, assigned_roles={self.assigned_roles}, assigned_client_id={self.assigned_client_id})>"
+        return f"<UserSetupRolesEntity(id={self.id}, user_setup_id={self.user_setup_id}, usersetup_basic_id={self.usersetup_basic_id}, assigned_roles={self.assigned_roles}, assigned_tenant_id={self.assigned_tenant_id})>"
 
 
 class UserSetupPreference(Base):

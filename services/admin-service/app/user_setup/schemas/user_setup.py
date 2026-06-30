@@ -28,7 +28,7 @@ class UserSetupBasicBase(BaseModel):
     reporting_to: Optional[UUID] = Field(None, description="Manager's user ID")
     entities: Optional[List[UUID]] = Field(None, description="Array of entity IDs")
     default_entity: Optional[UUID] = Field(None, description="Default entity ID")
-    client_id: Optional[UUID] = Field(None, description="Tenant client ID (foreign key to clients table)")
+    tenant_id: Optional[UUID] = Field(None, description="Tenant ID (foreign key to tenants table)")
     view: Optional[str] = Field(None, max_length=50, description="View preference")
     dashboard_view: Optional[str] = Field(None, max_length=50, description="Dashboard view preference")
 
@@ -37,7 +37,7 @@ class UserSetupBasicCreate(UserSetupBasicBase):
     """Schema for creating a new user setup"""
     password: str = Field(..., min_length=8, max_length=100, description="User password (will be hashed)")
 
-    @field_validator('reporting_to', 'department', 'division', 'job_code', 'default_dept', 'default_entity', 'client_id', mode='before')
+    @field_validator('reporting_to', 'department', 'division', 'job_code', 'default_dept', 'default_entity', 'tenant_id', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
         """Convert empty strings to None for UUID fields"""
@@ -75,11 +75,11 @@ class UserSetupBasicUpdate(BaseModel):
     reporting_to: Optional[UUID] = None
     entities: Optional[List[UUID]] = None
     default_entity: Optional[UUID] = None
-    client_id: Optional[UUID] = None
+    tenant_id: Optional[UUID] = None
     view: Optional[str] = Field(None, max_length=50)
     dashboard_view: Optional[str] = Field(None, max_length=50)
 
-    @field_validator('reporting_to', 'department', 'division', 'job_code', 'default_dept', 'default_entity', 'client_id', mode='before')
+    @field_validator('reporting_to', 'department', 'division', 'job_code', 'default_dept', 'default_entity', 'tenant_id', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
         """Convert empty strings to None for UUID fields"""
@@ -114,7 +114,7 @@ class UserSetupRolesEntityBase(BaseModel):
     """Base schema for UserSetupRolesEntity"""
     assigned_roles: Optional[List[UUID]] = Field(None, description="Array of assigned role IDs")
     assigned_entities: Optional[List[UUID]] = Field(None, description="Array of assigned entity IDs")
-    assigned_client_id: Optional[UUID] = Field(None, description="Assigned client ID (foreign key to clients table)")
+    assigned_tenant_id: Optional[UUID] = Field(None, description="Assigned tenant ID (foreign key to tenants table)")
 
 class UserSetupRolesEntityCreate(UserSetupRolesEntityBase):
     """Schema for creating roles and entities assignment"""
@@ -127,7 +127,7 @@ class UserSetupRolesEntityUpdate(BaseModel):
     usersetup_basic_id: Optional[UUID] = None
     assigned_roles: Optional[List[UUID]] = None
     assigned_entities: Optional[List[UUID]] = None
-    assigned_client_id: Optional[UUID] = None
+    assigned_tenant_id: Optional[UUID] = None
 
 
 class UserSetupRolesEntityResponse(UserSetupRolesEntityBase):

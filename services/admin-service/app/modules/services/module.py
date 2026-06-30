@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc
 from app.modules.models.module import Module
-from app.client_modules.models.client_module import ClientModule
+from app.tenant_modules.models.tenant_module import TenantModule
 from app.modules.schemas.module import ModuleCreate, ModuleUpdate
 from app.infrastructure.audit_client import fire_audit_log
 from datetime import datetime
@@ -78,11 +78,11 @@ class ModuleService:
         # Tenant isolation: restrict to modules the client has licensed
         if client_id:
             query = query.join(
-                ClientModule,
+                TenantModule,
                 and_(
-                    ClientModule.module_id == Module.id,
-                    ClientModule.client_id == client_id,
-                    ClientModule.is_active == True,
+                    TenantModule.module_id == Module.id,
+                    TenantModule.tenant_id == client_id,
+                    TenantModule.is_active == True,
                 )
             )
 

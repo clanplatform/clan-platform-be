@@ -37,13 +37,13 @@ class UserRoleBasic(Base):
     """
     __tablename__ = "userrole_basic"
     __table_args__ = (
-        UniqueConstraint('client_id', 'role_name', name='uq_userrole_basic_client_role_name'),
-        UniqueConstraint('client_id', 'role_code', name='uq_userrole_basic_client_role_code'),
+        UniqueConstraint('tenant_id', 'role_name', name='uq_userrole_basic_tenant_role_name'),
+        UniqueConstraint('tenant_id', 'role_code', name='uq_userrole_basic_tenant_role_code'),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_role_id = Column(UUID(as_uuid=True), ForeignKey("user_role.id", ondelete="CASCADE"), nullable=False, unique=True)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="CASCADE"), nullable=True, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=True, index=True)
 
     role_name = Column(String(100), nullable=False)
     role_code = Column(String(50), nullable=False)

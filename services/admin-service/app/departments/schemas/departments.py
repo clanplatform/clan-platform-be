@@ -21,7 +21,7 @@ class DepartmentBase(BaseModel):
     budget_info: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Budget information")
     department_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Department metadata")
     is_active: Optional[bool] = Field(True, description="Whether the department is active")
-    client_id: uuid.UUID = Field(..., description="Client ID this department belongs to")
+    tenant_id: uuid.UUID = Field(..., description="Client ID this department belongs to")
 
     @validator('email')
     def validate_email(cls, v):

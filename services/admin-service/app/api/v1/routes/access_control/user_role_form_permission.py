@@ -4,7 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 from math import ceil
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_client import fire_audit_log
@@ -29,7 +29,7 @@ router = APIRouter()
 async def create_role_form_permission(
     request: Request,
     permission_data: RoleFormPermissionCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -93,7 +93,7 @@ async def create_role_form_permission(
 async def get_role_form_permission(
     request: Request,
     permission_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -147,7 +147,7 @@ async def get_all_role_form_permissions(
     form_access: Optional[str] = Query(None, description="Filter by form access level (read, write, disable)"),
     sort_by: str = Query("created_at", description="Sort by field"),
     sort_order: str = Query("desc", description="Sort order (asc, desc)"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -212,7 +212,7 @@ async def update_role_form_permission(
     request: Request,
     permission_id: UUID,
     permission_data: RoleFormPermissionUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -275,7 +275,7 @@ async def update_role_form_permission(
 async def delete_role_form_permission(
     request: Request,
     permission_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """

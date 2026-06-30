@@ -6,16 +6,16 @@ from app.infrastructure.database.base import Base
 import uuid
 
 
-class ClientModule(Base):
+class TenantModule(Base):
     """
-    Junction table — many-to-many between clients and modules.
-    One module (e.g. Scheduling) can be assigned to many clients.
-    One client can have many modules.
+    Junction table — many-to-many between tenants and modules.
+    One module (e.g. Scheduling) can be assigned to many tenants.
+    One tenant can have many modules.
     """
-    __tablename__ = "client_modules"
+    __tablename__ = "tenant_modules"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False, index=True)
     module_id = Column(UUID(as_uuid=True), ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
 
     is_active = Column(Boolean, default=True, nullable=False)
@@ -27,12 +27,12 @@ class ClientModule(Base):
     updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     # Relationships
-    client = relationship("Client", back_populates="client_modules")
-    module = relationship("Module", back_populates="client_modules")
+    tenant = relationship("Tenant", back_populates="tenant_modules")
+    module = relationship("Module", back_populates="tenant_modules")
 
     __table_args__ = (
-        UniqueConstraint("client_id", "module_id", name="uq_client_module"),
+        UniqueConstraint("tenant_id", "module_id", name="uq_tenant_module"),
     )
 
     def __repr__(self):
-        return f"<ClientModule(client_id={self.client_id}, module_id={self.module_id}, is_active={self.is_active})>"
+        return f"<TenantModule(tenant_id={self.tenant_id}, module_id={self.module_id}, is_active={self.is_active})>"

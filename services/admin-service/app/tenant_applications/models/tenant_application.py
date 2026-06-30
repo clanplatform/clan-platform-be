@@ -6,26 +6,26 @@ from app.infrastructure.database.base import Base
 import uuid
 
 
-class ClientApplication(Base):
+class TenantApplication(Base):
     """
-    Junction table — many-to-many between clients and applications.
+    Junction table — many-to-many between tenants and applications.
 
     Licensing tiers:
-      - Tier 1: A client buys individual modules    → use client_modules
-      - Tier 2: A client buys an entire application → use client_applications
-      - Tier 3: A client buys the full platform     → set subscription_plan='platform' on clients
+      - Tier 1: A tenant buys individual modules    → use tenant_modules
+      - Tier 2: A tenant buys an entire application → use tenant_applications
+      - Tier 3: A tenant buys the full platform     → set subscription_plan='platform' on tenants
 
-    When a ClientApplication row exists (and is_active=True), the client has
+    When a TenantApplication row exists (and is_active=True), the tenant has
     access to ALL modules under that application without needing individual
-    client_modules rows.
+    tenant_modules rows.
     """
 
-    __tablename__ = "client_applications"
+    __tablename__ = "tenant_applications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    client_id = Column(
+    tenant_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("clients.client_id", ondelete="CASCADE"),
+        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -46,9 +46,9 @@ class ClientApplication(Base):
     )
     updated_by = Column(UUID(as_uuid=True), nullable=True)
 
-    client = relationship("Client", backref="client_applications")
-    application = relationship("Application", backref="client_applications")
+    tenant = relationship("Tenant", backref="tenant_applications")
+    application = relationship("Application", backref="tenant_applications")
 
     __table_args__ = (
-        UniqueConstraint("client_id", "application_id", name="uq_client_application"),
+        UniqueConstraint("tenant_id", "application_id", name="uq_tenant_application"),
     )

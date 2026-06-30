@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate, DivisionResponse
@@ -19,7 +19,7 @@ def get_divisions(
     limit: int = 100,
     client_id: Optional[uuid.UUID] = None,
     entity_id: Optional[uuid.UUID] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all divisions with pagination and optional client/entity filtering, sorted by newest first (FILO)"""
@@ -59,7 +59,7 @@ def get_divisions_by_department(
     department_id: uuid.UUID,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all divisions that are related to a specific department by entity/client"""
@@ -100,7 +100,7 @@ def get_divisions_by_department(
 def create_division(
     request: Request,
     division_data: DivisionCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Create a new division"""
@@ -150,7 +150,7 @@ def update_division(
     request: Request,
     division_id: uuid.UUID,
     division_data: DivisionUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Update a division"""
@@ -198,7 +198,7 @@ def update_division(
 async def delete_division(
     request: Request,
     division_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Soft delete a division"""

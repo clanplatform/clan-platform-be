@@ -24,7 +24,7 @@ class EntityBase(BaseModel):
     deleted: bool = False
 
 class EntityCreate(EntityBase):
-    client_id: UUID
+    tenant_id: UUID
 
 class EntityUpdate(BaseModel):
     entity_name: Optional[str] = None
@@ -48,7 +48,7 @@ class EntityUpdate(BaseModel):
 
 class EntityResponse(EntityBase):
     entity_id: UUID
-    client_id: UUID
+    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
 

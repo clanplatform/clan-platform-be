@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.job_codes.models.job_codes import JobCode
 from app.job_codes.services import job_codes as job_code_service
@@ -40,7 +40,7 @@ async def get_job_codes(
     search: Optional[str] = Query(None, description="Search term"),
     category: Optional[str] = Query(None, description="Filter by category"),
     active_status: Optional[bool] = Query(None, description="Filter by active status"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Get paginated list of job codes with optional filtering and all nested relationships"""
@@ -87,7 +87,7 @@ async def get_job_codes(
 async def get_job_code(
     request: Request,
     job_code_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Get a specific job code with all nested relationships"""
@@ -125,7 +125,7 @@ async def get_job_code(
 async def create_job_code(
     request: Request,
     job_code_data: JobCodeCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Create a new job code with optional nested relationships"""
@@ -165,7 +165,7 @@ async def update_job_code(
     request: Request,
     job_code_id: UUID,
     job_code_data: JobCodeUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Update a job code and its nested relationships"""
@@ -212,7 +212,7 @@ async def update_job_code(
 async def delete_job_code(
     request: Request,
     job_code_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Delete a job code and all its nested relationships"""

@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 import logging
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_client import fire_audit_log
@@ -37,7 +37,7 @@ router = APIRouter()
 async def create_user_setup_with_details(
     request: Request,
     user_data: UserSetupCreateWithDetails,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Create a user setup with roles, entities, and preferences in one request."""
@@ -83,7 +83,7 @@ def get_all_user_setups(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     status_filter: Optional[str] = Query(None, description="Filter by status"),
     department_filter: Optional[UUID] = Query(None, description="Filter by department"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all user setups with pagination and optional filters."""
@@ -125,7 +125,7 @@ def get_all_user_setups(
 def get_user_setup(
     request: Request,
     user_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get a single user setup (basic info)."""
@@ -161,7 +161,7 @@ def get_user_setup(
 def get_user_setup_with_details(
     request: Request,
     user_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get a user setup with roles, entities, and preferences."""
@@ -198,7 +198,7 @@ async def update_user_setup(
     request: Request,
     user_id: UUID,
     user_data: UserSetupBasicUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Update a user setup."""
@@ -236,7 +236,7 @@ async def update_user_setup(
 async def delete_user_setup(
     request: Request,
     user_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Delete a user setup (cascades to roles_entities and preferences)."""

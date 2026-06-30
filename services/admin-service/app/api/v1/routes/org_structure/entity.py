@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 import os
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user  # Uses optional auth support
 from app.entities.models.entity import Entity
-from app.clients.models.clients import Client
+from app.tenants.models.tenants import Tenant
 from app.entities.schemas.entity import (
     EntityCreate,
     EntityUpdate,
@@ -34,7 +34,7 @@ router = APIRouter()
 async def create_entity(
     request: Request,
     entity: EntityCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user=Depends(get_current_user)
 ):
     """Create a new entity"""
@@ -92,7 +92,7 @@ async def list_entities(
     search: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),
     client_id: Optional[UUID] = Query(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """List all entities with pagination and filtering"""
@@ -156,7 +156,7 @@ async def list_entities(
 async def get_entity(
     request: Request,
     entity_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Get entity by ID"""
@@ -202,7 +202,7 @@ async def update_entity(
     request: Request,
     entity_id: UUID,
     entity_data: EntityUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Update entity"""
@@ -263,7 +263,7 @@ async def update_entity(
 async def delete_entity(
     request: Request,
     entity_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
     """Soft delete entity"""
@@ -333,7 +333,7 @@ async def delete_entity(
 #     size: int = Query(10, ge=1, le=100),
 #     entity_type: Optional[str] = Query(None),
 #     include_inactive: bool = Query(False),
-#     db: Session = Depends(get_db),
+#     db: Session = Depends(get_tenant_db),
 #     current_user = Depends(get_current_user)
 # ):
 #     """Get all entities for a specific client"""
@@ -378,7 +378,7 @@ async def delete_entity(
 # @router.get("/hierarchy/{client_id}")
 # async def get_entity_hierarchy(
 #     client_id: UUID,
-#     db: Session = Depends(get_db),
+#     db: Session = Depends(get_tenant_db),
 #     current_user = Depends(get_current_user)
 # ):
     """Get list of entities for a specific client"""

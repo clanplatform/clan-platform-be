@@ -4,7 +4,7 @@ API v1 router - combines all v1 endpoints
 from fastapi import APIRouter
 from app.api.v1.routes.domains.domains import router as domains_router
 from app.api.v1.routes.applications.applications import router as applications_router
-from app.api.v1.routes.org_structure.clients import router as clients_router
+from app.api.v1.routes.org_structure.tenants import router as tenants_router
 from app.api.v1.routes.org_structure.entity import router as entity_router
 from app.api.v1.routes.org_structure.departments import router as department_router
 from app.api.v1.routes.org_structure.divisions import router as division_router
@@ -19,7 +19,8 @@ from app.api.v1.routes.access_control.user_setup import router as user_setup_rou
 from app.api.v1.routes.access_control.user_role_form_permission import router as user_role_form_permission_router
 from app.api.v1.routes.audit_logs.audit_logs import router as audit_logs_router
 from app.api.v1.routes.navigation.button import router as buttons_router
-from app.api.v1.routes.org_structure.client_modules import router as client_modules_router
+from app.api.v1.routes.org_structure.tenant_modules import router as tenant_modules_router
+from app.api.v1.routes.sync.tenants import router as sync_tenants_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -72,11 +73,11 @@ api_v1_router.include_router(
     tags=["forms_language"]
 )
 
-#include client routes
+#include tenant routes
 api_v1_router.include_router(
-    clients_router,
-    prefix="/clients",
-    tags=["clients"]
+    tenants_router,
+    prefix="/tenants",
+    tags=["tenants"]
 )
 
 #include entity routes
@@ -142,9 +143,16 @@ api_v1_router.include_router(
     tags=["buttons"]
 )
 
-# include client-module assignment routes
+# include tenant-module assignment routes
 api_v1_router.include_router(
-    client_modules_router,
-    prefix="/client_modules",
-    tags=["client_modules"]
+    tenant_modules_router,
+    prefix="/tenant_modules",
+    tags=["tenant_modules"]
+)
+
+# inbound sync from clan-tenant-portal-be (service-to-service, no JWT)
+api_v1_router.include_router(
+    sync_tenants_router,
+    prefix="/sync",
+    tags=["sync"],
 )

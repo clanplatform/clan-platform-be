@@ -53,7 +53,7 @@ def create_entity(db: Session, entity: EntityCreate, user_id: Optional[UUID] = N
         raise HTTPException(status_code=400, detail="Entity code already registered")
 
     # Verify client exists
-    from app.clients.services.clients import get_client
+    from app.tenants.services.tenants import get_tenant
     client = get_client(db, entity.client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")

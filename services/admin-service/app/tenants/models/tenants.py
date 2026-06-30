@@ -5,12 +5,12 @@ from sqlalchemy.sql import func
 from app.infrastructure.database.base import Base
 import uuid
 
-class Client(Base):
-    __tablename__ = "clients"
+class Tenant(Base):
+    __tablename__ = "tenants"
 
-    client_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    client_name = Column(String(255), nullable=False)
-    client_code = Column(String(100), nullable=True)
+    tenant_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_name = Column(String(255), nullable=False)
+    tenant_code = Column(String(100), nullable=True)
     contact_email = Column(String(255), nullable=False)
     contact_phone = Column(String(50), nullable=True)
     address = Column(String(500), nullable=True)
@@ -26,6 +26,7 @@ class Client(Base):
     status = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
     gateway_tenant_ref = Column(UUID(as_uuid=True), unique=True, nullable=True, default=None, index=True)
+    tenant_db_name = Column(String(150), unique=True, nullable=True, index=True)
     allowed_origins = Column(ARRAY(Text), nullable=True, default=list)
     is_active = Column(Boolean, nullable=True, server_default='true')
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -34,8 +35,8 @@ class Client(Base):
     created_by = Column(UUID(as_uuid=True), nullable=True)
 
     # Relationships
-    entities = relationship("Entity", back_populates="client")
-    client_modules = relationship("ClientModule", back_populates="client", cascade="all, delete-orphan")
+    entities = relationship("Entity", back_populates="tenant")
+    tenant_modules = relationship("TenantModule", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<Client(client_name='{self.client_name}', is_active='{self.is_active}')>"
+        return f"<Tenant(tenant_name='{self.tenant_name}', is_active='{self.is_active}')>"

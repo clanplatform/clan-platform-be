@@ -9,7 +9,7 @@ class Entity(Base):
     __tablename__ = "entities"
 
     entity_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=False)
     entity_name = Column(String(100), nullable=False)
     entity_code = Column(String(20), nullable=False)
     company_size = Column(String(50), nullable=True)
@@ -32,9 +32,9 @@ class Entity(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
     # Relationships
-    client = relationship("Client", back_populates="entities")
+    tenant = relationship("Tenant", back_populates="entities")
     departments = relationship("Department", back_populates="entity")
     divisions = relationship("Division", back_populates="entity")
 
     def __repr__(self):
-        return f"<Entity(id={self.entity_id}, name={self.entity_name}, client_id={self.client_id})>"
+        return f"<Entity(id={self.entity_id}, name={self.entity_name}, tenant_id={self.tenant_id})>"

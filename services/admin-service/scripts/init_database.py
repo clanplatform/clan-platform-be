@@ -34,7 +34,7 @@ from app.infrastructure.database.base import Base
 from sqlalchemy import inspect, text
 
 # Import all models
-from app.clients.models.clients import Client
+from app.tenants.models.tenants import Tenant
 from app.domains.models.domain import Domain
 from app.entities.models.entity import Entity
 from app.departments.models.departments import Department

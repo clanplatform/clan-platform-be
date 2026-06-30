@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 import logging
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user, get_current_user_id
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_session_id, get_user_id
 from app.infrastructure.audit_client import fire_audit_log
@@ -37,7 +37,7 @@ router = APIRouter()
 # @router.post("/", response_model=UserRoleBasicResponse, status_code=status.HTTP_201_CREATED)
 # def create_user_role(
 #     role_data: UserRoleBasicCreate,
-#     db: Session = Depends(get_db),
+#     db: Session = Depends(get_tenant_db),
 #     current_user_id: str = Depends(get_current_user_id)
 # ):
 #     """Create a new user role zonix"""
@@ -48,7 +48,7 @@ router = APIRouter()
 async def create_user_role_with_details(
     request: Request,
     role_data: UserRoleCreateWithDetails,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Create a user role with permissions and conditionals in one request"""
@@ -85,7 +85,7 @@ async def get_all_user_roles(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     active_only: bool = Query(False, description="Filter to only active roles"),
     client_id: Optional[UUID] = Query(None, description="Filter roles by client"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all user roles, optionally filtered by client"""
@@ -112,7 +112,7 @@ async def get_all_user_roles(
 # @router.get("/{role_id}", response_model=UserRoleBasicResponse)
 # def get_user_role(
 #     role_id: UUID,
-#     db: Session = Depends(get_db),
+#     db: Session = Depends(get_tenant_db),
 #     current_user_id: str = Depends(get_current_user_id)
 # ):
 #     """Get a specific user role by ID"""
@@ -129,7 +129,7 @@ async def get_all_user_roles(
 async def get_user_role_with_details(
     request: Request,
     role_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get a user role with all permissions and conditionals"""
@@ -164,7 +164,7 @@ async def update_user_role_with_details(
     request: Request,
     role_id: UUID,
     role_data: UserRoleUpdateWithDetails,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Update a user role with all permissions and conditionals in one request"""
@@ -202,7 +202,7 @@ async def update_user_role_with_details(
 # def update_user_role(
 #     role_id: UUID,
 #     role_data: UserRoleBasicUpdate,
-#     db: Session = Depends(get_db),
+#     db: Session = Depends(get_tenant_db),
 #     current_user_id: str = Depends(get_current_user_id)
 # ):
 #     """Update a user role"""
@@ -219,7 +219,7 @@ async def update_user_role_with_details(
 async def delete_user_role(
     request: Request,
     role_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Delete a user role (cascades to permissions and conditionals)"""

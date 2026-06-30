@@ -3,9 +3,9 @@ from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
 
-class ClientBase(BaseModel):
-    client_name: str
-    client_code: Optional[str] = None
+class TenantBase(BaseModel):
+    tenant_name: str
+    tenant_code: Optional[str] = None
     contact_email: str
     contact_phone: Optional[str] = None
     address: Optional[str] = None
@@ -20,19 +20,20 @@ class ClientBase(BaseModel):
     location: Optional[str] = None
     status: Optional[str] = None
     description: Optional[str] = None
+    tenant_db_name: Optional[str] = None
     is_active: Optional[bool] = True
     allowed_origins: Optional[List[str]] = Field(
         default=None,
-        description="List of allowed CORS origins for this client's frontend apps.",
+        description="List of allowed CORS origins for this tenant's frontend apps.",
         json_schema_extra={"example": ["https://app.customer.com", "https://portal.customer.org"]},
     )
 
-class ClientCreate(ClientBase):
+class TenantCreate(TenantBase):
     pass
 
-class ClientUpdate(BaseModel):
-    client_name: Optional[str] = None
-    client_code: Optional[str] = None
+class TenantUpdate(BaseModel):
+    tenant_name: Optional[str] = None
+    tenant_code: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     address: Optional[str] = None
@@ -47,12 +48,13 @@ class ClientUpdate(BaseModel):
     location: Optional[str] = None
     status: Optional[str] = None
     description: Optional[str] = None
+    tenant_db_name: Optional[str] = None
     is_active: Optional[bool] = None
     allowed_origins: Optional[List[str]] = None
 
-class ClientResponse(ClientBase):
-    client_id: UUID
+class TenantResponse(TenantBase):
     tenant_id: UUID
+    gateway_tenant_ref: Optional[UUID] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     deleted_at: Optional[datetime] = None
@@ -61,15 +63,15 @@ class ClientResponse(ClientBase):
     class Config:
         from_attributes = True
 
-class ClientListResponse(BaseModel):
-    clients: List[ClientResponse]
+class TenantListResponse(BaseModel):
+    tenants: List[TenantResponse]
     total: int
     page: int
     page_size: int
     total_pages: int
 
-class ClientConfigurationStatus(BaseModel):
-    client_id: UUID
+class TenantConfigurationStatus(BaseModel):
+    tenant_id: UUID
     has_entities: bool
     entities_count: int
     has_organizational_structure: bool
@@ -81,4 +83,3 @@ class ClientConfigurationStatus(BaseModel):
     users_count: int
     setup_completion_percentage: int
     recommended_next_steps: List[str]
-

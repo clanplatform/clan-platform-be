@@ -40,7 +40,7 @@ try:
     from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
 
     # Org structure models
-    from app.clients.models.clients import Client
+    from app.tenants.models.tenants import Tenant
     from app.entities.models.entity import Entity
     from app.departments.models.departments import Department
     from app.divisions.models.divisions import Division

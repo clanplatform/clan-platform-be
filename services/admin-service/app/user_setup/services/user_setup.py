@@ -21,7 +21,7 @@ from app.user_setup.schemas.user_setup import (
 )
 from app.core.security import get_password_hash
 from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 logger = logging.getLogger(__name__)
 

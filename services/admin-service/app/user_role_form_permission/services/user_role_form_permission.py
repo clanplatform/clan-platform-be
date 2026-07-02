@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from math import ceil
 
 from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 from app.forms.models.forms import Form
 from app.user_role_form_permission.schemas.user_role_form_permission import (

@@ -8,7 +8,7 @@ from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainRespons
 from app.core.config import settings
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.core.security import get_current_user
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.audit_helpers import (
     RISK_SCORE as _RISK_SCORE,
     get_client_ip as _client_ip,

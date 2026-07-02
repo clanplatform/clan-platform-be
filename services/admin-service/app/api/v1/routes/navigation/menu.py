@@ -26,7 +26,7 @@ from app.menu_reorder.services.menu_reorder import MenuReorderService
 from app.menu_soft_delete.services.menu_soft_delete import menu_cleanup_service
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.menu_language.models.menu_language import MenuLanguage
 from bson import ObjectId
 from app.infrastructure.mongodb import get_mongodb

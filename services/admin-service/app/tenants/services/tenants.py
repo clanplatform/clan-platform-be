@@ -6,7 +6,7 @@ from uuid import UUID
 from app.tenants.models.tenants import Tenant
 from app.tenants.schemas.tenants import TenantCreate, TenantUpdate
 from app.core.hybrid_encryption import hybrid_encryption
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 # TODO: TenantApplication and DomainApplication models and schemas need to be created
 # Placeholder types for now - functions using these will raise NotImplementedError

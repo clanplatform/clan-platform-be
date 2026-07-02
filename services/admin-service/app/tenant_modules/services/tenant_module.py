@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc, asc
 from app.tenant_modules.models.tenant_module import TenantModule
 from app.tenant_modules.schemas.tenant_module import TenantModuleCreate, TenantModuleUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 import uuid
 
 

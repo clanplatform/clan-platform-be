@@ -4,7 +4,7 @@ from sqlalchemy import and_, or_, desc, asc
 from app.modules.models.module import Module
 from app.tenant_modules.models.tenant_module import TenantModule
 from app.modules.schemas.module import ModuleCreate, ModuleUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from datetime import datetime
 
 class ModuleService:

@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
+import asyncio
 import logging
 
 from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.email_tenant import send_account_created_email
 from app.user_setup.services.user_setup import UserSetupService
 from app.user_setup.schemas.user_setup import (
     UserSetupBasicCreate,
@@ -62,12 +64,21 @@ async def create_user_setup_with_details(
                 "username": user_data.basic.username,
                 "firstname": user_data.basic.firstname,
                 "lastname": user_data.basic.lastname,
-                "client_id": str(user_data.basic.client_id) if user_data.basic.client_id else None,
+                "tenant_id": str(user_data.basic.tenant_id) if user_data.basic.tenant_id else None,
             },
         )
         logger.info(f"Audit log fired: CREATE UserSetup {result.id} by user {uid}")
     except Exception as e:
         logger.error(f"Failed to fire audit log for CREATE UserSetup: {e}", exc_info=True)
+
+    # Notify the new user by email (fire-and-forget via communication email-service)
+    asyncio.create_task(send_account_created_email(
+        to_email=str(user_data.basic.email),
+        username=user_data.basic.username,
+        firstname=user_data.basic.firstname,
+        tenant_id=str(user_data.basic.tenant_id) if user_data.basic.tenant_id else None,
+        recipient_id=str(result.id),
+    ))
 
     return result
 

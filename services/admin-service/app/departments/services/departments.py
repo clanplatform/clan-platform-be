@@ -6,7 +6,7 @@ from datetime import datetime
 
 from app.departments.models.departments import Department
 from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 def get_department(db: Session, department_id: UUID) -> Optional[Department]:

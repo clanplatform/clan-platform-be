@@ -8,7 +8,7 @@ from app.applications.models.application import Application
 from app.modules.models.module import Module
 from app.menus.models.menu import Menu
 from app.menu_language.schemas.menu_language import MenuLanguageCreate, MenuLanguageUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 class MenuLanguageService:

@@ -7,7 +7,7 @@ import logging
 from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user, get_current_user_id
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_session_id, get_user_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.user_role.services.user_role import UserRoleService
 from app.user_role.models.user_role import UserRoleBasic, UserRoleConditional, UserRoleMain, UserRolePermission
 from app.user_role.schemas.user_role import (
@@ -92,12 +92,12 @@ async def get_all_user_roles(
     result = UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only, tenant_id=tenant_id)
     try:
         user_id = get_user_id(current_user)
-        audit_client_id, entity_id = get_audit_org_context(db, user_id)
+        audit_tenant_id, entity_id = get_audit_org_context(db, user_id)
         fire_audit_log(
             action="READ",
             object_type="UserRole",
             user_id=user_id,
-            client_id=audit_client_id,
+            client_id=audit_tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -141,13 +141,13 @@ async def get_user_role_with_details(
         )
     try:
         user_id = get_user_id(current_user)
-        audit_client_id, entity_id = get_audit_org_context(db, user_id)
+        audit_tenant_id, entity_id = get_audit_org_context(db, user_id)
         fire_audit_log(
             action="READ",
             object_type="UserRole",
             object_id=str(role_id),
             user_id=user_id,
-            client_id=audit_client_id,
+            client_id=audit_tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

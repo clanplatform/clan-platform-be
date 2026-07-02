@@ -7,7 +7,7 @@ from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate, DivisionResponse
 from app.divisions.services import divisions as division_service
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 import uuid
 
 router = APIRouter()

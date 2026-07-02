@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from app.form_language.models.form_language import FormLanguage
 from app.form_language.schemas.form_language import FormLanguageCreate, FormLanguageUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 class FormLanguageService:

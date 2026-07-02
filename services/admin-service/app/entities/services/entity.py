@@ -6,7 +6,7 @@ from uuid import UUID
 from app.entities.models.entity import Entity
 from app.entities.schemas.entity import EntityCreate, EntityUpdate
 from app.core.hybrid_encryption import hybrid_encryption
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 def get_entity(db: Session, entity_id: int) -> Optional[Entity]:
     """Get an entity by ID"""

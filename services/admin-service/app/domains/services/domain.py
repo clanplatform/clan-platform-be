@@ -6,7 +6,7 @@ from uuid import UUID
 from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate
 from app.core.hybrid_encryption import hybrid_encryption
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 def get_domain(db: Session, domain_id: int) -> Optional[Domain]:
     """Get a domain by ID"""

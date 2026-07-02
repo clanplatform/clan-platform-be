@@ -7,7 +7,7 @@ from app.applications.models.application import Application
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.domains.services.domain import get_domain_by_name, get_domain
 from app.core.hybrid_encryption import hybrid_encryption
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 def get_application(db: Session, application_id: uuid.UUID) -> Optional[Application]:
     """Get an application by ID"""

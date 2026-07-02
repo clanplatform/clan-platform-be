@@ -6,7 +6,7 @@ from datetime import datetime
 
 from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 def get_division(db: Session, division_id: UUID) -> Optional[Division]:

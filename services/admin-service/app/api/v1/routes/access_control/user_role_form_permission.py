@@ -7,7 +7,7 @@ from math import ceil
 from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.user_role_form_permission.schemas.user_role_form_permission import (
     RoleFormPermissionCreate,
     RoleFormPermissionUpdate,

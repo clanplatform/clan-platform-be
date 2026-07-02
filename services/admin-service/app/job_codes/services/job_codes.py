@@ -14,7 +14,7 @@ from datetime import datetime
 
 from app.job_codes.models.job_codes import JobCode, JobCodeBasicInfo, JobCodeSkills, JobCodeBenefits
 from app.job_codes.schemas.job_codes import JobCodeCreate, JobCodeUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 def get_job_code_by_id(db: Session, job_code_id: UUID, load_relationships: bool = True) -> Optional[JobCode]:

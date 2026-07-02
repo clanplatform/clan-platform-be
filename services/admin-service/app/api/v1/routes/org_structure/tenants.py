@@ -15,8 +15,9 @@ from app.core.security import get_current_user  # Uses optional auth support
 from app.core.config import settings
 from app.infrastructure.database.tenant_db_manager import tenant_db_manager, TenantDatabaseManager
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
+from app.infrastructure.email_tenant import send_account_created_email
 from app.tenants.models.tenants import Tenant
 from app.tenants.schemas.tenants import (
     TenantCreate,
@@ -153,6 +154,14 @@ async def create_tenant(
         tenant_db = tenant_db_manager.get_session(db_tenant.tenant_db_name, settings.DATABASE_URL)
         try:
             _seed_tenant_db(tenant_db, db_tenant, temp_password)
+            # Notify the tenant admin by email (fire-and-forget)
+            asyncio.create_task(send_account_created_email(
+                to_email=db_tenant.contact_email,
+                username=db_tenant.contact_email.split("@")[0],
+                firstname=db_tenant.tenant_name,
+                tenant_id=str(db_tenant.tenant_id),
+                temp_password=temp_password,
+            ))
         except Exception as seed_exc:
             logger.warning(
                 "Tenant %s provisioned but user seeding failed: %s",

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc
 from app.buttons.models.button import Button
 from app.buttons.schemas.button import ButtonCreate, ButtonUpdate
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 class ButtonService:

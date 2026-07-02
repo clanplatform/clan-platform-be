@@ -12,7 +12,7 @@ from app.modules.schemas.module import (
     ModuleListResponse
 )
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 import math
 
 router = APIRouter()

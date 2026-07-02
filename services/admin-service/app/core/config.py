@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     TENANT_PORTAL_SERVICE_URL: str = "http://tenant-portal-service:8000"
     INTERNAL_API_KEY: str = "internal-secret-key"
 
+    # Communication email-service (clan-communication-be, published on host port 9001)
+    EMAIL_SERVICE_URL: str = "http://host.docker.internal:9001"
+
     # CORS
     CORS_ORIGINS: List[str] = ["*"]
 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc, func
 from app.forms.models.forms import Form
 from app.forms.schemas.forms import FormCreate, FormUpdate, FormImport
-from app.infrastructure.audit_client import fire_audit_log
+from app.infrastructure.audit_tenant import fire_audit_log
 from datetime import datetime
 
 class FormsService:

@@ -10,9 +10,9 @@ from uuid import UUID
 
 class UserRoleBasicBase(BaseModel):
     """Base schema for UserRoleBasic"""
-    client_id: Optional[UUID] = Field(
+    tenant_id: Optional[UUID] = Field(
         None,
-        description="Client ID this role belongs to. Required for tenant-scoped roles.",
+        description="Tenant ID this role belongs to. Required for tenant-scoped roles.",
         json_schema_extra={"example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}
     )
     role_name: str = Field(..., min_length=1, max_length=100, description="Role name")
@@ -31,7 +31,7 @@ class UserRoleBasicCreate(UserRoleBasicBase):
 
 class UserRoleBasicUpdate(BaseModel):
     """Schema for updating a user role"""
-    client_id: Optional[UUID] = Field(None, description="Client ID this role belongs to")
+    tenant_id: Optional[UUID] = Field(None, description="Tenant ID this role belongs to")
     role_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Role name")
     role_code: Optional[str] = Field(None, min_length=1, max_length=50, description="Role code")
     description: Optional[str] = Field(None, description="Role description")
@@ -312,7 +312,7 @@ class UserRoleCreateWithDetails(BaseModel):
         json_schema_extra={
             "example": {
                 "basic": {
-                    "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "tenant_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                     "role_name": "Manager",
                     "role_code": "MGR",
                     "description": "Manager role",
@@ -379,7 +379,7 @@ class UserRoleUpdateWithDetails(BaseModel):
         json_schema_extra={
             "example": {
                 "basic": {
-                    "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "tenant_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                     "role_name": "Updated Admin Role",
                     "description": "Updated description",
                     "active": True

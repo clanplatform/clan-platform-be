@@ -27,6 +27,7 @@ class Tenant(Base):
     description = Column(Text, nullable=True)
     gateway_tenant_ref = Column(UUID(as_uuid=True), unique=True, nullable=True, default=None, index=True)
     tenant_db_name = Column(String(150), unique=True, nullable=True, index=True)
+    table_permission = Column(ARRAY(Text), nullable=True, default=list)
     allowed_origins = Column(ARRAY(Text), nullable=True, default=list)
     is_active = Column(Boolean, nullable=True, server_default='true')
     deleted_at = Column(DateTime(timezone=True), nullable=True)

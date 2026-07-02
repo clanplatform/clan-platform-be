@@ -59,16 +59,21 @@ class TenantDatabaseManager:
             self._init_engine(tenant_db_name, master_url)
         return self._factories[tenant_db_name]()
 
-    def provision(self, tenant_db_name: str, master_url: str) -> bool:
+    def provision(self, tenant_db_name: str, master_url: str, allowed_tables: list | None = None) -> bool:
         """
-        CREATE DATABASE if it doesn't exist, then create all tables.
+        CREATE DATABASE if it doesn't exist, then create tables.
+
+        If *allowed_tables* is given (non-empty), only those tables are created
+        plus any tables they reference through FK constraints (to satisfy
+        referential integrity).  Pass None or [] to create every table.
+
         Called once when a new tenant is registered.
         Returns True on success, False on failure.
         """
         try:
             self._create_database(tenant_db_name, master_url)
             engine = self._init_engine(tenant_db_name, master_url)
-            self._create_tables(engine)
+            self._create_tables(engine, allowed_tables or None)
             logger.info("Provisioned tenant database: %s", tenant_db_name)
             return True
         except Exception as exc:
@@ -124,8 +129,15 @@ class TenantDatabaseManager:
         finally:
             admin_engine.dispose()
 
-    def _create_tables(self, engine) -> None:
-        """Run create_all for all application models in this tenant's database."""
+    def _create_tables(self, engine, allowed_tables: list | None = None) -> None:
+        """
+        Create tables in the tenant database.
+
+        If *allowed_tables* is provided, only those tables are created plus any
+        tables they depend on via FK constraints (resolved transitively so that
+        referential integrity is maintained without manual FK tracking).
+        When *allowed_tables* is None/empty every table is created (original behaviour).
+        """
         from app.infrastructure.database.base import Base
 
         # Import every model so SQLAlchemy registers it with Base.metadata
@@ -151,7 +163,34 @@ class TenantDatabaseManager:
         from app.buttons.models.button import Button                                         # noqa: F401
         from app.tenant_modules.models.tenant_module import TenantModule                     # noqa: F401
 
-        Base.metadata.create_all(bind=engine, checkfirst=True)
+        if not allowed_tables:
+            # No restriction — create every table (default / backwards-compatible)
+            Base.metadata.create_all(bind=engine, checkfirst=True)
+            return
+
+        # --- Resolve transitive FK dependencies ----------------------------
+        # Start from the permitted table names and walk FK references until the
+        # set stabilises.  This ensures every table that a permitted table
+        # points to also exists, satisfying FK constraints.
+        meta_tables = Base.metadata.tables
+        resolved: set[str] = set()
+        queue = list(allowed_tables)
+        while queue:
+            name = queue.pop()
+            if name in resolved or name not in meta_tables:
+                continue
+            resolved.add(name)
+            for fk in meta_tables[name].foreign_keys:
+                dep = fk.column.table.name
+                if dep not in resolved:
+                    queue.append(dep)
+
+        tables_to_create = [meta_tables[n] for n in resolved if n in meta_tables]
+        Base.metadata.create_all(bind=engine, tables=tables_to_create, checkfirst=True)
+        logger.info(
+            "Created %d tables for %s: %s",
+            len(tables_to_create), engine.url.database, sorted(resolved)
+        )
 
 
 # Process-level singleton — imported everywhere

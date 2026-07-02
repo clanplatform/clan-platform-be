@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainResponse
 from app.core.config import settings
@@ -28,7 +28,7 @@ async def get_domains(
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all domains with pagination, sorted by newest first (FILO)"""
@@ -95,7 +95,7 @@ async def get_domains(
 async def get_domain(
     request: Request,
     domain_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Get a specific domain by ID"""
@@ -149,7 +149,7 @@ async def get_domain(
 async def create_domain(
     request: Request,
     domain: DomainCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Create a new domain"""
@@ -228,7 +228,7 @@ async def update_domain(
     request: Request,
     domain_id: UUID,
     domain: DomainUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Update a domain"""
@@ -310,7 +310,7 @@ async def update_domain(
 async def delete_domain(
     request: Request,
     domain_id: UUID,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
     """Soft delete a domain and all related applications"""

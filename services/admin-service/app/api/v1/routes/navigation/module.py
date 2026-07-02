@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.core.security import get_current_user
 from app.modules.services.module import ModuleService
 from app.modules.schemas.module import (

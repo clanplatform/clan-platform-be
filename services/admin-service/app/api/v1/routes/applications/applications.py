@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.applications.models.application import Application
 from app.menus.models.menu import Menu
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse

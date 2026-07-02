@@ -84,12 +84,12 @@ async def get_all_user_roles(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     active_only: bool = Query(False, description="Filter to only active roles"),
-    client_id: Optional[UUID] = Query(None, description="Filter roles by client"),
+    tenant_id: Optional[UUID] = Query(None, description="Filter roles by tenant"),
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Get all user roles, optionally filtered by client"""
-    result = UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only, client_id=client_id)
+    """Get all user roles, optionally filtered by tenant"""
+    result = UserRoleService.get_all_user_roles(db, skip=skip, limit=limit, active_only=active_only, tenant_id=tenant_id)
     try:
         user_id = get_user_id(current_user)
         audit_client_id, entity_id = get_audit_org_context(db, user_id)

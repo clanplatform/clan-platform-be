@@ -80,29 +80,23 @@ def _make_get_tenant_db() -> callable:
         current_user: dict = Depends(get_current_user),
     ) -> Generator[Session, None, None]:
         """
-        Tenant-aware DB dependency.
-        Reads tenant_id from JWT → looks up tenant_db_name in master DB →
-        returns a session connected to that tenant's dedicated database.
-        Falls back to master DB when REQUIRE_AUTH=false (dev/Swagger mode).
+        Smart DB dependency — routes to the correct database based on the JWT:
+          • tenant_id present  → tenant's dedicated DB (clan_platform_<code>)
+          • tenant_id absent   → master DB (clan_platform) — master-DB users
         """
         tenant_id: Optional[str] = (current_user or {}).get("tenant_id")
 
         if not tenant_id:
-            if not REQUIRE_AUTH:
-                # Dev fallback: no tenant in token → use master DB
-                db = SessionLocal()
-                try:
-                    yield db
-                except Exception as exc:
-                    db.rollback()
-                    raise exc
-                finally:
-                    db.close()
-                return
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No tenant_id in token. Log in as a tenant user.",
-            )
+            # No tenant in token → master-DB user → route to master DB
+            db = SessionLocal()
+            try:
+                yield db
+            except Exception as exc:
+                db.rollback()
+                raise exc
+            finally:
+                db.close()
+            return
 
         # Look up this tenant's database name from the master DB
         master_db = SessionLocal()
@@ -110,7 +104,7 @@ def _make_get_tenant_db() -> callable:
             row = master_db.execute(
                 text(
                     "SELECT tenant_db_name FROM tenants "
-                    "WHERE gateway_tenant_ref = :tid AND is_active = true"
+                    "WHERE tenant_id = :tid AND is_active = true"
                 ),
                 {"tid": str(tenant_id)},
             ).fetchone()

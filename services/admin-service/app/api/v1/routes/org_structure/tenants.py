@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 import asyncio
 import os
+import secrets
+import string
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,12 +22,78 @@ from app.tenants.schemas.tenants import (
     TenantCreate,
     TenantUpdate,
     TenantResponse,
+    TenantCreateResponse,
     TenantListResponse,
     TenantConfigurationStatus
 )
 
 # Check if authentication is required
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
+
+
+def _generate_temp_password(length: int = 12) -> str:
+    """Generate a cryptographically secure temporary password."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%"
+    # Guarantee at least one character from each required group
+    parts = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%"),
+    ]
+    parts += [secrets.choice(alphabet) for _ in range(length - 4)]
+    secrets.SystemRandom().shuffle(parts)
+    return "".join(parts)
+
+
+def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
+    """
+    Seed a newly provisioned tenant DB with:
+    1. The tenant's own row (satisfies FK constraints from usersetup_basic.tenant_id)
+    2. The first admin user in user_setup + usersetup_basic
+    """
+    from app.tenants.models.tenants import Tenant as TenantModel
+    from app.user_setup.models.user_setup import UserSetup, UserSetupBasic
+    from app.core.security import get_password_hash
+
+    # 1. Seed the tenant row so FK on usersetup_basic.tenant_id is satisfied
+    tenant_row = TenantModel(
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        tenant_code=tenant.tenant_code,
+        contact_email=tenant.contact_email,
+        contact_phone=tenant.contact_phone,
+        tenant_db_name=tenant.tenant_db_name,
+        is_active=tenant.is_active,
+    )
+    tenant_db.add(tenant_row)
+    tenant_db.flush()
+
+    # 2. Create parent UserSetup record
+    user_setup = UserSetup()
+    tenant_db.add(user_setup)
+    tenant_db.flush()
+
+    # 3. Derive unique identifiers from tenant info
+    code = (tenant.tenant_code or str(tenant.tenant_id)[:8]).upper()
+    username = tenant.contact_email.split("@")[0]
+
+    # 4. Seed initial admin user
+    user_basic = UserSetupBasic(
+        user_setup_id=user_setup.id,
+        firstname="Tenant",
+        lastname="Admin",
+        employee_id=f"ADMIN-{code}",
+        username=username,
+        email=tenant.contact_email,
+        password_hash=get_password_hash(temp_password),
+        tenant_id=tenant.tenant_id,
+        status="active",
+        is_password_change=True,
+    )
+    tenant_db.add(user_basic)
+    tenant_db.commit()
+    logger.info("Seeded initial admin user '%s' in tenant DB: %s", username, tenant.tenant_db_name)
 
 # Simple admin check for no-auth mode (User model not in scope)
 def require_admin_role(current_user=Depends(get_current_user)):
@@ -37,7 +105,7 @@ def require_admin_role(current_user=Depends(get_current_user)):
 
 router = APIRouter()
 
-@router.post("/", response_model=TenantResponse)
+@router.post("/", response_model=TenantCreateResponse)
 async def create_tenant(
     request: Request,
     tenant_data: TenantCreate,
@@ -66,13 +134,32 @@ async def create_tenant(
     db.commit()
     db.refresh(db_tenant)
 
-    # Provision the tenant's dedicated PostgreSQL database (CREATE DB + schema)
-    ok = tenant_db_manager.provision(db_tenant.tenant_db_name, settings.DATABASE_URL)
+    # Provision the tenant's dedicated PostgreSQL database (CREATE DB + schema).
+    # Pass table_permission so only the allowed tables (+ their FK deps) are created.
+    ok = tenant_db_manager.provision(
+        db_tenant.tenant_db_name,
+        settings.DATABASE_URL,
+        db_tenant.table_permission or None,
+    )
     if not ok:
         logger.warning(
             "Tenant %s saved but database provisioning failed for %s",
             db_tenant.tenant_id, db_tenant.tenant_db_name
         )
+
+    # Seed the initial admin user into the tenant DB
+    temp_password = _generate_temp_password()
+    if ok:
+        tenant_db = tenant_db_manager.get_session(db_tenant.tenant_db_name, settings.DATABASE_URL)
+        try:
+            _seed_tenant_db(tenant_db, db_tenant, temp_password)
+        except Exception as seed_exc:
+            logger.warning(
+                "Tenant %s provisioned but user seeding failed: %s",
+                db_tenant.tenant_id, seed_exc
+            )
+        finally:
+            tenant_db.close()
 
     # Audit log: tenant created
     try:
@@ -107,7 +194,9 @@ async def create_tenant(
         is_active=bool(db_tenant.is_active),
     ))
 
-    return db_tenant
+    tenant_dict = TenantResponse.model_validate(db_tenant).model_dump()
+    tenant_dict["temp_password"] = temp_password
+    return tenant_dict
 
 @router.get("/", response_model=TenantListResponse)
 async def list_tenants(

@@ -100,13 +100,13 @@ class UserRoleService:
         skip: int = 0,
         limit: int = 100,
         active_only: bool = False,
-        client_id: Optional[UUID] = None
+        tenant_id: Optional[UUID] = None
     ) -> List[UserRoleBasic]:
-        """Get all user roles, filtered by client when provided"""
+        """Get all user roles, filtered by tenant when provided"""
         query = db.query(UserRoleBasic)
 
-        if client_id:
-            query = query.filter(UserRoleBasic.client_id == client_id)
+        if tenant_id:
+            query = query.filter(UserRoleBasic.tenant_id == tenant_id)
 
         if active_only:
             query = query.filter(UserRoleBasic.active == True)

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 import math
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.core.security import get_current_user
 from app.buttons.services.button import ButtonService
 from app.buttons.schemas.button import ButtonCreate, ButtonUpdate, ButtonResponse, ButtonListResponse

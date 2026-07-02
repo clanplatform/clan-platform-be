@@ -21,6 +21,11 @@ class TenantBase(BaseModel):
     status: Optional[str] = None
     description: Optional[str] = None
     tenant_db_name: Optional[str] = None
+    table_permission: Optional[List[str]] = Field(
+        default=None,
+        description="List of table names allocated in this tenant's dedicated database.",
+        json_schema_extra={"example": ["users", "departments", "job_codes"]},
+    )
     is_active: Optional[bool] = True
     allowed_origins: Optional[List[str]] = Field(
         default=None,
@@ -49,6 +54,7 @@ class TenantUpdate(BaseModel):
     status: Optional[str] = None
     description: Optional[str] = None
     tenant_db_name: Optional[str] = None
+    table_permission: Optional[List[str]] = None
     is_active: Optional[bool] = None
     allowed_origins: Optional[List[str]] = None
 
@@ -69,6 +75,12 @@ class TenantListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+class TenantCreateResponse(TenantResponse):
+    temp_password: str = Field(
+        ...,
+        description="Temporary password for the initial admin user. Must be changed on first login.",
+    )
 
 class TenantConfigurationStatus(BaseModel):
     tenant_id: UUID

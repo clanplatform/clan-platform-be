@@ -30,8 +30,8 @@ class UserSetupService:
     """Service class for managing user setup operations"""
 
     @staticmethod
-    def _validate_roles_client_match(db: Session, assigned_roles: list, user_client_id) -> None:
-        """Raise HTTP 400 if any assigned role belongs to a different client than the user."""
+    def _validate_roles_tenant_match(db: Session, assigned_roles: list, user_tenant_id) -> None:
+        """Raise HTTP 400 if any assigned role belongs to a different tenant than the user."""
         if not assigned_roles:
             return
         mismatched = []
@@ -42,14 +42,14 @@ class UserSetupService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Role with ID {role_id} not found"
                 )
-            if str(role.client_id) != str(user_client_id):
+            if str(role.tenant_id) != str(user_tenant_id):
                 mismatched.append(str(role_id))
         if mismatched:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Role(s) {mismatched} belong to a different client than the user. "
-                    "The role assigned client_id and user setup client_id must be the same."
+                    f"Role(s) {mismatched} belong to a different tenant than the user. "
+                    "The role assigned tenant_id and user setup tenant_id must be the same."
                 )
             )
 
@@ -334,16 +334,16 @@ class UserSetupService:
                 detail=f"User setup with ID {roles_entity_data.user_setup_id} not found"
             )
 
-        # Validate role client_id matches user client_id
+        # Validate role tenant_id matches user tenant_id
         if roles_entity_data.assigned_roles:
             db_user_basic = db.query(UserSetupBasic).filter(
                 UserSetupBasic.user_setup_id == roles_entity_data.user_setup_id
             ).first()
             if db_user_basic:
-                UserSetupService._validate_roles_client_match(
+                UserSetupService._validate_roles_tenant_match(
                     db,
                     roles_entity_data.assigned_roles,
-                    db_user_basic.client_id
+                    db_user_basic.tenant_id
                 )
 
         try:
@@ -376,16 +376,16 @@ class UserSetupService:
                 detail=f"Roles/entities assignment with ID {roles_entity_id} not found"
             )
 
-        # Validate role client_id matches user client_id when roles are being updated
+        # Validate role tenant_id matches user tenant_id when roles are being updated
         if roles_entity_data.assigned_roles:
             db_user_basic = db.query(UserSetupBasic).filter(
                 UserSetupBasic.user_setup_id == db_roles_entity.user_setup_id
             ).first()
             if db_user_basic:
-                UserSetupService._validate_roles_client_match(
+                UserSetupService._validate_roles_tenant_match(
                     db,
                     roles_entity_data.assigned_roles,
-                    db_user_basic.client_id
+                    db_user_basic.tenant_id
                 )
 
         try:
@@ -530,10 +530,10 @@ class UserSetupService:
             # Create roles and entities assignment if provided
             if user_data.roles_entities:
                 if user_data.roles_entities.assigned_roles:
-                    UserSetupService._validate_roles_client_match(
+                    UserSetupService._validate_roles_tenant_match(
                         db,
                         user_data.roles_entities.assigned_roles,
-                        user_data.basic.client_id
+                        user_data.basic.tenant_id
                     )
                 db_roles_entity = UserSetupRolesEntity(
                     user_setup_id=db_user_setup.id,

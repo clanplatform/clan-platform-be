@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.menu_language.services.menu_language import menu_language_service
 from app.menu_language.schemas.menu_language import (
     MenuLanguageCreate,

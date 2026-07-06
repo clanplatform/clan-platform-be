@@ -20,6 +20,7 @@ from app.api.v1.routes.access_control.user_role_form_permission import router as
 from app.api.v1.routes.audit_logs.audit_logs import router as audit_logs_router
 from app.api.v1.routes.navigation.button import router as buttons_router
 from app.api.v1.routes.org_structure.tenant_modules import router as tenant_modules_router
+from app.api.v1.routes.org_structure.tenant_applications import router as tenant_applications_router
 from app.api.v1.routes.sync.tenants import router as sync_tenants_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
@@ -148,6 +149,13 @@ api_v1_router.include_router(
     tenant_modules_router,
     prefix="/tenant_modules",
     tags=["tenant_modules"]
+)
+
+# include tenant-application assignment routes
+api_v1_router.include_router(
+    tenant_applications_router,
+    prefix="/tenant_applications",
+    tags=["tenant_applications"]
 )
 
 # inbound sync from clan-tenant-portal-be (service-to-service, no JWT)

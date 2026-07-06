@@ -47,6 +47,9 @@ class UserSetupBasic(Base):
     password_hash = Column(String(255), nullable=False)  # Hashed password
     password_changed = Column(DateTime(timezone=True), nullable=True)  # Last password change timestamp
     is_password_change = Column(Boolean, default=False, nullable=False)  # Flag to indicate if user needs to change password
+    # True → first-login password-change flow applies; False → user logs
+    # straight in and is redirected to the tenant's application.
+    can_change_password = Column(Boolean, default=True, server_default='true', nullable=False)
 
     # Employment Status
     status = Column(String(50), nullable=False, default='active')  # active, inactive, suspended, etc.

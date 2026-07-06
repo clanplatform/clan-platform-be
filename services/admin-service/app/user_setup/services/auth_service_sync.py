@@ -44,7 +44,10 @@ class AuthServiceSync:
         lastname: str,
         phone_number: Optional[str] = None,
         is_active: bool = True,
-        employee_id: Optional[str] = None
+        employee_id: Optional[str] = None,
+        is_password_change: bool = False,
+        tenant_id: Optional[UUID] = None,
+        can_change_password: bool = True
     ) -> Dict[str, Any]:
         """
         Create a user in the auth-service auth_users table.
@@ -82,6 +85,13 @@ class AuthServiceSync:
                 "phone_number": phone_number,
                 "status": "active" if is_active else "inactive",  # Map is_active to status
                 "employee_id": employee_id,
+                # False = force password change on first login; True = log in directly
+                "is_password_change": is_password_change,
+                # True → first-login password-change flow; False → straight to the app
+                "can_change_password": can_change_password,
+                # Tenant context — auth-service uses it to validate tenant logins
+                # and resolve the post-login redirect (tenants.allowed_origins)
+                "tenant_id": str(tenant_id) if tenant_id else None,
                 "created_from": "admin-service"  # Track the source
             }
             

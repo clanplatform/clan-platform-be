@@ -31,6 +31,10 @@ class UserSetupBasicBase(BaseModel):
     tenant_id: Optional[UUID] = Field(None, description="Tenant ID (foreign key to tenants table)")
     view: Optional[str] = Field(None, max_length=50, description="View preference")
     dashboard_view: Optional[str] = Field(None, max_length=50, description="Dashboard view preference")
+    can_change_password: bool = Field(
+        default=False,
+        description="True → forced password change on first login; False → log in directly and redirect to the tenant application",
+    )
 
 
 class UserSetupBasicCreate(UserSetupBasicBase):
@@ -78,6 +82,7 @@ class UserSetupBasicUpdate(BaseModel):
     tenant_id: Optional[UUID] = None
     view: Optional[str] = Field(None, max_length=50)
     dashboard_view: Optional[str] = Field(None, max_length=50)
+    can_change_password: Optional[bool] = None
 
     @field_validator('reporting_to', 'department', 'division', 'job_code', 'default_dept', 'default_entity', 'tenant_id', mode='before')
     @classmethod

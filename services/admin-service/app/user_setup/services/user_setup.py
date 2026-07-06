@@ -81,9 +81,13 @@ class UserSetupService:
             password_hash = get_password_hash(password)  # Hash the password
 
             # Create UserSetupBasic record with reference to parent
+            # can_change_password=True → forced password change on first login
+            # (is_password_change=False); False → user logs straight in and is
+            # redirected to the tenant's application.
             db_user_basic = UserSetupBasic(
                 user_setup_id=db_user_setup.id,
                 password_hash=password_hash,  # Store hashed password
+                is_password_change=not user_dict.get('can_change_password', False),
                 **user_dict
             )
             db.add(db_user_basic)
@@ -103,7 +107,10 @@ class UserSetupService:
                         lastname=db_user_basic.lastname,
                         phone_number=db_user_basic.phone_number,
                         is_active=(db_user_basic.status == 'active'),
-                        employee_id=db_user_basic.employee_id
+                        employee_id=db_user_basic.employee_id,
+                        is_password_change=db_user_basic.is_password_change,
+                        tenant_id=db_user_basic.tenant_id,
+                        can_change_password=db_user_basic.can_change_password
                     )
                     logger.info(f"User {db_user_basic.username} synced to identity-domain auth-service")
                 except AuthServiceSyncError as e:
@@ -519,9 +526,13 @@ class UserSetupService:
             password_hash = get_password_hash(password)  # Hash the password
 
             # Create basic user setup with reference to parent
+            # can_change_password=True → forced password change on first login
+            # (is_password_change=False); False → user logs straight in and is
+            # redirected to the tenant's application.
             db_user_basic = UserSetupBasic(
                 user_setup_id=db_user_setup.id,
                 password_hash=password_hash,  # Store hashed password
+                is_password_change=not user_dict.get('can_change_password', False),
                 **user_dict
             )
             db.add(db_user_basic)
@@ -586,7 +597,10 @@ class UserSetupService:
                         lastname=db_user_basic.lastname,
                         phone_number=db_user_basic.phone_number,
                         is_active=(db_user_basic.status == 'active'),
-                        employee_id=db_user_basic.employee_id
+                        employee_id=db_user_basic.employee_id,
+                        is_password_change=db_user_basic.is_password_change,
+                        tenant_id=db_user_basic.tenant_id,
+                        can_change_password=db_user_basic.can_change_password
                     )
                     logger.info(f"SYNC SUCCESS: User synced to auth-service - {sync_result}")
                     logger.info(f"User {db_user_basic.username} synced to identity-domain auth-service")

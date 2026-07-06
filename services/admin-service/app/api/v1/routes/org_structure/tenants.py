@@ -17,7 +17,7 @@ from app.infrastructure.database.tenant_db_manager import tenant_db_manager, Ten
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
-from app.infrastructure.email_tenant import send_account_created_email
+from app.infrastructure.email_tenant import send_tenant_invitation_email
 from app.tenants.models.tenants import Tenant
 from app.tenants.schemas.tenants import (
     TenantCreate,
@@ -57,16 +57,13 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic
     from app.core.security import get_password_hash
 
-    # 1. Seed the tenant row so FK on usersetup_basic.tenant_id is satisfied
-    tenant_row = TenantModel(
-        tenant_id=tenant.tenant_id,
-        tenant_name=tenant.tenant_name,
-        tenant_code=tenant.tenant_code,
-        contact_email=tenant.contact_email,
-        contact_phone=tenant.contact_phone,
-        tenant_db_name=tenant.tenant_db_name,
-        is_active=tenant.is_active,
-    )
+    # 1. Seed the tenant row so FK on usersetup_basic.tenant_id is satisfied.
+    # Copy every column so the tenant DB holds the full tenant profile
+    # (address, industry, subscription_plan, ...), not just the FK fields.
+    tenant_row = TenantModel(**{
+        col.name: getattr(tenant, col.name)
+        for col in TenantModel.__table__.columns
+    })
     tenant_db.add(tenant_row)
     tenant_db.flush()
 
@@ -80,6 +77,9 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
     username = tenant.contact_email.split("@")[0]
 
     # 4. Seed initial admin user
+    # can_change_password=True + is_password_change=False → auth-service
+    # forces a password change on first login (the invitation email
+    # announces the temp password).
     user_basic = UserSetupBasic(
         user_setup_id=user_setup.id,
         firstname="Tenant",
@@ -90,7 +90,8 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
         password_hash=get_password_hash(temp_password),
         tenant_id=tenant.tenant_id,
         status="active",
-        is_password_change=True,
+        is_password_change=False,
+        can_change_password=True,
     )
     tenant_db.add(user_basic)
     tenant_db.commit()
@@ -136,11 +137,15 @@ async def create_tenant(
     db.refresh(db_tenant)
 
     # Provision the tenant's dedicated PostgreSQL database (CREATE DB + schema).
-    # Pass table_permission so only the allowed tables (+ their FK deps) are created.
+    # Pass table_permission so only the allowed tables (+ their FK deps) are
+    # created — but always include the tables the login/seeding flow needs.
+    table_permission = db_tenant.table_permission or None
+    if table_permission:
+        table_permission = list({*table_permission, "tenants", "user_setup", "usersetup_basic"})
     ok = tenant_db_manager.provision(
         db_tenant.tenant_db_name,
         settings.DATABASE_URL,
-        db_tenant.table_permission or None,
+        table_permission,
     )
     if not ok:
         logger.warning(
@@ -154,11 +159,10 @@ async def create_tenant(
         tenant_db = tenant_db_manager.get_session(db_tenant.tenant_db_name, settings.DATABASE_URL)
         try:
             _seed_tenant_db(tenant_db, db_tenant, temp_password)
-            # Notify the tenant admin by email (fire-and-forget)
-            asyncio.create_task(send_account_created_email(
+            # Invite the tenant by email with a login link (fire-and-forget)
+            asyncio.create_task(send_tenant_invitation_email(
                 to_email=db_tenant.contact_email,
-                username=db_tenant.contact_email.split("@")[0],
-                firstname=db_tenant.tenant_name,
+                tenant_name=db_tenant.tenant_name,
                 tenant_id=str(db_tenant.tenant_id),
                 temp_password=temp_password,
             ))

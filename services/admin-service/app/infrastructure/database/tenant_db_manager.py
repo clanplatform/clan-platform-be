@@ -162,6 +162,7 @@ class TenantDatabaseManager:
         )
         from app.buttons.models.button import Button                                         # noqa: F401
         from app.tenant_modules.models.tenant_module import TenantModule                     # noqa: F401
+        from app.tenant_applications.models.tenant_application import TenantApplication      # noqa: F401
 
         if not allowed_tables:
             # No restriction — create every table (default / backwards-compatible)

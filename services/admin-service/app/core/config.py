@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # Communication email-service (clan-communication-be, published on host port 9001)
     EMAIL_SERVICE_URL: str = "http://host.docker.internal:9001"
 
+    # Frontend login page — used as the invitation link in tenant emails
+    FRONTEND_LOGIN_URL: str = "http://localhost:3000/login"
+
     # CORS
     CORS_ORIGINS: List[str] = ["*"]
 

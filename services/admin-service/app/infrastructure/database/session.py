@@ -62,6 +62,7 @@ def create_tables():
     from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
     from app.buttons.models.button import Button
     from app.tenant_modules.models.tenant_module import TenantModule
+    from app.tenant_applications.models.tenant_application import TenantApplication
 
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)

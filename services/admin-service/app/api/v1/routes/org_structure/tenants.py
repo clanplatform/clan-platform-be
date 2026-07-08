@@ -17,6 +17,7 @@ from app.infrastructure.database.tenant_db_manager import tenant_db_manager, Ten
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
+from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
 from app.infrastructure.email_tenant import send_tenant_invitation_email
 from app.tenants.models.tenants import Tenant
 from app.tenants.schemas.tenants import (
@@ -165,6 +166,8 @@ async def create_tenant(
                 tenant_name=db_tenant.tenant_name,
                 tenant_id=str(db_tenant.tenant_id),
                 temp_password=temp_password,
+                # Login link points at the tenant's own frontend (first allowed origin)
+                tenant_app_url=(db_tenant.allowed_origins[0] if db_tenant.allowed_origins else None),
             ))
         except Exception as seed_exc:
             logger.warning(
@@ -196,13 +199,21 @@ async def create_tenant(
     except Exception:
         pass
 
-    # Sync to gateway (non-blocking background task)
+    # Sync to tenant portal (non-blocking background task)
     asyncio.create_task(sync_tenant_profile(
         tenant_id=str(db_tenant.tenant_id),
         tenant_name=db_tenant.tenant_name,
         tenant_code=db_tenant.tenant_code,
         contact_email=db_tenant.contact_email,
         contact_phone=db_tenant.contact_phone,
+        subscription_plan=db_tenant.subscription_plan,
+        is_active=bool(db_tenant.is_active),
+    ))
+    # Sync to API gateway so Envoy routing stays in sync (non-blocking)
+    asyncio.create_task(sync_tenant_to_gateway(
+        tenant_id=str(db_tenant.tenant_id),
+        tenant_name=db_tenant.tenant_name,
+        tenant_code=db_tenant.tenant_code,
         subscription_plan=db_tenant.subscription_plan,
         is_active=bool(db_tenant.is_active),
     ))
@@ -318,13 +329,21 @@ async def update_tenant(
     except Exception:
         pass
 
-    # Sync updated data to gateway (non-blocking background task)
+    # Sync updated data to tenant portal (non-blocking background task)
     asyncio.create_task(sync_tenant_profile(
         tenant_id=str(tenant.tenant_id),
         tenant_name=tenant.tenant_name,
         tenant_code=tenant.tenant_code,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        subscription_plan=tenant.subscription_plan,
+        is_active=bool(tenant.is_active),
+    ))
+    # Sync updated data to API gateway so Envoy routing stays in sync (non-blocking)
+    asyncio.create_task(sync_tenant_to_gateway(
+        tenant_id=str(tenant.tenant_id),
+        tenant_name=tenant.tenant_name,
+        tenant_code=tenant.tenant_code,
         subscription_plan=tenant.subscription_plan,
         is_active=bool(tenant.is_active),
     ))
@@ -373,13 +392,21 @@ async def delete_tenant(
     except Exception:
         pass
 
-    # Sync deactivation to gateway
+    # Sync deactivation to tenant portal
     asyncio.create_task(sync_tenant_profile(
         tenant_id=str(tenant.tenant_id),
         tenant_name=tenant.tenant_name,
         tenant_code=tenant.tenant_code,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
+        subscription_plan=tenant.subscription_plan,
+        is_active=False,
+    ))
+    # Sync deactivation to API gateway so Envoy routing stays in sync
+    asyncio.create_task(sync_tenant_to_gateway(
+        tenant_id=str(tenant.tenant_id),
+        tenant_name=tenant.tenant_name,
+        tenant_code=tenant.tenant_code,
         subscription_plan=tenant.subscription_plan,
         is_active=False,
     ))

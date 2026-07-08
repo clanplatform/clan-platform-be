@@ -27,55 +27,75 @@ async def send_tenant_invitation_email(
     tenant_id: Optional[str] = None,
     recipient_id: Optional[str] = None,
     temp_password: Optional[str] = None,
+    tenant_app_url: Optional[str] = None,
 ) -> None:
     """
-    Invite a newly onboarded tenant to Clan Module. The email contains a
-    login link the tenant clicks to accept the invitation and sign in.
+    Send a newly onboarded tenant their welcome email with temporary login
+    credentials (login email + temp password) and a login link. The tenant is
+    asked to change the temp password on first login.
     Fire-and-forget — never raises.
     """
-    display_name = tenant_name or to_email
-    subject = "You're invited to Clan Module"
-    # tenant_id in the link lets the login page authenticate against the
-    # tenant DB and land the user in the tenant's assigned application.
-    login_url = f"{settings.FRONTEND_LOGIN_URL}?email={quote(to_email)}"
+    subject = "Welcome to Clan — Your Login Credentials"
+    # Prefer the tenant's own frontend (tenants.allowed_origins[0], passed in as
+    # tenant_app_url) so the login link points at the tenant's domain; fall back
+    # to the platform login page. tenant_id in the query lets the login page
+    # authenticate against the tenant DB and land the user in the tenant's app.
+    if tenant_app_url:
+        login_base = tenant_app_url.rstrip("/") + "/login"
+    else:
+        login_base = settings.FRONTEND_LOGIN_URL
+    login_url = f"{login_base}?email={quote(to_email)}"
     if tenant_id:
         login_url += f"&tenant_id={quote(tenant_id)}"
 
-    password_text = (
-        f"Temporary password: {temp_password}\n"
-        "You will be asked to change it on first login.\n"
-        if temp_password else ""
-    )
+    website = settings.COMPANY_WEBSITE
+    greeting = f"Hello {tenant_name}," if tenant_name else "Hello,"
+
     body_text = (
-        f"Hi {display_name},\n\n"
-        "You have been invited to Clan Module.\n\n"
-        "Click the link below to accept the invitation and log in:\n"
-        f"{login_url}\n\n"
-        f"Login email: {to_email}\n"
-        f"{password_text}\n"
-        "Regards,\nClan Platform"
+        f"{greeting}\n\n"
+        "Welcome to Clan!\n\n"
+        "Your account has been created successfully. Please use the temporary "
+        "login credentials below to log in:\n\n"
+        f"Email: {to_email}\n"
+        f"Temporary Password: {temp_password}\n\n"
+        f"Login URL: {login_url}\n\n"
+        "For your security, please change your temporary password immediately "
+        "after your first login.\n\n"
+        "If you did not request this account or believe you received this email "
+        "by mistake, please contact the Clan support team immediately.\n\n"
+        "Thank you,\n\n"
+        "Team Clan\n"
+        "clan.platform@gmail.com\n"
+        f"{website}"
     )
 
-    password_html = (
-        f"<p>Temporary password: <b>{temp_password}</b><br>"
-        "You will be asked to change it on first login.</p>"
-        if temp_password else ""
-    )
     body_html = (
-        f"<p>Hi {display_name},</p>"
-        f"<p>You have been invited to <b>Clan Module</b>.</p>"
+        f"<p>{greeting}</p>"
+        "<p>Welcome to <strong>Clan</strong>!</p>"
+        "<p>Your account has been created successfully. Please use the "
+        "temporary login credentials below to log in:</p>"
+        f"<p><strong>Email:</strong> {to_email}<br>"
+        f"<strong>Temporary Password:</strong> {temp_password}</p>"
         f"<p><a href=\"{login_url}\" "
         "style=\"display:inline-block;padding:10px 24px;background:#2563eb;"
-        "color:#ffffff;text-decoration:none;border-radius:6px;\">"
-        "Accept Invitation &amp; Login</a></p>"
-        f"<p>Or copy this link into your browser:<br>{login_url}</p>"
-        f"<p>Login email: <b>{to_email}</b></p>"
-        f"{password_html}"
-        f"<p>Regards,<br>Clan Platform</p>"
+        "color:#ffffff;text-decoration:none;border-radius:6px;\">Log In</a></p>"
+        f"<p><strong>Login URL:</strong> <a href=\"{login_url}\">{login_url}</a></p>"
+        "<p>For your security, please change your temporary password "
+        "immediately after your first login.</p>"
+        "<p>If you did not request this account or believe you received this "
+        "email by mistake, please contact the Clan support team immediately.</p>"
+        "<p>Thank you,</p>"
+        "<p><strong>Team Clan</strong><br>"
+        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
+        f"<a href=\"{website}\">{website}</a></p>"
     )
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as http:
+        # Must exceed the email-service's own SMTP timeout (15s) plus its
+        # SendGrid fallback — the /send endpoint blocks until delivery, and a
+        # Gmail SMTP handshake alone takes ~5s. A shorter timeout here reports
+        # a false failure even when the email was actually sent.
+        async with httpx.AsyncClient(timeout=30.0) as http:
             resp = await http.post(
                 f"{settings.EMAIL_SERVICE_URL}/api/v1/send",
                 json={

@@ -57,11 +57,17 @@ class Settings(BaseSettings):
     TENANT_PORTAL_SERVICE_URL: str = "http://tenant-portal-service:8000"
     INTERNAL_API_KEY: str = "internal-secret-key"
 
+    # API Gateway (clan-api-gateway-be gateway-service, host port 8010) — tenant sync
+    GATEWAY_SERVICE_URL: str = "http://host.docker.internal:8010"
+
     # Communication email-service (clan-communication-be, published on host port 9001)
     EMAIL_SERVICE_URL: str = "http://host.docker.internal:9001"
 
     # Frontend login page — used as the invitation link in tenant emails
     FRONTEND_LOGIN_URL: str = "http://localhost:3000/login"
+
+    # Company website shown in the footer of onboarding/welcome emails
+    COMPANY_WEBSITE: str = "https://www.clan-platform.com"
 
     # CORS
     CORS_ORIGINS: List[str] = ["*"]

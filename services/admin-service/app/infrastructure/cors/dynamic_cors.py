@@ -1,5 +1,6 @@
 """
-Dynamic CORS middleware — validates request origins against the clients table.
+Dynamic CORS middleware — validates request origins against the tenants table
+(tenant applications) and usersetup_basic (master/platform users).
 
 Origins are cached in Redis (SET, TTL 300 s) and fall back to an in-memory
 set when Redis is unavailable.  The DB is only queried on a cache miss or
@@ -16,7 +17,7 @@ Usage (admin service):
         redis_client=redis_cache.redis_client,
     )
 
-    # After updating a client's allowed_origins:
+    # After updating a tenant's (or master user's) allowed_origins:
     invalidate_cors_cache(redis_cache.redis_client)
 """
 
@@ -52,9 +53,12 @@ def _static_origins() -> Set[str]:
 
 class DynamicCORSMiddleware:
     """
-    ASGI middleware that validates CORS origins against active client records.
+    ASGI middleware that validates CORS origins against active tenant and
+    master-user records.
 
-    Allowed origins = CORS_ORIGINS env var  ∪  clients.allowed_origins (DB).
+    Allowed origins = CORS_ORIGINS env var
+                    ∪ tenants.allowed_origins (DB)
+                    ∪ usersetup_basic.allowed_origins WHERE tenant_id IS NULL (DB).
     The DB set is Redis-cached (TTL 300 s) with in-memory fallback.
     """
 
@@ -130,10 +134,13 @@ class DynamicCORSMiddleware:
         if "*" in static or origin in static:
             return True
 
-        # Redis SISMEMBER — O(1), no lock needed.
+        # Redis SISMEMBER — O(1), no lock needed. Only trust Redis when the
+        # key actually exists; a missing/expired key must fall through to a
+        # DB refresh (which repopulates Redis) instead of denying everything.
         if self.redis:
             try:
-                return bool(self.redis.sismember(_REDIS_KEY, origin))
+                if self.redis.exists(_REDIS_KEY):
+                    return bool(self.redis.sismember(_REDIS_KEY, origin))
             except Exception:
                 pass  # fall through to in-memory
 
@@ -170,28 +177,54 @@ class DynamicCORSMiddleware:
             self._mem_ts = time.monotonic()  # avoid tight retry loop on repeated failures
 
     def _load_from_db(self) -> Set[str]:
+        """
+        Union of:
+          - tenants.allowed_origins          → tenant application origins
+          - usersetup_basic.allowed_origins  → master/platform user origins
+                                               (rows with tenant_id IS NULL)
+        Each query is guarded independently so a missing table/column
+        (e.g. migration not yet applied) cannot wipe out the other set.
+        """
+        origins: Set[str] = set()
+        queries = (
+            ("tenant",
+             "SELECT unnest(allowed_origins) AS origin "
+             "FROM tenants "
+             "WHERE is_active = TRUE "
+             "  AND deleted_at IS NULL "
+             "  AND allowed_origins IS NOT NULL"),
+            ("master-user",
+             "SELECT unnest(allowed_origins) AS origin "
+             "FROM usersetup_basic "
+             "WHERE tenant_id IS NULL "
+             "  AND status = 'active' "
+             "  AND allowed_origins IS NOT NULL"),
+        )
         try:
             db = self.session_factory()
             try:
-                rows = db.execute(text(
-                    "SELECT unnest(allowed_origins) AS origin "
-                    "FROM tenants "
-                    "WHERE is_active = TRUE "
-                    "  AND deleted_at IS NULL "
-                    "  AND allowed_origins IS NOT NULL"
-                )).fetchall()
-                return {r[0] for r in rows if r[0]}
+                for label, query in queries:
+                    try:
+                        rows = db.execute(text(query)).fetchall()
+                        origins.update(r[0] for r in rows if r[0])
+                    except Exception as exc:
+                        logger.warning("DynamicCORS: %s origins query failed: %s", label, exc)
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
             finally:
                 db.close()
         except Exception as exc:
             logger.error("DynamicCORS: DB query failed: %s", exc)
-            return set()
+        return origins
 
 
 def invalidate_cors_cache(redis_client) -> None:
     """
     Evict the Redis CORS cache so the next request reloads from DB.
-    Call this after creating or updating a client's allowed_origins.
+    Call this after creating or updating a tenant's or master user's
+    allowed_origins.
     """
     if redis_client:
         try:

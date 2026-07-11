@@ -90,8 +90,9 @@ def setup_middleware(app: FastAPI):
     """Setup all middleware for the application."""
     app.add_middleware(RequestContextMiddleware)
 
-    # Dynamic CORS — origins loaded from clients.allowed_origins in DB,
-    # cached in Redis, with CORS_ORIGINS env var as a static fallback.
+    # Dynamic CORS — origins loaded from the DB (tenants.allowed_origins for
+    # tenant apps, usersetup_basic.allowed_origins for master users), cached
+    # in Redis, with CORS_ORIGINS env var as a static fallback.
     from app.infrastructure.cors import DynamicCORSMiddleware
     from app.infrastructure.database.session import SessionLocal
     from app.infrastructure.redis_cache.redis_cache import redis_cache

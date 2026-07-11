@@ -127,6 +127,53 @@ async def health_check():
     )
 
 
+@app.get("/health/cors", tags=["health"])
+async def cors_debug():
+    """
+    CORS diagnostics — shows exactly which origins THIS deployment can see.
+    - build_marker proves which code version is live
+    - db origins are loaded live from this service's DATABASE_URL
+    Remove or protect this endpoint once CORS is verified in production.
+    """
+    from app.infrastructure.cors.dynamic_cors import _static_origins
+    from app.infrastructure.database.session import SessionLocal
+    from sqlalchemy import text as _text
+
+    result = {
+        "build_marker": "cors-union-2026-07-11",
+        "env_CORS_ORIGINS": sorted(_static_origins()),
+        "tenant_origins": None,
+        "master_user_origins": None,
+        "db_error": None,
+    }
+    try:
+        db = SessionLocal()
+        try:
+            rows = db.execute(_text(
+                "SELECT unnest(allowed_origins) FROM tenants "
+                "WHERE is_active = TRUE AND deleted_at IS NULL "
+                "AND allowed_origins IS NOT NULL"
+            )).fetchall()
+            result["tenant_origins"] = sorted({r[0] for r in rows if r[0]})
+        except Exception as exc:
+            result["db_error"] = f"tenants query: {exc}"
+            db.rollback()
+        try:
+            rows = db.execute(_text(
+                "SELECT unnest(allowed_origins) FROM usersetup_basic "
+                "WHERE tenant_id IS NULL AND status = 'active' "
+                "AND allowed_origins IS NOT NULL"
+            )).fetchall()
+            result["master_user_origins"] = sorted({r[0] for r in rows if r[0]})
+        except Exception as exc:
+            result["db_error"] = (result["db_error"] or "") + f" | usersetup_basic query: {exc}"
+            db.rollback()
+        db.close()
+    except Exception as exc:
+        result["db_error"] = f"connection: {exc}"
+    return result
+
+
 @app.get("/", tags=["root"])
 async def root():
     """Root endpoint"""

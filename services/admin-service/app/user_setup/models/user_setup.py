@@ -76,6 +76,11 @@ class UserSetupBasic(Base):
     # Tenant
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=True, index=True)
 
+    # Allowed origins for master-DB users (tenant_id NULL) — tenant users get
+    # theirs from tenants.allowed_origins; this is the per-user equivalent
+    # (e.g. post-login redirect target for platform users).
+    allowed_origins = Column(ARRAY(Text()), nullable=True)
+
     # View Preferences
     view = Column(String(50), nullable=True)  # e.g., 'grid', 'list', 'card'
     dashboard_view = Column(String(50), nullable=True)  # e.g., 'default', 'compact', 'detailed'

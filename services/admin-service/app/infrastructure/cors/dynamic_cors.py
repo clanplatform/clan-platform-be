@@ -175,7 +175,7 @@ class DynamicCORSMiddleware:
             try:
                 rows = db.execute(text(
                     "SELECT unnest(allowed_origins) AS origin "
-                    "FROM clients "
+                    "FROM tenants "
                     "WHERE is_active = TRUE "
                     "  AND deleted_at IS NULL "
                     "  AND allowed_origins IS NOT NULL"

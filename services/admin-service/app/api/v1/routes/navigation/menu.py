@@ -1299,6 +1299,118 @@ async def _filter_menu_by_permissions(
 
 
 
+@router.get("/by-module/{module_id}")
+async def get_menus_by_module(
+    request: Request,
+    module_id: uuid.UUID,
+    include_inactive: bool = Query(False, description="Include inactive menus in the response"),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Get all menus belonging to a specific module (Level 2 in hierarchy).
+
+    Returns menus from PostgreSQL organized in parent → children hierarchy:
+    - Level 3: Menus directly under the module
+    - Level 4+: Nested child menus under their parent menu
+
+    Parameters:
+    - module_id: UUID of the module
+    - include_inactive: Include inactive menus (default: False). Soft-deleted menus are always excluded.
+    """
+    print(f"[GET Menus By Module] 🚀 Fetching menus for module: {module_id}")
+
+    # Validate module exists
+    module = db.query(Module).filter(
+        Module.id == module_id,
+        Module.is_deleted == False
+    ).first()
+
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module not found: {module_id}"
+        )
+
+    print(f"[GET Menus By Module] ✅ Module found: {module.name}")
+
+    # Fetch all menus for this module (soft-deleted always excluded)
+    filters = [
+        Menu.module_id == module_id,
+        Menu.deleted_at.is_(None)
+    ]
+    if not include_inactive:
+        filters.append(Menu.is_active == True)
+
+    menus = db.query(Menu).filter(and_(*filters)).order_by(Menu.level, Menu.order_index).all()
+    print(f"[GET Menus By Module] ✅ Found {len(menus)} menus for module: {module.name}")
+
+    def serialize_menu(menu: Menu) -> Dict[str, Any]:
+        return {
+            "id": str(menu.id),
+            "application_id": str(menu.application_id) if menu.application_id else None,
+            "module_id": str(menu.module_id) if menu.module_id else None,
+            "parent_menu_id": str(menu.parent_menu_id) if menu.parent_menu_id else None,
+            "name": menu.name,
+            "label": menu.label,
+            "key": menu.key,
+            "icon": menu.icon,
+            "route": menu.route,
+            "component": menu.component,
+            "badge": menu.badge,
+            "section_title": menu.section_title,
+            "description": menu.menus_description,
+            "order_index": menu.order_index,
+            "level": menu.level,
+            "is_visible": menu.is_visible,
+            "is_active": menu.is_active,
+            "showtopbar": menu.showtopbar,
+            "showsidebar": menu.showsidebar,
+            "access": menu.access if menu.access else ["read"],
+            "menu_metadata": menu.menu_metadata,
+            "created_at": menu.created_at.isoformat() if menu.created_at else None,
+            "updated_at": menu.updated_at.isoformat() if menu.updated_at else None,
+            "children": []
+        }
+
+    # Build parent → children hierarchy (menus are already ordered by level, order_index)
+    menu_map = {str(menu.id): serialize_menu(menu) for menu in menus}
+    root_menus = []
+
+    for menu_dict in menu_map.values():
+        parent_id = menu_dict["parent_menu_id"]
+        if parent_id and parent_id in menu_map:
+            menu_map[parent_id]["children"].append(menu_dict)
+        else:
+            root_menus.append(menu_dict)
+
+    try:
+        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Menu",
+            user_id=get_user_id(current_user),
+            client_id=client_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+
+    print(f"[GET Menus By Module] ✅ Returning {len(root_menus)} root menus ({len(menus)} total)")
+    return {
+        "module_id": str(module.id),
+        "module_name": module.name,
+        "module_label": module.label,
+        "application_id": str(module.application_id) if module.application_id else None,
+        "total_menus": len(menus),
+        "menus": root_menus
+    }
+
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_menu(
     request: Request,

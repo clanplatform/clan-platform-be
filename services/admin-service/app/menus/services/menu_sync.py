@@ -194,36 +194,38 @@ async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -
             "_id": {"$ne": master_doc_id}
         })
 
+        # Application-level fields are refreshed from PostgreSQL on every sync
+        # so PUT /applications changes (label, icon, route, ...) reach MongoDB
+        app_fields = {
+            "key": app.key or app.name.lower().replace(" ", "-"),
+            "name": app.name,
+            "label": app.label or app.name,
+            "icon": app.icon or "ri-apps-line",
+            "description": app.description or f"Manage {app.name}",
+            "badge": app.badge,
+            "sectionTitle": app.section_title or app.name,
+            "route": app.route or f"/{app.name.lower().replace(' ', '-')}",
+            "order_index": app.order_index or 1000,
+            "access": app.access or [],
+            "children": navigation_structure,
+            "updated_at": now,
+        }
+
         if app_doc:
             app_object_id = app_doc["_id"]
             await collection.update_one(
                 {"_id": app_object_id},
-                {"$set": {
-                    "access": app.access or [],
-                    "children": navigation_structure,
-                    "updated_at": now,
-                }}
+                {"$set": app_fields}
             )
             logger.info(f"[Menu Sync] Updated application document {app_object_id}")
         else:
             new_doc = {
-                "key": app.key or app.name.lower().replace(" ", "-"),
-                "name": app.name,
-                "label": app.label or app.name,
-                "icon": app.icon or "ri-apps-line",
-                "description": app.description or f"Manage {app.name}",
-                "badge": app.badge,
-                "sectionTitle": app.section_title or app.name,
-                "route": app.route or f"/{app.name.lower().replace(' ', '-')}",
+                **app_fields,
                 "application_id": str(application_id),
                 "level": 1,
-                "order_index": app.order_index or 1000,
                 "is_visible": True,
                 "is_active": True,
-                "access": app.access or [],
-                "children": navigation_structure,
                 "created_at": now,
-                "updated_at": now,
             }
             result = await collection.insert_one(new_doc)
             app_object_id = result.inserted_id

@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Any
 from motor.motor_asyncio import AsyncIOMotorCollection
-from app.infrastructure.mongodb.mongodb_admin import MongoDBadmin
+from app.core.mongodb import mongodb
 from bson import ObjectId
 from datetime import datetime
 

@@ -2701,13 +2701,7 @@ async def update_menu(
             update_data['access'] = [item.lower() if isinstance(item, str) else item for item in update_data['access']]
 
     # 4️⃣ Update PostgreSQL
-    # Track if order_index or parent_menu_id changed (for reorder sync)
-    order_changed = False
-    if 'order_index' in update_data and update_data['order_index'] != menu.order_index:
-        order_changed = True
-    if 'parent_menu_id' in update_data and update_data['parent_menu_id'] != menu.parent_menu_id:
-        order_changed = True
-    
+
     # Only set attributes that belong to the SQLAlchemy model and skip
     # nested/navigation payloads (e.g., `children`) which are stored in MongoDB.
     for field, value in update_data.items():
@@ -2744,11 +2738,12 @@ async def update_menu(
     except Exception:
         pass
 
-    # 4.5️⃣ If order_index or parent_menu_id changed, trigger full reorder sync
-    if order_changed:
-        print(f"[Menu Update] 🔄 Order or parent changed, triggering full reorder sync...")
+    # 4.5️⃣ Sync the application's navigation document (full rebuild) so ANY
+    # field change reaches MongoDB, not just order/parent moves
+    if update_data:
+        print(f"[Menu Update] 🔄 Syncing navigation to MongoDB...")
         await MenuReorderService.sync_to_mongodb(db, menu.application_id)
-        print(f"[Menu Update] ✅ Reorder sync completed")
+        print(f"[Menu Update] ✅ Navigation sync completed")
 
     # 5️⃣ Update MongoDB menu_details collection (individual document)
     try:

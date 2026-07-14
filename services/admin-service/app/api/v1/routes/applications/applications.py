@@ -656,62 +656,17 @@ async def update_application(
     except Exception:
         pass
 
-    # Sync to MongoDB navigation structure
+    # Sync to MongoDB: full rebuild of this application's navigation document.
+    # mainNavigation holds ObjectId references to per-application documents, so
+    # the app doc itself must be updated - the shared sync refreshes its
+    # application-level fields (key, label, icon, route, ...) from PostgreSQL.
     try:
-        db_mongo = await get_mongodb()
-        if db_mongo is not None:
-            print(f"[Application Update] Syncing to MongoDB...")
-
-            # Convert nav_doc_id to ObjectId
-            try:
-                doc_id = ObjectId(nav_doc_id)
-            except Exception:
-                print(f"[Application Update] ⚠️ Invalid nav_doc_id: {nav_doc_id}")
-                doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-
-            # Fetch the navigation document
-            nav_doc = await db_mongo.menu_details.find_one({"_id": doc_id})
-
-            if nav_doc:
-                main_navigation = nav_doc.get("mainNavigation", [])
-
-                # Find and update the application in mainNavigation
-                updated = False
-                for app_item in main_navigation:
-                    if app_item.get("application_id") == str(application_id):
-                        # Update application fields in MongoDB
-                        if "key" in update_data:
-                            app_item["key"] = update_data["key"]
-                        if "label" in update_data:
-                            app_item["label"] = update_data["label"]
-                        if "route" in update_data:
-                            app_item["route"] = update_data["route"]
-                        if "icon" in update_data:
-                            app_item["icon"] = update_data["icon"]
-                        if "badge" in update_data:
-                            app_item["badge"] = update_data["badge"]
-                        if "section_title" in update_data:
-                            app_item["sectionTitle"] = update_data["section_title"]
-                        if "name" in update_data:
-                            app_item["application_name"] = update_data["name"]
-
-                        updated = True
-                        print(f"[Application Update] ✅ Found and updated application in MongoDB")
-                        break
-
-                if updated:
-                    # Save the updated document back to MongoDB
-                    result = await db_mongo.menu_details.replace_one(
-                        {"_id": doc_id},
-                        nav_doc
-                    )
-                    print(f"[Application Update] ✅ MongoDB updated (modified={result.modified_count})")
-                else:
-                    print(f"[Application Update] ⚠️ Application not found in mainNavigation")
-            else:
-                print(f"[Application Update] ⚠️ Navigation document not found")
+        from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+        synced = await sync_application_menus_to_mongodb(db, application.id)
+        if synced:
+            print(f"[Application Update] ✅ MongoDB navigation synced")
         else:
-            print(f"[Application Update] ⚠️ MongoDB not available, skipping sync")
+            print(f"[Application Update] ⚠️ MongoDB sync skipped (not available)")
     except Exception as e:
         print(f"[Application Update] ⚠️ MongoDB sync failed: {e}")
         import traceback

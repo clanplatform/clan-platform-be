@@ -277,6 +277,14 @@ async def update_module(
     try:
         updated_module = ModuleService.update_module(db, module_id, module_data, updated_by)
 
+        # Sync the application's navigation document so module changes
+        # (label, icon, order, ...) reach MongoDB
+        try:
+            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+            await sync_application_menus_to_mongodb(db, updated_module.application_id)
+        except Exception as sync_error:
+            print(f"[Module Update] ⚠️ MongoDB sync failed: {sync_error}")
+
         # Audit log: module updated
         try:
             client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))

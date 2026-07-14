@@ -133,251 +133,12 @@ def apply_translations_to_navigation(
 
 async def working_sync_to_mongodb(db: Session, application_id: UUID) -> bool:
     """
-    Working sync function that replaces the broken MenuReorderService.sync_to_mongodb
-    This function connects directly to MongoDB and syncs the application menus
+    Sync the application's menus to MongoDB.
+    Thin wrapper kept for backward compatibility - the actual implementation
+    lives in app.menus.services.menu_sync (shared with MenuReorderService).
     """
-    try:
-        from app.core.mongodb import get_mongodb
-        from bson import ObjectId
-        from datetime import datetime, timezone
-        from app.applications.models.application import Application
-        from app.modules.models.module import Module
-        
-        print(f"[Working Sync] Starting sync for application: {application_id}")
-        
-        # Get MongoDB connection
-        db_mongo = await get_mongodb()
-        if db_mongo is None:
-            print(f"[Working Sync] MongoDB not available")
-            return False
-        
-        print(f"[Working Sync] MongoDB connected")
-        
-        # Get application details
-        app = db.query(Application).filter(
-            Application.id == application_id,
-            Application.is_active == True,
-            Application.is_deleted == False
-        ).first()
-        
-        if not app:
-            print(f"[Working Sync] Application not found: {application_id}")
-            return False
-        
-        print(f"[Working Sync] Application found: {app.name}")
-        
-        # Get all menus for this application
-        from app.menus.models.menu import Menu
-        menus = db.query(Menu).filter(
-            Menu.application_id == application_id,
-            Menu.deleted_at.is_(None)
-        ).order_by(Menu.level, Menu.order_index).all()
-        
-        print(f"[Working Sync] Found {len(menus)} menus")
-        
-        # Get modules for this application
-        modules = db.query(Module).filter(
-            Module.application_id == application_id,
-            Module.is_deleted == False
-        ).order_by(Module.order_index).all()
-        
-        print(f"[Working Sync] Found {len(modules)} modules")
-        
-        # Build navigation structure organized by modules
-        navigation_structure = []
-        
-        if modules:
-            # Group menus by module_id
-            for module in modules:
-                module_menus = [m for m in menus if m.module_id == module.id and m.parent_menu_id is None]
-                
-                if module_menus:  # Only add module if it has menus
-                    module_item = {
-                        "key": module.name.lower().replace(" ", "-") if module.name else f"module-{module.id}",
-                        "name": module.name,
-                        "label": module.label or module.name,
-                        "route": module.route or "",
-                        "icon": module.icon or "ri-folder-line",
-                        "module_id": str(module.id),
-                        "application_id": str(application_id),
-                        "order_index": module.order_index,
-                        "level": 2,
-                        "is_visible": True,  # Default to True since modules table doesn't have is_visible
-                        "is_active": module.is_active,
-                        "access": module.access if hasattr(module, 'access') and module.access else [],
-                        "children": []
-                    }
-                    
-                    # Add menus to this module
-                    for menu in module_menus:
-                        menu_item = {
-                            "key": menu.key or menu.name or str(menu.id),
-                            "name": menu.name,
-                            "label": menu.label,
-                            "route": menu.route,
-                            "icon": menu.icon,
-                            "component": menu.component,
-                            "menu_id": str(menu.id),
-                            "application_id": str(application_id),
-                            "module_id": str(menu.module_id) if menu.module_id else None,
-                            "order_index": menu.order_index,
-                            "level": menu.level,
-                            "is_visible": menu.is_visible,
-                            "is_active": menu.is_active,
-                            "children": []
-                        }
-                        
-                        # Add optional fields
-                        if hasattr(menu, 'badge') and menu.badge:
-                            menu_item["badge"] = menu.badge
-                        if hasattr(menu, 'section_title') and menu.section_title:
-                            menu_item["sectionTitle"] = menu.section_title
-                        if hasattr(menu, 'menus_description') and menu.menus_description:
-                            menu_item["description"] = menu.menus_description
-                        if hasattr(menu, 'access') and menu.access:
-                            menu_item["access"] = menu.access
-                        
-                        module_item["children"].append(menu_item)
-                    
-                    navigation_structure.append(module_item)
-        
-        # Handle menus without modules (orphaned menus)
-        orphaned_menus = [m for m in menus if m.module_id is None and m.parent_menu_id is None]
-        if orphaned_menus:
-            default_module = {
-                "key": "default-module",
-                "name": "default-module",
-                "label": "Default Module", 
-                "route": "",
-                "icon": "ri-folder-line",
-                "module_id": "default",
-                "application_id": str(application_id),
-                "order_index": 1000,
-                "level": 2,
-                "is_visible": True,
-                "is_active": True,
-                "access": [],
-                "children": []
-            }
-            
-            for menu in orphaned_menus:
-                menu_item = {
-                    "key": menu.key or menu.name or str(menu.id),
-                    "name": menu.name,
-                    "label": menu.label,
-                    "route": menu.route,
-                    "icon": menu.icon,
-                    "component": menu.component,
-                    "menu_id": str(menu.id),
-                    "application_id": str(application_id),
-                    "module_id": str(menu.module_id) if menu.module_id else None,
-                    "order_index": menu.order_index,
-                    "level": menu.level,
-                    "is_visible": menu.is_visible,
-                    "is_active": menu.is_active,
-                    "children": []
-                }
-                
-                # Add optional fields
-                if hasattr(menu, 'badge') and menu.badge:
-                    menu_item["badge"] = menu.badge
-                if hasattr(menu, 'section_title') and menu.section_title:
-                    menu_item["sectionTitle"] = menu.section_title
-                if hasattr(menu, 'menus_description') and menu.menus_description:
-                    menu_item["description"] = menu.menus_description
-                if hasattr(menu, 'access') and menu.access:
-                    menu_item["access"] = menu.access
-                
-                default_module["children"].append(menu_item)
-            
-            navigation_structure.append(default_module)
-        
-        # Check if application document exists in MongoDB
-        existing_app_doc = await db_mongo.menu_details.find_one({
-            "application_id": str(application_id),
-            "_id": {"$ne": ObjectId("69074724f217ab8fcb2e3b24")}
-        })
-        
-        if existing_app_doc:
-            # Update existing document with access field from PostgreSQL
-            app_object_id = existing_app_doc["_id"]
-            app_access = getattr(app, 'access', None) or []
-            
-            await db_mongo.menu_details.update_one(
-                {"_id": app_object_id},
-                {
-                    "$set": {
-                        "access": app_access,  # Update access field from PostgreSQL
-                        "children": navigation_structure,
-                        "updated_at": datetime.now(timezone.utc).isoformat()
-                    }
-                }
-            )
-            
-            print(f"[Working Sync] Updated existing MongoDB document: {app_object_id}")
-            
-            # Ensure it's in the master navigation array
-            master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-            await db_mongo.menu_details.update_one(
-                {"_id": master_doc_id},
-                {"$addToSet": {"mainNavigation": app_object_id}}
-            )
-            
-            print(f"[Working Sync] Ensured document is in master navigation")
-        else:
-            # Create new application document with access field from PostgreSQL
-            app_access = getattr(app, 'access', None) or []
-            
-            app_doc = {
-                "key": app.name.lower().replace(" ", "-"),
-                "label": app.name,
-                "icon": getattr(app, 'icon', None) or "ri-apps-line",
-                "description": getattr(app, 'description', None) or f"Manage {app.name}",
-                "badge": None,
-                "sectionTitle": app.name,
-                "route": getattr(app, 'route', None) or f"/{app.name.lower().replace(' ', '-')}",
-                "application_id": str(application_id),
-                "level": 1,
-                "order_index": 1000,
-                "is_visible": True,
-                "is_active": True,
-                "access": app_access,  # Add access field from PostgreSQL applications table
-                "children": navigation_structure,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            result = await db_mongo.menu_details.insert_one(app_doc)
-            app_object_id = result.inserted_id
-            
-            print(f"[Working Sync] Created new MongoDB document: {app_object_id}")
-            
-            # Add to master navigation
-            master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-            await db_mongo.menu_details.update_one(
-                {"_id": master_doc_id},
-                {"$addToSet": {"mainNavigation": app_object_id}}
-            )
-            
-            print(f"[Working Sync] Added to master navigation")
-        
-        # Update PostgreSQL menus with mongo_id
-        for menu in menus:
-            if menu.mongo_id is None:
-                menu.mongo_id = str(app_object_id)
-        
-        db.commit()
-        
-        updated_count = len([m for m in menus if m.mongo_id == str(app_object_id)])
-        print(f"[Working Sync] Updated {updated_count} menus with mongo_id")
-        
-        return True
-        
-    except Exception as e:
-        print(f"[Working Sync] Sync failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+    return await sync_application_menus_to_mongodb(db, application_id)
 
 @router.get("/")
 async def get_menus(
@@ -2104,13 +1865,21 @@ async def create_menus_batch_structured(
     for idx, menu_data in enumerate(batch_data.menus):
         print(f"[Batch Create Structured] Processing menu {idx + 1}/{len(batch_data.menus)}")
         
-        # Create MenuCreate instance with batch data
-        menu_create_data = {
-            "application_id": batch_data.application_id,
-            "module_id": batch_data.module_id,
-            **menu_data
-        }
-        
+        # Create MenuCreate instance with batch data.
+        # Batch-level application_id always wins; per-item module_id only wins
+        # when actually provided — a per-item "module_id": null must NOT wipe
+        # the batch module (that is what pushed menus into "Default Module").
+        menu_create_data = {**menu_data}
+        menu_create_data["application_id"] = batch_data.application_id
+        if not menu_create_data.get("module_id"):
+            menu_create_data["module_id"] = batch_data.module_id
+
+        # Batch items are menus (level 3+). Drop app/module-shaped levels (1/2)
+        # from nav-export payloads so level is recalculated correctly.
+        if menu_create_data.get("level") is not None and menu_create_data["level"] < 3:
+            print(f"[Batch Create Structured] ⚠️ Dropping invalid level {menu_create_data['level']} for '{menu_create_data.get('name')}' - will be recalculated")
+            menu_create_data.pop("level")
+
         menu_create = MenuCreate(**menu_create_data)
         
         # Create individual menu
@@ -2886,7 +2655,6 @@ async def create_menus_batch(
     };
     ```
     """
-    from app.services.menu_reorder_service import MenuReorderService
     return await MenuReorderService.reorder_menus(db, reorder_data)
 
 
@@ -2979,7 +2747,6 @@ async def update_menu(
     # 4.5️⃣ If order_index or parent_menu_id changed, trigger full reorder sync
     if order_changed:
         print(f"[Menu Update] 🔄 Order or parent changed, triggering full reorder sync...")
-        from app.services.menu_reorder_service import MenuReorderService
         await MenuReorderService.sync_to_mongodb(db, menu.application_id)
         print(f"[Menu Update] ✅ Reorder sync completed")
 
@@ -3189,6 +2956,84 @@ async def update_menu(
 
     return menu
 
+async def _remove_menus_from_nav_docs(application_id: UUID, deleted_menu_ids: set) -> int:
+    """
+    Surgically remove deleted menu entries (matched by menu_id) from the MongoDB
+    navigation documents:
+    - the application's own document(s) in menu_details (children tree)
+    - any inline entries in the master navigation document (backward compatibility)
+
+    Removing a parent entry also removes everything nested under it.
+    Returns the number of MongoDB documents updated.
+    """
+    # Use app.core.mongodb (the client the create path uses) — the
+    # infrastructure client is a separate instance and may not be connected.
+    from app.core.mongodb import get_mongodb as get_core_mongodb
+    db_mongo = await get_core_mongodb()
+    if db_mongo is None:
+        print(f"[Menu Delete] ⚠️ MongoDB not available - nav documents not pruned")
+        return 0
+
+    def prune_children(items):
+        """Return (kept_items, changed) with deleted menu entries removed recursively."""
+        changed = False
+        kept = []
+        for item in items:
+            if isinstance(item, dict):
+                if str(item.get("menu_id")) in deleted_menu_ids:
+                    changed = True
+                    continue  # drop this entry and everything nested under it
+                nested = item.get("children")
+                if isinstance(nested, list):
+                    new_nested, nested_changed = prune_children(nested)
+                    if nested_changed:
+                        item["children"] = new_nested
+                        changed = True
+            kept.append(item)
+        return kept, changed
+
+    updated_docs = 0
+    master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
+
+    # 1) Prune the application's own document(s)
+    cursor = db_mongo.menu_details.find({
+        "application_id": str(application_id),
+        "_id": {"$ne": master_doc_id}
+    })
+    async for app_doc in cursor:
+        children = app_doc.get("children")
+        if not isinstance(children, list):
+            continue
+        new_children, changed = prune_children(children)
+        if changed:
+            await db_mongo.menu_details.update_one(
+                {"_id": app_doc["_id"]},
+                {"$set": {
+                    "children": new_children,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            updated_docs += 1
+            print(f"[Menu Delete] ✅ Pruned deleted menu entries from app document {app_doc['_id']}")
+
+    # 2) Prune inline dict entries in the master navigation document
+    #    (ObjectId references are kept untouched by prune_children)
+    master_doc = await db_mongo.menu_details.find_one(
+        {"_id": master_doc_id}, {"mainNavigation": 1}
+    )
+    if master_doc and isinstance(master_doc.get("mainNavigation"), list):
+        new_nav, changed = prune_children(master_doc["mainNavigation"])
+        if changed:
+            await db_mongo.menu_details.update_one(
+                {"_id": master_doc_id},
+                {"$set": {"mainNavigation": new_nav}}
+            )
+            updated_docs += 1
+            print(f"[Menu Delete] ✅ Pruned deleted menu entries from master navigation document")
+
+    return updated_docs
+
+
 @router.delete("/{menu_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_menu(
     request: Request,
@@ -3202,16 +3047,19 @@ async def delete_menu(
     When a parent menu is deleted, all its children and nested children 
     are also deleted automatically (cascading delete).
     """
-    menu = db.query(Menu).filter(
-        Menu.id == menu_id,
-        Menu.is_active == True,
-        Menu.deleted_at.is_(None)
-    ).first()
+    # Look up WITHOUT active/deleted filters: DELETE is idempotent, so retrying
+    # after a half-failed delete (PostgreSQL row soft-deleted but MongoDB nav
+    # entry left behind) still prunes the leftover nav-doc entries instead of 404ing.
+    menu = db.query(Menu).filter(Menu.id == menu_id).first()
     if not menu:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu not found"
         )
+
+    was_already_deleted = menu.deleted_at is not None or menu.is_active is False
+    if was_already_deleted:
+        print(f"[Menu Delete] ♻️ Menu {menu_id} already soft-deleted - re-running MongoDB nav cleanup")
 
     menu_snapshot = {"name": menu.name, "label": menu.label}
 
@@ -3220,13 +3068,12 @@ async def delete_menu(
         """Recursively get all descendant menu IDs"""
         descendant_ids = []
         
-        # Get direct children
+        # Get direct children (no active/deleted filters so previously
+        # soft-deleted children also get their nav-doc entries pruned)
         children = db.query(Menu).filter(
-            Menu.parent_menu_id == parent_id,
-            Menu.is_active == True,
-            Menu.deleted_at.is_(None)
+            Menu.parent_menu_id == parent_id
         ).all()
-        
+
         for child in children:
             descendant_ids.append(child.id)
             # Recursively get grandchildren
@@ -3270,20 +3117,22 @@ async def delete_menu(
     except Exception:
         pass
 
-    # ✅ PROPER SYNC: Use MenuReorderService to rebuild the complete tree without deleted menus
-    print(f"[Menu Delete] 🔄 Syncing deletion to MongoDB using MenuReorderService...")
-    from app.services.menu_reorder_service import MenuReorderService
+    # ✅ Remove the deleted menu entries from the MongoDB navigation documents.
+    # Wrapped in try/except so a MongoDB failure never 500s after the PostgreSQL
+    # commit — DELETE is idempotent, retry it to prune any leftovers.
+    print(f"[Menu Delete] 🔄 Pruning deleted menus from MongoDB navigation documents...")
     try:
-        await MenuReorderService.sync_to_mongodb(db, menu.application_id)
-        print(f"[Menu Delete] ✅ MongoDB sync completed - deleted menus removed from tree")
+        deleted_id_strs = {str(mid) for mid in all_menu_ids}
+        updated_docs = await _remove_menus_from_nav_docs(menu.application_id, deleted_id_strs)
+        print(f"[Menu Delete] ✅ MongoDB nav cleanup done ({updated_docs} document(s) updated)")
     except Exception as e:
-        print(f"[Menu Delete] ⚠️ MongoDB sync failed: {e}")
+        print(f"[Menu Delete] ⚠️ MongoDB nav cleanup failed (menus stay soft-deleted in PostgreSQL, retry DELETE to prune): {e}")
         import traceback
         traceback.print_exc()
 
-    # Clear cache to ensure GET endpoints return updated data
-    redis_cache.delete("menus:mongo:main_navigation_full")
-    print(f"[Menu Delete] ✅ Cleared navigation cache")
+    # Clear all navigation caches (full nav + per-user + per-language variants)
+    redis_cache.delete_pattern("menus:*")
+    print(f"[Menu Delete] ✅ Cleared navigation caches")
 
     return None
 

@@ -255,3 +255,50 @@ async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -
         import traceback
         traceback.print_exc()
         return False
+
+
+async def remove_application_from_mongodb(application_id: UUID) -> bool:
+    """
+    Remove a deleted application's navigation document(s) from MongoDB and
+    pull their references out of the master mainNavigation array.
+
+    Used by DELETE /applications - the rebuild sync can't handle this case
+    because it skips applications that are deleted in PostgreSQL.
+    Returns True on success, False otherwise (never raises).
+    """
+    try:
+        from app.core.mongodb import get_mongodb
+
+        db_mongo = await get_mongodb()
+        if db_mongo is None:
+            logger.warning("[Menu Sync] MongoDB not available, skipping application removal")
+            return False
+
+        collection = db_mongo["menu_details"]
+        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        now = datetime.now(timezone.utc).isoformat()
+
+        doc_ids = []
+        cursor = collection.find(
+            {"application_id": str(application_id), "_id": {"$ne": master_doc_id}},
+            {"_id": 1}
+        )
+        async for doc in cursor:
+            doc_ids.append(doc["_id"])
+
+        if doc_ids:
+            await collection.update_one(
+                {"_id": master_doc_id},
+                {"$pull": {"mainNavigation": {"$in": doc_ids}},
+                 "$set": {"updated_at": now}}
+            )
+            await collection.delete_many({"_id": {"$in": doc_ids}})
+            logger.info(f"[Menu Sync] Removed {len(doc_ids)} navigation document(s) for application {application_id}")
+        else:
+            logger.info(f"[Menu Sync] No navigation documents found for application {application_id}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"[Menu Sync] Failed to remove application {application_id} from MongoDB: {e}")
+        return False

@@ -682,7 +682,7 @@ async def update_application(
     return application
 
 @router.delete("/{application_id}", status_code=status.HTTP_200_OK)
-def delete_application(
+async def delete_application(
     request: Request,
     application_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -732,6 +732,19 @@ def delete_application(
             )
         except Exception:
             pass
+
+        # Remove the application's navigation document(s) from MongoDB and the
+        # master mainNavigation reference (non-fatal: PostgreSQL delete stands)
+        try:
+            from app.menus.services.menu_sync import remove_application_from_mongodb
+            await remove_application_from_mongodb(application_id)
+        except Exception as mongo_error:
+            print(f"[Application Delete] ⚠️ MongoDB cleanup failed: {mongo_error}")
+
+        # Invalidate caches
+        redis_cache.delete(f"application:{application_id}")
+        redis_cache.delete_pattern("applications:list:*")
+        redis_cache.delete_pattern("menus:*")
 
         return {"message": "Application deleted successfully", "application_id": str(application_id)}
     except Exception as e:

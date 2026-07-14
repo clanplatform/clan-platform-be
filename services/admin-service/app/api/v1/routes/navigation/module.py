@@ -72,6 +72,13 @@ async def create_module(
     try:
         module = ModuleService.create_module(db, module_data, created_by)
 
+        # Sync so the new (possibly empty) module appears in the MongoDB navigation
+        try:
+            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+            await sync_application_menus_to_mongodb(db, module.application_id)
+        except Exception as sync_error:
+            print(f"[Module Create] ⚠️ MongoDB sync failed: {sync_error}")
+
         # Audit log: module created
         try:
             client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
@@ -343,6 +350,14 @@ async def delete_module(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Module with ID {module_id} not found"
         )
+
+    # Sync so the deleted module disappears from the MongoDB navigation
+    if existing_module:
+        try:
+            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+            await sync_application_menus_to_mongodb(db, existing_module.application_id)
+        except Exception as sync_error:
+            print(f"[Module Delete] ⚠️ MongoDB sync failed: {sync_error}")
 
     # Audit log: module deleted
     try:

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user  # Uses optional auth support
 from app.core.config import settings
-from app.infrastructure.database.tenant_db_manager import tenant_db_manager, TenantDatabaseManager
+from app.infrastructure.database.tenant_db_manager import tenant_db_manager, TenantDatabaseManager, _slugify
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
@@ -129,9 +129,15 @@ async def create_tenant(
     # Create new tenant using model_dump to get all fields
     db_tenant = Tenant(**tenant_data.model_dump())
 
-    # Assign a dedicated database name before saving
-    tenant_code = (db_tenant.tenant_code or "").strip()
-    db_tenant.tenant_db_name = TenantDatabaseManager.make_db_name(tenant_code or str(db_tenant.tenant_id))
+    # Assign a dedicated database name before saving.
+    # Prefer the explicit tenant_db_name from the request; fall back to a name
+    # derived from tenant_code (or tenant_id). Always slugify — the name is
+    # embedded directly into CREATE DATABASE.
+    if db_tenant.tenant_db_name and db_tenant.tenant_db_name.strip():
+        db_tenant.tenant_db_name = _slugify(db_tenant.tenant_db_name.strip())
+    else:
+        tenant_code = (db_tenant.tenant_code or "").strip()
+        db_tenant.tenant_db_name = TenantDatabaseManager.make_db_name(tenant_code or str(db_tenant.tenant_id))
 
     db.add(db_tenant)
     db.commit()
@@ -185,7 +191,7 @@ async def create_tenant(
             object_type="Tenant",
             object_id=str(db_tenant.tenant_id),
             user_id=get_user_id(current_user),
-            client_id=tenant_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -271,7 +277,7 @@ async def list_tenants(
             action="READ",
             object_type="Tenant",
             user_id=get_user_id(current_user),
-            client_id=tenant_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -317,7 +323,7 @@ async def update_tenant(
             object_type="Tenant",
             object_id=str(tenant_id),
             user_id=get_user_id(current_user),
-            client_id=tenant_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -381,7 +387,7 @@ async def delete_tenant(
             object_type="Tenant",
             object_id=str(tenant_id),
             user_id=get_user_id(current_user),
-            client_id=tenant_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

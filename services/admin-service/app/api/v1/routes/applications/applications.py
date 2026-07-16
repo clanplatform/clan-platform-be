@@ -94,12 +94,12 @@ def get_applications(
             print(f"Redis cache set error (continuing without cache): {str(cache_error)}")
 
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Application",
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -462,13 +462,13 @@ def get_applications_by_domain(
     redis_cache.set(cache_key, apps_list, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Application",
             object_id=str(domain_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -535,13 +535,13 @@ def create_application(
 
         # Audit log: application created
         try:
-            client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="Application",
                 object_id=str(application.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id,
+                tenant_id=tenant_id,
                 entity_id=entity_id,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -638,13 +638,13 @@ async def update_application(
 
     # Audit log: application updated
     try:
-        client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="UPDATE",
             object_type="Application",
             object_id=str(application.id),
             user_id=get_user_id(current_user),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -716,13 +716,13 @@ def delete_application(
 
         # Audit log: application deleted
         try:
-            client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="DELETE",
                 object_type="Application",
                 object_id=str(application_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id,
+                tenant_id=tenant_id,
                 entity_id=entity_id,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),

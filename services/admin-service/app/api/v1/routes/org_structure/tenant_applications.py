@@ -31,7 +31,7 @@ def _to_uuid(value) -> Optional[uuid.UUID]:
                          "that application without needing individual tenant_modules rows.")
 async def assign_application(
     request: Request, data: TenantApplicationCreate,
-    db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
 ):
     if TenantApplicationService.get_assignment_by_tenant_application(db, str(data.tenant_id), str(data.application_id)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application already assigned to this tenant")
@@ -40,7 +40,7 @@ async def assign_application(
         try:
             cid, eid = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(action="CREATE", object_type="TenantApplication", object_id=str(assignment.id),
-                           user_id=get_user_id(current_user), client_id=cid, entity_id=eid,
+                           user_id=get_user_id(current_user), tenant_id=cid, entity_id=eid,
                            session_id=get_session_id(current_user), ip_address=get_client_ip(request),
                            user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["CREATE"],
                            new_values={"tenant_id": str(data.tenant_id), "application_id": str(data.application_id)})
@@ -55,7 +55,7 @@ async def assign_application(
 
 @router.get("/", response_model=TenantApplicationListResponse, summary="List all tenant-application assignments")
 async def list_assignments(
-    request: Request, db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100),
     tenant_id: Optional[str] = Query(None), application_id: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
@@ -75,7 +75,7 @@ async def list_assignments(
 @router.get("/tenant/{tenant_id}", response_model=List[TenantApplicationResponse],
             summary="Get all applications assigned to a tenant")
 async def get_applications_for_tenant(
-    tenant_id: str, db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    tenant_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
     is_active: Optional[bool] = Query(None),
 ):
     return TenantApplicationService.get_applications_for_tenant(db, tenant_id, is_active)
@@ -84,7 +84,7 @@ async def get_applications_for_tenant(
 @router.get("/application/{application_id}", response_model=List[TenantApplicationResponse],
             summary="Get all tenants an application is assigned to")
 async def get_tenants_for_application(
-    application_id: str, db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    application_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
     is_active: Optional[bool] = Query(None),
 ):
     return TenantApplicationService.get_tenants_for_application(db, application_id, is_active)
@@ -92,7 +92,7 @@ async def get_tenants_for_application(
 
 @router.get("/{assignment_id}", response_model=TenantApplicationResponse, summary="Get a specific assignment")
 async def get_assignment(
-    assignment_id: str, db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    assignment_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
 ):
     assignment = TenantApplicationService.get_assignment(db, assignment_id)
     if not assignment:
@@ -104,7 +104,7 @@ async def get_assignment(
             summary="Update assignment (activate / deactivate)")
 async def update_assignment(
     request: Request, assignment_id: str, data: TenantApplicationUpdate,
-    db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
 ):
     if not TenantApplicationService.get_assignment(db, assignment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")
@@ -112,7 +112,7 @@ async def update_assignment(
     try:
         cid, eid = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(action="UPDATE", object_type="TenantApplication", object_id=assignment_id,
-                       user_id=get_user_id(current_user), client_id=cid, entity_id=eid,
+                       user_id=get_user_id(current_user), tenant_id=cid, entity_id=eid,
                        session_id=get_session_id(current_user), ip_address=get_client_ip(request),
                        user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["UPDATE"])
     except Exception:
@@ -123,14 +123,14 @@ async def update_assignment(
 @router.delete("/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove an application from a tenant")
 async def remove_assignment(
     request: Request, assignment_id: str,
-    db: Session = Depends(get_tenant_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
 ):
     if not TenantApplicationService.remove_assignment(db, assignment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")
     try:
         cid, eid = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(action="DELETE", object_type="TenantApplication", object_id=assignment_id,
-                       user_id=get_user_id(current_user), client_id=cid, entity_id=eid,
+                       user_id=get_user_id(current_user), tenant_id=cid, entity_id=eid,
                        session_id=get_session_id(current_user), ip_address=get_client_ip(request),
                        user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["DELETE"])
     except Exception:

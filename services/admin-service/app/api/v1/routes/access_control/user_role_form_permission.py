@@ -57,13 +57,13 @@ async def create_role_form_permission(
 
         # Audit log: role form permission created
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="RoleFormPermission",
                 object_id=str(created_permission.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -112,13 +112,13 @@ async def get_role_form_permission(
         )
 
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="RoleFormPermission",
             object_id=str(permission_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -185,12 +185,12 @@ async def get_all_role_form_permissions(
         total_pages=total_pages
     )
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="RoleFormPermission",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -239,13 +239,13 @@ async def update_role_form_permission(
 
         # Audit log: role form permission updated
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="UPDATE",
                 object_type="RoleFormPermission",
                 object_id=str(permission_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -293,13 +293,13 @@ async def delete_role_form_permission(
 
     # Audit log: role form permission deleted
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="DELETE",
             object_type="RoleFormPermission",
             object_id=str(permission_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

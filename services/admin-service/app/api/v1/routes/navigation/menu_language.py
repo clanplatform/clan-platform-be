@@ -48,13 +48,13 @@ def create_menu_language(
 
         # Audit log: menu language created
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="MenuLanguage",
                 object_id=str(menu_language.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -103,13 +103,13 @@ def get_menu_language(
         )
 
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="MenuLanguage",
             object_id=str(menu_language_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -145,12 +145,12 @@ def get_all_menu_languages(
         limit=limit
     )
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="MenuLanguage",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -183,12 +183,12 @@ def get_menu_languages_by_lang_code(
         lang_code=lang_code
     )
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="MenuLanguage",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -234,13 +234,13 @@ def update_menu_language(
 
     # Audit log: menu language updated
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="UPDATE",
             object_type="MenuLanguage",
             object_id=str(menu_language_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -287,13 +287,13 @@ def delete_menu_language(
 
     # Audit log: menu language deleted
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="DELETE",
             object_type="MenuLanguage",
             object_id=str(menu_language_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

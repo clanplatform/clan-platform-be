@@ -72,10 +72,16 @@ def create_tenant(db: Session, tenant: TenantCreate, user_id: Optional[UUID] = N
 
     db_tenant = Tenant(**tenant.model_dump())
 
-    # Derive and assign the tenant-specific database name
-    from app.infrastructure.database.tenant_db_manager import TenantDatabaseManager
-    tenant_code = (db_tenant.tenant_code or str(db_tenant.tenant_id)).strip()
-    db_tenant.tenant_db_name = TenantDatabaseManager.make_db_name(tenant_code)
+    # Determine the tenant-specific database name.
+    # Prefer the explicit tenant_db_name from the request; fall back to a name
+    # derived from tenant_code (or tenant_id) when it is not supplied.
+    # Always slugify — the name is embedded directly into CREATE DATABASE.
+    from app.infrastructure.database.tenant_db_manager import TenantDatabaseManager, _slugify
+    if db_tenant.tenant_db_name and db_tenant.tenant_db_name.strip():
+        db_tenant.tenant_db_name = _slugify(db_tenant.tenant_db_name.strip())
+    else:
+        tenant_code = (db_tenant.tenant_code or str(db_tenant.tenant_id)).strip()
+        db_tenant.tenant_db_name = TenantDatabaseManager.make_db_name(tenant_code)
 
     db.add(db_tenant)
     db.commit()

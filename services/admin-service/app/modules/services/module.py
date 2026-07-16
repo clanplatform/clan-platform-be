@@ -68,20 +68,20 @@ class ModuleService:
         search: Optional[str] = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
-        client_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> tuple[List[Module], int]:
         """Get modules with filtering and pagination.
-        When client_id is provided, only returns modules licensed to that client."""
+        When tenant_id is provided, only returns modules licensed to that tenant."""
 
         query = db.query(Module).filter(Module.is_deleted == False)
 
-        # Tenant isolation: restrict to modules the client has licensed
-        if client_id:
+        # Tenant isolation: restrict to modules the tenant has licensed
+        if tenant_id:
             query = query.join(
                 TenantModule,
                 and_(
                     TenantModule.module_id == Module.id,
-                    TenantModule.tenant_id == client_id,
+                    TenantModule.tenant_id == tenant_id,
                     TenantModule.is_active == True,
                 )
             )

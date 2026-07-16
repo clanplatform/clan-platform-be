@@ -277,7 +277,7 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
     fire_audit_log(
         action="CREATE", object_type="Division",
         object_id=str(db_division.id),
-        client_id=str(db_division.tenant_id),
+        tenant_id=str(db_division.tenant_id),
         entity_id=str(db_division.entity_id) if db_division.entity_id else None,
         user_id=str(user_id) if user_id else None,
         new_values={"division_name": db_division.division_name, "division_code": db_division.division_code},
@@ -348,7 +348,7 @@ def update_division(
     fire_audit_log(
         action="UPDATE", object_type="Division",
         object_id=str(division_id),
-        client_id=str(db_division.tenant_id),
+        tenant_id=str(db_division.tenant_id),
         entity_id=str(db_division.entity_id) if db_division.entity_id else None,
         user_id=str(user_id) if user_id else None,
         new_values=update_data,
@@ -384,7 +384,7 @@ def delete_division(db: Session, division_id: UUID, user_id: Optional[UUID] = No
     fire_audit_log(
         action="DELETE", object_type="Division",
         object_id=str(division_id),
-        client_id=str(db_division.tenant_id),
+        tenant_id=str(db_division.tenant_id),
         entity_id=str(db_division.entity_id) if db_division.entity_id else None,
         user_id=str(user_id) if user_id else None,
         old_values={"is_active": True}, new_values={"is_active": False},
@@ -413,7 +413,7 @@ def restore_division(db: Session, division_id: UUID, user_id: Optional[UUID] = N
     fire_audit_log(
         action="RESTORE", object_type="Division",
         object_id=str(division_id),
-        client_id=str(db_division.tenant_id),
+        tenant_id=str(db_division.tenant_id),
         entity_id=str(db_division.entity_id) if db_division.entity_id else None,
         user_id=str(user_id) if user_id else None,
         old_values={"is_active": False}, new_values={"is_active": True},

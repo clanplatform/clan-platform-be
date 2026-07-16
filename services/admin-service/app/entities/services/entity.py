@@ -27,10 +27,10 @@ def get_entity_by_code(db: Session, entity_code: str) -> Optional[Entity]:
         _decrypt_entity_fields(entity)
     return entity
 
-def get_entities_by_client(db: Session, client_id: UUID, skip: int = 0, limit: int = 100) -> List[Entity]:
-    """Get all entities for a specific client"""
+def get_entities_by_tenant(db: Session, tenant_id: UUID, skip: int = 0, limit: int = 100) -> List[Entity]:
+    """Get all entities for a specific tenant"""
     entities = db.query(Entity).filter(
-        Entity.client_id == client_id,
+        Entity.tenant_id == tenant_id,
         Entity.deleted == False
     ).offset(skip).limit(limit).all()
     
@@ -52,11 +52,11 @@ def create_entity(db: Session, entity: EntityCreate, user_id: Optional[UUID] = N
     if db_entity:
         raise HTTPException(status_code=400, detail="Entity code already registered")
 
-    # Verify client exists
+    # Verify tenant exists
     from app.tenants.services.tenants import get_tenant
-    client = get_client(db, entity.client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    tenant = get_tenant(db, entity.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
 
     # Create new entity
     entity_data = entity.model_dump()
@@ -67,7 +67,7 @@ def create_entity(db: Session, entity: EntityCreate, user_id: Optional[UUID] = N
         description=entity_data.get('description'),
         contact=entity_data.get('contact'),
         email=entity_data.get('email'),
-        client_id=entity_data['client_id'],
+        tenant_id=entity_data['tenant_id'],
         address_1=entity_data.get('address_1'),
         address_2=entity_data.get('address_2'),
         city_code=entity_data.get('city_code'),
@@ -85,7 +85,7 @@ def create_entity(db: Session, entity: EntityCreate, user_id: Optional[UUID] = N
     fire_audit_log(
         action="CREATE", object_type="Entity",
         object_id=str(db_entity.entity_id),
-        client_id=str(db_entity.client_id),
+        tenant_id=str(db_entity.tenant_id),
         user_id=str(user_id) if user_id else None,
         new_values={"entity_name": db_entity.entity_name, "entity_code": db_entity.entity_code},
     )
@@ -113,7 +113,7 @@ def update_entity(db: Session, entity_id: int, entity: EntityUpdate, user_id: Op
     fire_audit_log(
         action="UPDATE", object_type="Entity",
         object_id=str(entity_id),
-        client_id=str(db_entity.client_id),
+        tenant_id=str(db_entity.tenant_id),
         user_id=str(user_id) if user_id else None,
         new_values=update_data,
     )
@@ -132,16 +132,16 @@ def delete_entity(db: Session, entity_id: int, user_id: Optional[UUID] = None) -
     fire_audit_log(
         action="DELETE", object_type="Entity",
         object_id=str(entity_id),
-        client_id=str(db_entity.client_id),
+        tenant_id=str(db_entity.tenant_id),
         user_id=str(user_id) if user_id else None,
         old_values={"deleted": False}, new_values={"deleted": True},
     )
     return True
 
-def get_entities_count_by_client(db: Session, client_id: int) -> int:
-    """Get count of entities for a client"""
+def get_entities_count_by_tenant(db: Session, tenant_id: UUID) -> int:
+    """Get count of entities for a tenant"""
     return db.query(Entity).filter(
-        Entity.client_id == client_id,
+        Entity.tenant_id == tenant_id,
         Entity.deleted == False
     ).count()
 

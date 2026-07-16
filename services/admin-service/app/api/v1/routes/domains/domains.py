@@ -75,12 +75,12 @@ async def get_domains(
     redis_cache.set(cache_key, domains_list, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        tenant_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Domain",
             user_id=_get_user_id(current_user),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=_get_session_id(current_user),
             ip_address=_client_ip(request),
@@ -128,13 +128,13 @@ async def get_domain(
     redis_cache.cache_domain(str(domain_id), domain_dict, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        tenant_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Domain",
             object_id=str(domain_id),
             user_id=_get_user_id(current_user),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=_get_session_id(current_user),
             ip_address=_client_ip(request),
@@ -183,13 +183,13 @@ async def create_domain(
     db.commit()
     db.refresh(db_domain)
 
-    client_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+    tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
     fire_audit_log(
         action="CREATE",
         object_type="Domain",
         object_id=str(db_domain.id),
         user_id=current_user.get("id"),
-        client_id=client_id,
+        tenant_id=tenant_id,
         entity_id=entity_id,
         session_id=current_user.get("session_id"),
         ip_address=_client_ip(request),
@@ -282,13 +282,13 @@ async def update_domain(
     db.commit()
     db.refresh(db_domain)
 
-    client_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+    tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
     fire_audit_log(
         action="UPDATE",
         object_type="Domain",
         object_id=str(domain_id),
         user_id=current_user.get("id"),
-        client_id=client_id,
+        tenant_id=tenant_id,
         entity_id=entity_id,
         session_id=current_user.get("session_id"),
         ip_address=_client_ip(request),
@@ -344,13 +344,13 @@ async def delete_domain(
 
         db.commit()
 
-        client_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+        tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
         fire_audit_log(
             action="DELETE",
             object_type="Domain",
             object_id=str(domain_id),
             user_id=current_user.get("id"),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=current_user.get("session_id"),
             ip_address=_client_ip(request),

@@ -108,13 +108,13 @@ def create_form_language(
 
         # Audit log: form language created
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="FormLanguage",
                 object_id=str(db_form_language.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -214,12 +214,12 @@ def get_all_form_languages(
         entity_id=entity_id
     )
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="FormLanguage",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -273,13 +273,13 @@ def get_form_language(
             detail=f"Form language translation with ID {form_language_id} not found"
         )
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="FormLanguage",
             object_id=str(form_language_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -312,12 +312,12 @@ def get_form_languages_by_lang_code(
     """
     form_languages = FormLanguageService.get_by_lang_code(db, lang_code)
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="FormLanguage",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -357,13 +357,13 @@ def update_form_language(
 
     # Audit log: form language updated
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="UPDATE",
             object_type="FormLanguage",
             object_id=str(form_language_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -403,13 +403,13 @@ def delete_form_language(
 
     # Audit log: form language deleted
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="DELETE",
             object_type="FormLanguage",
             object_id=str(form_language_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

@@ -448,12 +448,12 @@ async def get_menus(
     redis_cache.set(cache_key, response_data, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Menu",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -1146,12 +1146,12 @@ async def get_menus_by_module(
             root_menus.append(menu_dict)
 
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Menu",
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -1353,7 +1353,7 @@ async def create_single_menu_structured(
         fire_audit_log(
             action="CREATE", object_type="Menu",
             object_id=str(menu.id),
-            user_id=_uid, client_id=_cid, entity_id=_eid,
+            user_id=_uid, tenant_id=_cid, entity_id=_eid,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request) if request else None,
             user_agent=request.headers.get("user-agent") if request else None,
@@ -2727,7 +2727,7 @@ async def update_menu(
         fire_audit_log(
             action="UPDATE", object_type="Menu",
             object_id=str(menu_id),
-            user_id=_uid, client_id=_cid, entity_id=_eid,
+            user_id=_uid, tenant_id=_cid, entity_id=_eid,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -3102,7 +3102,7 @@ async def delete_menu(
         fire_audit_log(
             action="DELETE", object_type="Menu",
             object_id=str(menu_id),
-            user_id=_uid, client_id=_cid, entity_id=_eid,
+            user_id=_uid, tenant_id=_cid, entity_id=_eid,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
             user_agent=request.headers.get("user-agent"),

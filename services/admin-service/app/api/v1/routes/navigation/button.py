@@ -28,10 +28,10 @@ async def create_button(
     try:
         button = ButtonService.create_button(db, button_data, created_by=get_user_id(current_user))
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE", object_type="Button", object_id=str(button.id),
-                user_id=get_user_id(current_user), client_id=client_id_audit, entity_id=entity_id_audit,
+                user_id=get_user_id(current_user), tenant_id=tenant_id_audit, entity_id=entity_id_audit,
                 session_id=get_session_id(current_user), ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["CREATE"],
                 new_values={"name": button.name, "menu_id": str(button.menu_id)},
@@ -126,10 +126,10 @@ async def update_button(
     try:
         updated = ButtonService.update_button(db, button_id, button_data, updated_by=get_user_id(current_user))
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="UPDATE", object_type="Button", object_id=str(button_id),
-                user_id=get_user_id(current_user), client_id=client_id_audit, entity_id=entity_id_audit,
+                user_id=get_user_id(current_user), tenant_id=tenant_id_audit, entity_id=entity_id_audit,
                 session_id=get_session_id(current_user), ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["UPDATE"],
             )
@@ -155,10 +155,10 @@ async def delete_button(
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Button {button_id} not found")
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="DELETE", object_type="Button", object_id=str(button_id),
-            user_id=get_user_id(current_user), client_id=client_id_audit, entity_id=entity_id_audit,
+            user_id=get_user_id(current_user), tenant_id=tenant_id_audit, entity_id=entity_id_audit,
             session_id=get_session_id(current_user), ip_address=get_client_ip(request),
             user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["DELETE"],
         )

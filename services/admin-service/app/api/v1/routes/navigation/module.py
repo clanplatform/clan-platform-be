@@ -2,7 +2,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
-from app.infrastructure.database.session import get_tenant_db as get_db
+# Modules, tenant_modules live only in the master DB; tenant scoping is done by
+# filtering tenant_modules.tenant_id, not by switching databases.
+from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user
 from app.modules.services.module import ModuleService
 from app.modules.schemas.module import (
@@ -74,13 +76,13 @@ async def create_module(
 
         # Audit log: module created
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="Module",
                 object_id=str(module.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -132,9 +134,9 @@ async def get_modules(
     
     skip = (page - 1) * size
 
-    # Resolve the requesting user's client_id for tenant isolation.
-    # Platform admins (no client_id in token) see all modules.
-    requester_client_id = current_user.get("client_id") if current_user else None
+    # Resolve the requesting user's tenant_id for tenant isolation.
+    # Platform admins (no tenant_id in token) see all modules.
+    requester_tenant_id = current_user.get("tenant_id") if current_user else None
 
     try:
         modules, total = ModuleService.get_modules(
@@ -147,7 +149,7 @@ async def get_modules(
             search=search,
             sort_by=sort_by,
             sort_order=sort_order,
-            client_id=requester_client_id,
+            tenant_id=requester_tenant_id,
         )
         
         total_pages = math.ceil(total / size) if total > 0 else 0
@@ -160,12 +162,12 @@ async def get_modules(
             total_pages=total_pages
         )
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Module",
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -204,13 +206,13 @@ async def get_modules_by_application(
     try:
         modules = ModuleService.get_modules_by_application(db, application_id, is_active)
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Module",
                 object_id=application_id,
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -287,13 +289,13 @@ async def update_module(
 
         # Audit log: module updated
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="UPDATE",
                 object_type="Module",
                 object_id=str(module_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -346,13 +348,13 @@ async def delete_module(
 
     # Audit log: module deleted
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="DELETE",
             object_type="Module",
             object_id=str(module_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

@@ -23,6 +23,11 @@ from app.api.v1.routes.navigation.button import router as buttons_router
 from app.api.v1.routes.org_structure.tenant_modules import router as tenant_modules_router
 from app.api.v1.routes.org_structure.tenant_applications import router as tenant_applications_router
 from app.api.v1.routes.sync.tenants import router as sync_tenants_router
+from app.api.v1.routes.master_datas.master_countries import router as master_countries_router
+from app.api.v1.routes.master_datas.master_states import router as master_states_router
+from app.api.v1.routes.master_datas.master_cities import router as master_cities_router
+from app.api.v1.routes.master_datas.master_languages import router as master_languages_router
+from app.api.v1.routes.master_datas.master_locales import router as master_locales_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -171,4 +176,39 @@ api_v1_router.include_router(
     sync_tenants_router,
     prefix="/sync",
     tags=["sync"],
+)
+
+# include master country routes
+api_v1_router.include_router(
+    master_countries_router,
+    prefix="/master_countries",
+    tags=["master_countries"],
+)
+
+# include master state routes
+api_v1_router.include_router(
+    master_states_router,
+    prefix="/master_states",
+    tags=["master_states"],
+)
+
+# include master city routes
+api_v1_router.include_router(
+    master_cities_router,
+    prefix="/master_cities",
+    tags=["master_cities"],
+)
+
+# include master language routes
+api_v1_router.include_router(
+    master_languages_router,
+    prefix="/master_languages",
+    tags=["master_languages"],
+)
+
+# include master locale routes
+api_v1_router.include_router(
+    master_locales_router,
+    prefix="/master_locales",
+    tags=["master_locales"],
 )

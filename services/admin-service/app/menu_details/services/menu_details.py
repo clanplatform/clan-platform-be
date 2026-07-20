@@ -180,9 +180,9 @@ class MenuDetailsService(BaseMongoService):
                 ).first()
                 
                 if roles_entity and roles_entity.assigned_roles:
-                    # Get the first role's name
+                    # Get the first role's name (assigned_roles holds user_role.id)
                     first_role = db.query(UserRoleBasic).filter(
-                        UserRoleBasic.id == roles_entity.assigned_roles[0],
+                        UserRoleBasic.user_role_id == roles_entity.assigned_roles[0],
                         UserRoleBasic.active == True
                     ).first()
                     

@@ -1,6 +1,11 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
 from typing import List, Optional
+
+from app.domains.exceptions import (
+    DomainNotFoundError,
+    DuplicateDomainNameError,
+    DuplicateDomainCodeError,
+)
 
 from uuid import UUID
 from app.domains.models.domain import Domain
@@ -50,11 +55,11 @@ def create_domain(db: Session, domain: DomainCreate, user_id: Optional[UUID] = N
     # Check if domain code already exists
     db_domain = get_domain_by_code(db, domain_code=domain.domain_code)
     if db_domain:
-        raise HTTPException(status_code=400, detail="Domain code already registered")
+        raise DuplicateDomainCodeError()
 
     # Check if domain name already exists
     if get_domain_by_name(db, domain_name=domain.domain_name):
-        raise HTTPException(status_code=400, detail="Domain name already registered")
+        raise DuplicateDomainNameError()
 
     # Encrypt sensitive fields
     encrypted_action = None
@@ -84,19 +89,19 @@ def update_domain(db: Session, domain_id: int, domain: DomainUpdate, user_id: Op
     """Update a domain"""
     db_domain = get_domain(db, domain_id=domain_id)
     if not db_domain:
-        raise HTTPException(status_code=404, detail="Domain not found")
+        raise DomainNotFoundError()
 
     update_data = domain.dict(exclude_unset=True)
 
     # Check code uniqueness if being updated
     if "domain_code" in update_data and update_data["domain_code"] != db_domain.domain_code:
         if get_domain_by_code(db, domain_code=update_data["domain_code"]):
-            raise HTTPException(status_code=400, detail="Domain code already registered")
+            raise DuplicateDomainCodeError()
 
     # Check name uniqueness if being updated
     if "domain_name" in update_data and update_data["domain_name"] != db_domain.domain_name:
         if get_domain_by_name(db, domain_name=update_data["domain_name"]):
-            raise HTTPException(status_code=400, detail="Domain name already registered")
+            raise DuplicateDomainNameError()
 
     # Encrypt sensitive fields if being updated
     if "action" in update_data and update_data["action"]:
@@ -120,7 +125,7 @@ def delete_domain(db: Session, domain_id: int, user_id: Optional[UUID] = None) -
     """Delete a domain"""
     db_domain = get_domain(db, domain_id=domain_id)
     if not db_domain:
-        raise HTTPException(status_code=404, detail="Domain not found")
+        raise DomainNotFoundError()
     
     db.delete(db_domain)
     db.commit()

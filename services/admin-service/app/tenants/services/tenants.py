@@ -70,7 +70,10 @@ def create_tenant(db: Session, tenant: TenantCreate, user_id: Optional[UUID] = N
     if existing_company:
         raise ValueError(f"Tenant with company name {tenant.company_name} already exists")
 
-    db_tenant = Tenant(**tenant.model_dump())
+    # Creator credentials are verification-only fields — never stored on the row
+    db_tenant = Tenant(**tenant.model_dump(
+        exclude={"created_by_email", "created_by_password"}
+    ))
 
     # Determine the tenant-specific database name.
     # Prefer the explicit tenant_db_name from the request; fall back to a name

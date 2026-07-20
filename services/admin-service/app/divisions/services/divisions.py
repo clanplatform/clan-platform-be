@@ -1,11 +1,25 @@
 from sqlalchemy.orm import Session, joinedload
-from fastapi import HTTPException
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 
 from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate
+from app.divisions.exceptions import (
+    DivisionNotFoundError,
+    ParentDivisionNotFoundError,
+    DuplicateDivisionNameError,
+    DuplicateDivisionCodeError,
+    DivisionTenantNotFoundError,
+    DivisionEntityNotFoundError,
+    DivisionEntityTenantMismatchError,
+    DivisionDepartmentNotFoundError,
+    DivisionDepartmentTenantMismatchError,
+    ParentDivisionTenantMismatchError,
+    DivisionSelfParentError,
+    DivisionHasChildrenError,
+    DivisionNotDeletedError,
+)
 from app.infrastructure.audit_tenant import fire_audit_log
 
 
@@ -96,7 +110,7 @@ def get_divisions_by_department(db: Session, department_id: UUID, skip: int = 0,
     ).first()
 
     if not department:
-        raise HTTPException(status_code=404, detail="Department not found")
+        raise DivisionDepartmentNotFoundError()
 
     # Build query to find divisions related to this department
     query = db.query(Division).options(
@@ -223,27 +237,27 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
     from app.tenants.services.tenants import get_tenant
     tenant = get_tenant(db, division.tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise DivisionTenantNotFoundError()
 
     # Verify entity exists if provided
     if division.entity_id:
         from app.entities.services.entity import get_entity
         entity = get_entity(db, division.entity_id)
         if not entity:
-            raise HTTPException(status_code=404, detail="Entity not found")
+            raise DivisionEntityNotFoundError()
         # Verify entity belongs to the tenant
         if entity.tenant_id != division.tenant_id:
-            raise HTTPException(status_code=400, detail="Entity does not belong to the specified tenant")
+            raise DivisionEntityTenantMismatchError()
 
     # Verify department exists if provided
     if division.department_id:
         from app.departments.services.departments import get_department
         department = get_department(db, division.department_id)
         if not department:
-            raise HTTPException(status_code=404, detail="Department not found")
+            raise DivisionDepartmentNotFoundError()
         # Verify department belongs to the tenant
         if department.tenant_id != division.tenant_id:
-            raise HTTPException(status_code=400, detail="Department does not belong to the specified tenant")
+            raise DivisionDepartmentTenantMismatchError("specified")
 
     # Check if division name already exists in the same entity
     existing_division = db.query(Division).filter(
@@ -252,20 +266,20 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
         Division.deleted_at.is_(None)
     ).first()
     if existing_division:
-        raise HTTPException(status_code=400, detail="Division with this name already exists in this entity")
+        raise DuplicateDivisionNameError()
 
     # Check if division code already exists in the same entity
     existing_code = get_division_by_code(db, division.division_code, division.tenant_id, division.entity_id)
     if existing_code:
-        raise HTTPException(status_code=400, detail="Division code already exists for this entity")
+        raise DuplicateDivisionCodeError()
 
     # Verify parent division exists and belongs to same tenant if provided
     if division.parent_division_id:
         parent_div = get_division(db, division.parent_division_id)
         if not parent_div:
-            raise HTTPException(status_code=404, detail="Parent division not found")
+            raise ParentDivisionNotFoundError()
         if parent_div.tenant_id != division.tenant_id:
-            raise HTTPException(status_code=400, detail="Parent division does not belong to the same tenant")
+            raise ParentDivisionTenantMismatchError()
 
     # Create new division
     division_data = division.model_dump()
@@ -299,7 +313,7 @@ def update_division(
     ).first()
 
     if not db_division:
-        raise HTTPException(status_code=404, detail="Division not found")
+        raise DivisionNotFoundError()
 
     update_data = division.model_dump(exclude_unset=True)
 
@@ -311,32 +325,32 @@ def update_division(
             Division.deleted_at.is_(None)
         ).first()
         if existing_division:
-            raise HTTPException(status_code=400, detail="Division with this name already exists in this entity")
+            raise DuplicateDivisionNameError()
 
     # Check division code uniqueness if being updated (scoped to entity)
     if "division_code" in update_data and update_data["division_code"] != db_division.division_code:
         existing_code = get_division_by_code(db, update_data["division_code"], db_division.tenant_id, db_division.entity_id)
         if existing_code:
-            raise HTTPException(status_code=400, detail="Division code already exists for this entity")
+            raise DuplicateDivisionCodeError()
 
     # Verify parent division if being updated
     if "parent_division_id" in update_data and update_data["parent_division_id"]:
         if update_data["parent_division_id"] == division_id:
-            raise HTTPException(status_code=400, detail="Division cannot be its own parent")
+            raise DivisionSelfParentError()
         parent_div = get_division(db, update_data["parent_division_id"])
         if not parent_div:
-            raise HTTPException(status_code=404, detail="Parent division not found")
+            raise ParentDivisionNotFoundError()
         if parent_div.tenant_id != db_division.tenant_id:
-            raise HTTPException(status_code=400, detail="Parent division does not belong to the same tenant")
+            raise ParentDivisionTenantMismatchError()
 
     # Verify department if being updated
     if "department_id" in update_data and update_data["department_id"]:
         from app.departments.services.departments import get_department
         department = get_department(db, update_data["department_id"])
         if not department:
-            raise HTTPException(status_code=404, detail="Department not found")
+            raise DivisionDepartmentNotFoundError()
         if department.tenant_id != db_division.tenant_id:
-            raise HTTPException(status_code=400, detail="Department does not belong to the same tenant")
+            raise DivisionDepartmentTenantMismatchError("same")
 
     # Update division fields
     for key, value in update_data.items():
@@ -365,15 +379,12 @@ def delete_division(db: Session, division_id: UUID, user_id: Optional[UUID] = No
     ).first()
 
     if not db_division:
-        raise HTTPException(status_code=404, detail="Division not found")
+        raise DivisionNotFoundError()
 
     # Check if division has child divisions
     child_divisions = get_divisions_by_parent(db, division_id)
     if child_divisions:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete division with active child divisions"
-        )
+        raise DivisionHasChildrenError()
 
     # Perform soft delete
     db_division.is_active = False
@@ -399,10 +410,10 @@ def restore_division(db: Session, division_id: UUID, user_id: Optional[UUID] = N
     ).first()
 
     if not db_division:
-        raise HTTPException(status_code=404, detail="Division not found")
+        raise DivisionNotFoundError()
 
     if not db_division.deleted_at:
-        raise HTTPException(status_code=400, detail="Division is not deleted")
+        raise DivisionNotDeletedError()
 
     db_division.is_active = True
     db_division.deleted_at = None

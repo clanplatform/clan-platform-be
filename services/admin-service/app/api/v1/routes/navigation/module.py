@@ -365,35 +365,4 @@ async def delete_module(
     except Exception:
         pass
 
-
-    """
-    Reorder modules within an application.
-    
-    - **application_id**: The UUID of the application
-    - **module_orders**: List of objects with module_id and order_index
-    - **updated_by**: User ID who is performing the reordering
-    
-    Example request body:
-    ```json
-    [
-        {"module_id": 1, "order_index": 0},
-        {"module_id": 2, "order_index": 1},
-        {"module_id": 3, "order_index": 2}
-    ]
-    ```
-    """
-    
-    try:
-        success = ModuleService.reorder_modules(db, application_id, module_orders, updated_by)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to reorder modules"
-            )
-        
-        return {"message": "Modules reordered successfully"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to reorder modules: {str(e)}"
-        )
+    # Soft delete succeeded — 204 No Content (no body).

@@ -5,6 +5,7 @@ from app.infrastructure.database.session import get_db, get_tenant_db
 from app.departments.models.departments import Department
 from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate, DepartmentResponse
 from app.departments.services import departments as department_service
+from app.departments.exceptions import DepartmentNotFoundError
 from app.core.security import get_current_user  # Uses optional auth support
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
@@ -72,10 +73,7 @@ def get_department(
     try:
         department = department_service.get_department(db, department_id=department_id)
         if not department:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Department not found"
-            )
+            raise DepartmentNotFoundError()
         try:
             tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
@@ -134,7 +132,7 @@ def create_department(
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["CREATE"],
-                new_values={"name": department.name},
+                new_values={"name": department.department_name},
             )
         except Exception:
             pass
@@ -187,7 +185,7 @@ def update_department(
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["UPDATE"],
-                new_values={"name": department.name},
+                new_values={"name": department.department_name},
             )
         except Exception:
             pass
@@ -220,14 +218,14 @@ async def delete_department(
         # Check access control for non-admin users
         department = department_service.get_department(db, department_id=department_id)
         if not department:
-            raise HTTPException(status_code=404, detail="Department not found")
+            raise DepartmentNotFoundError()
 
         if hasattr(current_user, 'is_admin') and not current_user.is_admin():
             if hasattr(current_user, 'tenant_id') and department.tenant_id != current_user.tenant_id:
                 raise HTTPException(status_code=403, detail="Access denied")
 
         # Snapshot name before delete for audit
-        old_dept_name = department.name
+        old_dept_name = department.department_name
 
         user_id = current_user.user_id if hasattr(current_user, 'user_id') else None
         department_service.delete_department(db, department_id=department_id, user_id=user_id)

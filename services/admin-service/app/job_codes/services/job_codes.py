@@ -10,11 +10,47 @@ from sqlalchemy import or_
 from fastapi import HTTPException, status
 from typing import List, Optional, Tuple
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import logging
 
 from app.job_codes.models.job_codes import JobCode, JobCodeBasicInfo, JobCodeSkills, JobCodeBenefits
 from app.job_codes.schemas.job_codes import JobCodeCreate, JobCodeUpdate
+from app.job_codes.exceptions import JobCodeNotFoundError, DuplicateJobCodeError
 from app.infrastructure.audit_tenant import fire_audit_log
+
+logger = logging.getLogger(__name__)
+
+# Soft-deleted job codes are permanently removed after this many days.
+JOB_CODE_RETENTION_DAYS = 30
+
+
+def purge_expired_job_codes(db: Session, retention_days: int = JOB_CODE_RETENTION_DAYS) -> int:
+    """
+    Permanently delete job codes that were soft-deleted more than
+    retention_days ago (cascade removes basic_info/skills/benefits).
+
+    Called opportunistically from delete/list operations so no scheduler is
+    needed. Best-effort: failures are logged and never break the caller.
+    Returns the number of job codes purged.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    try:
+        expired = db.query(JobCode).filter(
+            JobCode.deleted_at.isnot(None),
+            JobCode.deleted_at <= cutoff,
+        ).all()
+        if not expired:
+            return 0
+        for job_code in expired:
+            db.delete(job_code)  # ORM delete so cascade handles child rows
+        db.commit()
+        logger.info("[JOB_CODE_PURGE] Permanently deleted %d job code(s) past %d-day retention",
+                    len(expired), retention_days)
+        return len(expired)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("[JOB_CODE_PURGE] Purge failed: %s", exc)
+        return 0
 
 
 def get_job_code_by_id(db: Session, job_code_id: UUID, load_relationships: bool = True) -> Optional[JobCode]:
@@ -38,7 +74,10 @@ def get_job_code_by_id(db: Session, job_code_id: UUID, load_relationships: bool 
             joinedload(JobCode.benefits)
         )
     
-    return query.filter(JobCode.id == job_code_id).first()
+    return query.filter(
+        JobCode.id == job_code_id,
+        JobCode.deleted_at.is_(None),
+    ).first()
 
 
 def get_job_code_by_code(db: Session, job_code: str, load_relationships: bool = True) -> Optional[JobCode]:
@@ -62,7 +101,10 @@ def get_job_code_by_code(db: Session, job_code: str, load_relationships: bool = 
             joinedload(JobCode.benefits)
         )
     
-    return query.filter(JobCode.job_code == job_code).first()
+    return query.filter(
+        JobCode.job_code == job_code,
+        JobCode.deleted_at.is_(None),
+    ).first()
 
 
 def get_job_codes_paginated(
@@ -87,13 +129,16 @@ def get_job_codes_paginated(
     Returns:
         Tuple of (job_codes list, total count)
     """
-    # Base query with relationships
+    # Opportunistic purge of job codes past the retention window
+    purge_expired_job_codes(db)
+
+    # Base query with relationships (soft-deleted rows excluded)
     query = db.query(JobCode).options(
         joinedload(JobCode.basic_info),
         joinedload(JobCode.skills),
         joinedload(JobCode.benefits)
-    )
-    
+    ).filter(JobCode.deleted_at.is_(None))
+
     # Apply filters
     if search:
         query = query.filter(
@@ -139,10 +184,7 @@ def create_job_code(db: Session, job_code_data: JobCodeCreate, user_id: Optional
     # Check if job_code already exists
     existing = db.query(JobCode).filter(JobCode.job_code == job_code_data.job_code).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job code '{job_code_data.job_code}' already exists"
-        )
+        raise DuplicateJobCodeError(job_code_data.job_code)
     
     try:
         # Create main JobCode
@@ -223,10 +265,7 @@ def update_job_code(
     """
     job_code = db.query(JobCode).filter(JobCode.id == job_code_id).first()
     if not job_code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job code with ID {job_code_id} not found"
-        )
+        raise JobCodeNotFoundError(job_code_id=str(job_code_id))
     
     try:
         # Update main JobCode fields
@@ -344,45 +383,53 @@ def update_job_code_by_code(
     Raises:
         HTTPException: If job code not found or update fails
     """
-    job_code = db.query(JobCode).filter(JobCode.job_code == job_code_str).first()
+    job_code = db.query(JobCode).filter(
+        JobCode.job_code == job_code_str,
+        JobCode.deleted_at.is_(None),
+    ).first()
     if not job_code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job code '{job_code_str}' not found"
-        )
+        raise JobCodeNotFoundError(code=job_code_str)
     
     return update_job_code(db, job_code.id, job_code_data, user_id)
 
 
 def delete_job_code(db: Session, job_code_id: UUID, user_id: Optional[UUID] = None) -> bool:
     """
-    Delete a job code and all its nested relationships (cascade delete)
-    
+    Soft delete a job code: sets active_status=False and stamps deleted_at.
+    The row (and its nested relationships) is permanently removed by the
+    purge once it has been soft-deleted for JOB_CODE_RETENTION_DAYS (30) days.
+
     Args:
         db: Database session
         job_code_id: UUID of job code to delete
         user_id: ID of user deleting the record (for audit)
-    
+
     Returns:
         True if successful
-    
+
     Raises:
         HTTPException: If job code not found or deletion fails
     """
-    job_code = db.query(JobCode).filter(JobCode.id == job_code_id).first()
+    # Opportunistic purge of job codes past the retention window
+    purge_expired_job_codes(db)
+
+    job_code = db.query(JobCode).filter(
+        JobCode.id == job_code_id,
+        JobCode.deleted_at.is_(None),
+    ).first()
     if not job_code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job code with ID {job_code_id} not found"
-        )
-    
+        raise JobCodeNotFoundError(job_code_id=str(job_code_id))
+
     try:
-        db.delete(job_code)  # Cascade delete handles nested relationships
+        job_code.active_status = False
+        job_code.deleted_at = datetime.now(timezone.utc)
         db.commit()
         fire_audit_log(
             action="DELETE", object_type="JobCode",
             object_id=str(job_code_id),
             user_id=str(user_id) if user_id else None,
+            old_values={"active_status": True},
+            new_values={"active_status": False, "deleted_at": job_code.deleted_at.isoformat()},
         )
         return True
 
@@ -409,12 +456,12 @@ def delete_job_code_by_code(db: Session, job_code_str: str, user_id: Optional[UU
     Raises:
         HTTPException: If job code not found or deletion fails
     """
-    job_code = db.query(JobCode).filter(JobCode.job_code == job_code_str).first()
+    job_code = db.query(JobCode).filter(
+        JobCode.job_code == job_code_str,
+        JobCode.deleted_at.is_(None),
+    ).first()
     if not job_code:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job code '{job_code_str}' not found"
-        )
+        raise JobCodeNotFoundError(code=job_code_str)
     
     job_code_id = job_code.id
     delete_job_code(db, job_code_id, user_id)
@@ -519,8 +566,8 @@ def get_job_codes_count(
     Returns:
         Count of job codes matching filters
     """
-    query = db.query(JobCode)
-    
+    query = db.query(JobCode).filter(JobCode.deleted_at.is_(None))
+
     if search:
         query = query.filter(
             or_(
@@ -563,12 +610,13 @@ def search_job_codes(
         joinedload(JobCode.skills),
         joinedload(JobCode.benefits)
     ).filter(
+        JobCode.deleted_at.is_(None),
         or_(
             JobCode.job_code.ilike(f"%{search_term}%"),
             JobCode.job_title.ilike(f"%{search_term}%")
         )
     )
-    
+
     return query.offset(skip).limit(limit).all()
 
 
@@ -590,9 +638,10 @@ def get_job_codes_by_category(db: Session, category: str, skip: int = 0, limit: 
         joinedload(JobCode.skills),
         joinedload(JobCode.benefits)
     ).join(JobCodeBasicInfo).filter(
+        JobCode.deleted_at.is_(None),
         JobCodeBasicInfo.category.ilike(f"%{category}%")
     )
-    
+
     return query.offset(skip).limit(limit).all()
 
 

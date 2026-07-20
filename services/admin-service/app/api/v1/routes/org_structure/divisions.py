@@ -121,7 +121,7 @@ def create_division(
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["CREATE"],
-                new_values={"name": division.name},
+                new_values={"name": division.division_name},
             )
         except Exception:
             pass
@@ -173,7 +173,7 @@ def update_division(
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["UPDATE"],
-                new_values={"name": division.name},
+                new_values={"name": division.division_name},
             )
         except Exception:
             pass
@@ -205,7 +205,7 @@ async def delete_division(
     try:
         # Query before delete to capture snapshot for audit
         division_snapshot = db.query(Division).filter(Division.id == division_id).first()
-        old_division_name = division_snapshot.name if division_snapshot else None
+        old_division_name = division_snapshot.division_name if division_snapshot else None
 
         division_service.delete_division(db, division_id=division_id)
 

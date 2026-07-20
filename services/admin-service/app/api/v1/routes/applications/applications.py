@@ -5,6 +5,7 @@ from app.infrastructure.database.session import get_tenant_db as get_db
 from app.applications.models.application import Application
 from app.menus.models.menu import Menu
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse
+from app.applications.exceptions import ApplicationNotFoundError, DuplicateApplicationNameError
 from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
@@ -128,10 +129,7 @@ def get_applications(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
     return application
 
 @router.get("/{application_id}/menus")
@@ -167,10 +165,7 @@ async def get_menus_by_application(
     ).first()
     
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application with id {application_id} not found"
-        )
+        raise ApplicationNotFoundError(str(application_id))
     
     # Create cache key
     cache_key = f"menus:application:{application_id}:navigation:skip={skip}:limit={limit}:children={include_children}"
@@ -494,10 +489,7 @@ def create_application(
             Application.domain_id == application_data.domain_id
         ).first()
         if existing_application:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Application with this name already exists in the domain"
-            )
+            raise DuplicateApplicationNameError()
 
         # Create application using dict() method
         application_dict = application_data.dict()
@@ -601,10 +593,7 @@ async def update_application(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
 
     # Check if new name conflicts with existing application in the same domain
     if application_data.name and application_data.name != application.name:
@@ -613,10 +602,7 @@ async def update_application(
             Application.domain_id == application.domain_id
         ).first()
         if existing_application:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Application with this name already exists in the domain"
-            )
+            raise DuplicateApplicationNameError()
 
     # Capture old values before update for audit
     old_values = {
@@ -695,10 +681,7 @@ def delete_application(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
     
     try:
         # Import datetime for soft delete

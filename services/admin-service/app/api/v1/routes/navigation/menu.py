@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 from app.infrastructure.database.session import get_tenant_db as get_db
 from app.menus.models.menu import Menu
 from app.applications.models.application import Application
+from app.applications.services.application import ensure_application_writable
+from app.core.access import is_active_from_access, is_write_locked
 from app.modules.models.module import Module
+from app.modules.services.module import ensure_module_writable
 from app.menus.schemas.menu import MenuCreate, MenuUpdate, MenuResponse, MenuBatchCreate
 from app.menu_reorder.schemas.menu_reorder import (
     MenuReorderRequest,
@@ -601,7 +604,7 @@ async def get_login_user_menus(
             from app.user_role.models.user_role import UserRoleBasic
             admin_roles = db.query(UserRoleBasic).filter(
                 and_(
-                    UserRoleBasic.id.in_(assigned_role_ids),
+                    UserRoleBasic.user_role_id.in_(assigned_role_ids),
                     UserRoleBasic.is_admin == True,
                     UserRoleBasic.active == True
                 )
@@ -618,7 +621,7 @@ async def get_login_user_menus(
 
             # 3. Get all permissions for these roles from userrole_permission
             permissions = db.query(UserRolePermission).filter(
-                UserRolePermission.userrole_basic_id.in_(assigned_role_ids)
+                UserRolePermission.user_role_id.in_(assigned_role_ids)
             ).all()
 
             if not permissions:
@@ -1267,6 +1270,9 @@ async def create_single_menu_structured(
     if not app_exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
 
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, create_data['application_id'], "menus")
+
     # Validate module exists if module_id is provided
     if create_data.get('module_id'):
         module_exists = db.execute(
@@ -1275,6 +1281,9 @@ async def create_single_menu_structured(
         ).scalar()
         if not module_exists:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
+
+    # Block writes when the parent module is read-only
+    ensure_module_writable(db, create_data.get('module_id'), "menus")
 
     # Set hierarchy level based on structure
     if create_data.get('module_id'):
@@ -1337,6 +1346,11 @@ async def create_single_menu_structured(
     for field in ['badge', 'section_title', 'mongo_id', 'component', 'icon', 'menu_metadata']:
         if field not in create_data:
             create_data[field] = None if field != 'menu_metadata' else {}
+
+    # Access drives the active state: "disable" -> False, "write"/"read" -> True
+    derived_active = is_active_from_access(create_data.get('access'))
+    if derived_active is not None:
+        create_data['is_active'] = derived_active
 
     # Create menu in PostgreSQL
     menu = Menu(**create_data)
@@ -1456,11 +1470,16 @@ async def process_children_recursive_structured(
             'badge': child_data.get('badge'),
             'section_title': child_data.get('section_title', ''),
             'menus_description': child_data.get('menus_description', ''),
-            'access': child_data.get('access', ['read']),
+            'access': child_data.get('access', ['write']),
             'showtopbar': child_data.get('showtopbar', True),
             'showsidebar': child_data.get('showsidebar', True)
         }
-        
+
+        # Access drives the active state: "disable" -> False, "write"/"read" -> True
+        derived_active = is_active_from_access(child_menu_data.get('access'))
+        if derived_active is not None:
+            child_menu_data['is_active'] = derived_active
+
         # Create child menu
         child_menu = Menu(**child_menu_data)
         db.add(child_menu)
@@ -2688,9 +2707,23 @@ async def update_menu(
             detail="Menu not found"
         )
 
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, menu.application_id, "menus")
+
+    # Block writes when the parent module is read-only
+    ensure_module_writable(db, menu.module_id, "menus")
+
     # 2️⃣ Prepare update data
     update_data = menu_data.dict(exclude_unset=True, by_alias=False)
     old_values = {f: getattr(menu, f, None) for f in update_data if f != "children"}
+
+    # Self read-only lock: a write-locked menu can only be edited by a payload
+    # that changes "access" itself (the way to unlock it).
+    if is_write_locked(menu.access) and 'access' not in update_data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Menu is read-only; include an 'access' change to modify it.",
+        )
 
     # ✅ Access is now a list of strings, no enum conversion needed
     if 'access' in update_data and update_data['access'] is not None:
@@ -2698,6 +2731,12 @@ async def update_menu(
             update_data['access'] = [update_data['access'].lower()]
         elif isinstance(update_data['access'], list):
             update_data['access'] = [item.lower() if isinstance(item, str) else item for item in update_data['access']]
+
+    # Keep is_active in sync when access changes (disable -> False, write/read -> True)
+    if 'access' in update_data:
+        derived_active = is_active_from_access(update_data.get('access'))
+        if derived_active is not None:
+            update_data['is_active'] = derived_active
 
     # 4️⃣ Update PostgreSQL
 
@@ -3050,6 +3089,12 @@ async def delete_menu(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu not found"
         )
+
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, menu.application_id, "menus")
+
+    # Block writes when the parent module is read-only
+    ensure_module_writable(db, menu.module_id, "menus")
 
     was_already_deleted = menu.deleted_at is not None or menu.is_active is False
     if was_already_deleted:
@@ -3593,10 +3638,12 @@ async def reorder_menus(
 ):
     """
     Reorder menus based on drag-and-drop action
-    
+
     Handles parent menus, children, and nested children reordering.
     Automatically syncs to both PostgreSQL and MongoDB.
     """
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, reorder_data.application_id, "menus")
     return await MenuReorderService.reorder_menus(db, reorder_data)
 
 

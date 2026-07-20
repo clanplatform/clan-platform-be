@@ -98,6 +98,50 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
     tenant_db.commit()
     logger.info("Seeded initial admin user '%s' in tenant DB: %s", username, tenant.tenant_db_name)
 
+def _verify_master_user(db: Session, email: str, password: str):
+    """
+    Verify that the given credentials belong to a master-DB user.
+
+    Tenant DBs may only be provisioned by a user that exists in the MASTER
+    database's usersetup_basic with tenant_id NULL (platform user). Tenant
+    users — seeded into their own tenant DB with tenant_id set — must not be
+    able to create tenants.
+
+    Returns the master UserSetupBasic row on success.
+    Raises 401 on unknown email / wrong password (same message for both, to
+    avoid user enumeration) and 403 for tenant or inactive users.
+    """
+    from app.user_setup.models.user_setup import UserSetupBasic
+    from app.core.security import verify_password
+
+    creator = db.query(UserSetupBasic).filter(
+        UserSetupBasic.email == email
+    ).first()
+
+    if not creator or not verify_password(password, creator.password_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid master user credentials",
+        )
+
+    # Master users live in the master DB with tenant_id NULL. A row with a
+    # tenant_id here (or a user that only exists in a tenant DB — not found
+    # above) is a tenant user and may not provision tenant databases.
+    if creator.tenant_id is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Only master platform users can create tenants",
+        )
+
+    if (creator.status or "").lower() != "active":
+        raise HTTPException(
+            status_code=403,
+            detail="Master user account is not active",
+        )
+
+    return creator
+
+
 # Simple admin check for no-auth mode (User model not in scope)
 def require_admin_role(current_user=Depends(get_current_user)):
     """Require admin role (bypassed when REQUIRE_AUTH=false)"""
@@ -115,7 +159,14 @@ async def create_tenant(
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)
 ):
-    """Create a new tenant (admin only)"""
+    """Create a new tenant (master platform users only)"""
+    # Tenant DBs may only be created by a master-DB user (usersetup_basic,
+    # tenant_id NULL) who re-authenticates with email + password. Tenant
+    # users are rejected before anything is written.
+    master_user = _verify_master_user(
+        db, tenant_data.created_by_email, tenant_data.created_by_password
+    )
+
     # Check if tenant with same tenant_name already exists
     existing_tenant = db.query(Tenant).filter(Tenant.tenant_name == tenant_data.tenant_name).first()
     if existing_tenant:
@@ -126,8 +177,11 @@ async def create_tenant(
     if existing_email:
         raise HTTPException(status_code=400, detail="Tenant email already exists")
 
-    # Create new tenant using model_dump to get all fields
-    db_tenant = Tenant(**tenant_data.model_dump())
+    # Create new tenant (creator credentials are consumed above, never stored)
+    db_tenant = Tenant(**tenant_data.model_dump(
+        exclude={"created_by_email", "created_by_password"}
+    ))
+    db_tenant.created_by = master_user.id
 
     # Assign a dedicated database name before saving.
     # Prefer the explicit tenant_db_name from the request; fall back to a name

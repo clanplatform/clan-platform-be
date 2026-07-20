@@ -1,7 +1,9 @@
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 import uuid
+
+from app.core.access import normalize_access as _normalize_access
 
 class ApplicationBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="Application name")
@@ -24,7 +26,10 @@ class ApplicationBase(BaseModel):
     order_index: Optional[int] = Field(0, description="Order index for sorting applications")
 
 class ApplicationCreate(ApplicationBase):
-    pass
+    @field_validator("access")
+    @classmethod
+    def validate_access(cls, v):
+        return _normalize_access(v)
 
 class ApplicationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="Application name")
@@ -44,6 +49,11 @@ class ApplicationUpdate(BaseModel):
     badge: Optional[str] = Field(None, max_length=50, description="Application badge")
     section_title: Optional[str] = Field(None, max_length=200, description="Section title")
     order_index: Optional[int] = Field(None, description="Order index for sorting applications")
+
+    @field_validator("access")
+    @classmethod
+    def validate_access(cls, v):
+        return _normalize_access(v)
 
 class ApplicationResponse(ApplicationBase):
     id: uuid.UUID

@@ -34,7 +34,18 @@ class TenantBase(BaseModel):
     )
 
 class TenantCreate(TenantBase):
-    pass
+    # Tenant DBs may only be provisioned by a master-DB user (usersetup_basic
+    # with tenant_id NULL). The creator re-authenticates with email + password;
+    # tenant users are rejected. These fields are consumed by the route and
+    # never stored on the tenant row.
+    created_by_email: str = Field(
+        ...,
+        description="Email of the master-DB user (usersetup_basic) authorizing this tenant creation.",
+    )
+    created_by_password: str = Field(
+        ...,
+        description="Password of the master-DB user authorizing this tenant creation.",
+    )
 
 class TenantUpdate(BaseModel):
     tenant_name: Optional[str] = None

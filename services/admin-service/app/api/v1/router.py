@@ -16,7 +16,6 @@ from app.api.v1.routes.navigation.menu_language import router as menus_language_
 from app.api.v1.routes.forms.form_language import router as forms_language_router
 from app.api.v1.routes.access_control.user_role import router as user_role_router
 from app.api.v1.routes.access_control.user_setup import router as user_setup_router
-from app.api.v1.routes.access_control.user_profile import router as user_profile_router
 from app.api.v1.routes.access_control.user_role_form_permission import router as user_role_form_permission_router
 from app.api.v1.routes.audit_logs.audit_logs import router as audit_logs_router
 from app.api.v1.routes.navigation.button import router as buttons_router
@@ -134,13 +133,6 @@ api_v1_router.include_router(
     user_setup_router,
     prefix="/user_setup",
     tags=["user_setup"]
-)
-
-#include user_profile routes
-api_v1_router.include_router(
-    user_profile_router,
-    prefix="/user_profile",
-    tags=["user_profile"]
 )
 
 # include audit logs routes

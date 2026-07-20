@@ -7,6 +7,8 @@ import os
 from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.entities.models.entity import Entity
+from app.entities.services import entity as entity_service
+from app.entities.exceptions import EntityNotFoundError
 from app.entities.schemas.entity import (
     EntityCreate,
     EntityUpdate,
@@ -30,10 +32,11 @@ async def create_entity(
 ):
     """Create a new entity"""
     try:
-        db_entity = Entity(**entity.model_dump())
-        db.add(db_entity)
-        db.commit()
-        db.refresh(db_entity)
+        # Delegate to the service layer: duplicate entity_code check, tenant
+        # check, and autogeneration of the locale fields from country_code.
+        db_entity = entity_service.create_entity(
+            db, entity, user_id=get_user_id(current_user)
+        )
 
         try:
             tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
@@ -126,7 +129,7 @@ async def get_entity(
         Entity.active == True
     ).first()
     if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+        raise EntityNotFoundError()
 
     try:
         tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
@@ -158,7 +161,7 @@ async def update_entity(
     """Update entity"""
     entity = db.query(Entity).filter(Entity.entity_id == entity_id).first()
     if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+        raise EntityNotFoundError()
 
     old_values = {
         "entity_name": entity.entity_name,
@@ -167,11 +170,12 @@ async def update_entity(
     }
 
     update_data = entity_data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(entity, field, value)
 
-    db.commit()
-    db.refresh(entity)
+    # Delegate to the service layer: entity_code uniqueness check and
+    # regeneration of the locale fields when country_code changes.
+    entity = entity_service.update_entity(
+        db, entity_id, entity_data, user_id=get_user_id(current_user)
+    )
 
     try:
         tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
@@ -208,11 +212,12 @@ async def delete_entity(
         Entity.active == True
     ).first()
     if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+        raise EntityNotFoundError()
 
     old_entity_name = entity.entity_name
-    entity.active = False
-    db.commit()
+    # Delegate to the service layer (sets deleted=True and active=False)
+    if not entity_service.delete_entity(db, entity_id, user_id=get_user_id(current_user)):
+        raise EntityNotFoundError()
 
     try:
         tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))

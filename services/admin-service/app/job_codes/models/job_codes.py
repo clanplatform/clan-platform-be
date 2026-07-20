@@ -40,7 +40,12 @@ class JobCode(Base):
                       comment="Job title/position name")
     active_status = Column(Boolean, default=True, nullable=False,
                           comment="Whether the job code is currently active")
-    
+
+    # Soft delete: set on DELETE (with active_status=False); rows are
+    # permanently purged after the retention period (30 days).
+    deleted_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True,
+                       comment="Soft-delete timestamp; permanently purged after retention")
+
     # Audit fields with PostgreSQL timezone support
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False,
                        comment="Record creation timestamp")

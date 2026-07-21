@@ -7,7 +7,7 @@ import uuid
 
 
 class MasterCountry(Base):
-    __tablename__ = "master_countries"
+    __tablename__ = "countries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 

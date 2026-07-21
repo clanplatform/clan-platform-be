@@ -7,7 +7,7 @@ import uuid
 
 
 class MasterCity(Base):
-    __tablename__ = "master_cities"
+    __tablename__ = "cities"
     __table_args__ = (
         # City names repeat across states (Springfield), so the name is unique per state.
         # postal_code is deliberately not constrained: it is a representative code here,
@@ -18,7 +18,7 @@ class MasterCity(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     state_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("master_states.id", ondelete="RESTRICT"),
+        ForeignKey("states.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

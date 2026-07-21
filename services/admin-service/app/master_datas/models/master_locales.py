@@ -7,7 +7,7 @@ import uuid
 
 
 class MasterLocale(Base):
-    __tablename__ = "master_locales"
+    __tablename__ = "locales"
     __table_args__ = (
         # One locale per language/country pairing. country_id is nullable and
         # Postgres treats NULLs as distinct, so language-only locales ("en") are
@@ -22,14 +22,14 @@ class MasterLocale(Base):
 
     language_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("master_languages.id", ondelete="RESTRICT"),
+        ForeignKey("languages.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     # Nullable: a locale may be language-only ("en") with no region component.
     country_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("master_countries.id", ondelete="RESTRICT"),
+        ForeignKey("countries.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )

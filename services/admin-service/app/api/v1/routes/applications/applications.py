@@ -595,11 +595,15 @@ async def update_application(
     if not application:
         raise ApplicationNotFoundError()
 
-    # Check if new name conflicts with existing application in the same domain
-    if application_data.name and application_data.name != application.name:
+    # Check if new name conflicts with existing application in the target domain
+    target_domain_id = application_data.domain_id or application.domain_id
+    if application_data.name and application_data.name != application.name or (
+        application_data.domain_id and application_data.domain_id != application.domain_id
+    ):
         existing_application = db.query(Application).filter(
-            Application.name == application_data.name,
-            Application.domain_id == application.domain_id
+            Application.name == (application_data.name or application.name),
+            Application.domain_id == target_domain_id,
+            Application.id != application.id
         ).first()
         if existing_application:
             raise DuplicateApplicationNameError()

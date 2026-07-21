@@ -83,7 +83,9 @@ class JobCodeBenefitsCreate(JobCodeBenefitsBase):
 
 class JobCodeCreate(JobCodeBase):
     """Main create schema with nested relationships"""
-    basic_info: Optional[JobCodeBasicInfoCreate] = None
+    # Required: job_codes.tenant_id is backfilled from here, so basic_info
+    # (and its tenant_id) must be present on every create.
+    basic_info: JobCodeBasicInfoCreate
     skills: Optional[JobCodeSkillsCreate] = None
     benefits: Optional[JobCodeBenefitsCreate] = None
 
@@ -185,6 +187,7 @@ class JobCodeBenefitsRead(JobCodeBenefitsBase):
 
 class JobCodeRead(JobCodeBase):
     id: UUID
+    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
     basic_info: Optional[JobCodeBasicInfoRead] = None
@@ -196,6 +199,7 @@ class JobCodeRead(JobCodeBase):
 
 class JobCodeReadSimple(JobCodeBase):
     id: UUID
+    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
 

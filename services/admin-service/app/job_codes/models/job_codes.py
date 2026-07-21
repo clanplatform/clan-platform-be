@@ -41,6 +41,10 @@ class JobCode(Base):
     active_status = Column(Boolean, default=True, nullable=False,
                           comment="Whether the job code is currently active")
 
+    # Client reference
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+                      nullable=False, index=True, comment="Foreign key to tenants table")
+
     # Soft delete: set on DELETE (with active_status=False); rows are
     # permanently purged after the retention period (30 days).
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True,
@@ -60,10 +64,13 @@ class JobCode(Base):
     skills = relationship("JobCodeSkills", back_populates="job_code", 
                          uselist=False, cascade="all, delete-orphan",
                          lazy="select")
-    benefits = relationship("JobCodeBenefits", back_populates="job_code", 
+    benefits = relationship("JobCodeBenefits", back_populates="job_code",
                            uselist=False, cascade="all, delete-orphan",
                            lazy="select")
-    
+
+    # Relationship to owning tenant
+    tenant = relationship("Tenant", foreign_keys=[tenant_id])
+
     # Table indexes for performance
     __table_args__ = (
         Index('ix_job_codes_active_status', 'active_status'),

@@ -7,7 +7,7 @@ import uuid
 
 
 class MasterState(Base):
-    __tablename__ = "master_states"
+    __tablename__ = "states"
     __table_args__ = (
         # Names and codes repeat across countries ("CA" is California and Catalonia),
         # so both are unique per country rather than globally.
@@ -18,7 +18,7 @@ class MasterState(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     country_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("master_countries.id", ondelete="RESTRICT"),
+        ForeignKey("countries.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

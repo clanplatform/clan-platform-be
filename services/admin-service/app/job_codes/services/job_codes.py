@@ -191,19 +191,19 @@ def create_job_code(db: Session, job_code_data: JobCodeCreate, user_id: Optional
         job_code = JobCode(
             job_code=job_code_data.job_code,
             job_title=job_code_data.job_title,
-            active_status=job_code_data.active_status
+            active_status=job_code_data.active_status,
+            tenant_id=job_code_data.basic_info.tenant_id
         )
-        
+
         db.add(job_code)
         db.flush()  # Get the ID for nested relationships
-        
-        # Create nested relationships if provided
-        if job_code_data.basic_info:
-            basic_info = JobCodeBasicInfo(
-                job_code_id=job_code.id,
-                **job_code_data.basic_info.model_dump()
-            )
-            db.add(basic_info)
+
+        # Create nested relationships
+        basic_info = JobCodeBasicInfo(
+            job_code_id=job_code.id,
+            **job_code_data.basic_info.model_dump()
+        )
+        db.add(basic_info)
         
         if job_code_data.skills:
             skills = JobCodeSkills(
@@ -298,6 +298,9 @@ def update_job_code(
                     **job_code_data.basic_info.model_dump()
                 )
                 db.add(basic_info)
+
+            # Keep the parent job_codes.tenant_id in sync with basic_info.tenant_id
+            job_code.tenant_id = job_code_data.basic_info.tenant_id
 
         # Update or create skills
         if job_code_data.skills is not None:
@@ -504,19 +507,19 @@ def bulk_create_job_codes(
             job_code = JobCode(
                 job_code=job_code_data.job_code,
                 job_title=job_code_data.job_title,
-                active_status=job_code_data.active_status
+                active_status=job_code_data.active_status,
+                tenant_id=job_code_data.basic_info.tenant_id
             )
-            
+
             db.add(job_code)
             db.flush()  # Get the ID
-            
-            # Create nested relationships if provided
-            if job_code_data.basic_info:
-                basic_info = JobCodeBasicInfo(
-                    job_code_id=job_code.id,
-                    **job_code_data.basic_info.model_dump()
-                )
-                db.add(basic_info)
+
+            # Create nested relationships
+            basic_info = JobCodeBasicInfo(
+                job_code_id=job_code.id,
+                **job_code_data.basic_info.model_dump()
+            )
+            db.add(basic_info)
             
             if job_code_data.skills:
                 skills = JobCodeSkills(

@@ -36,6 +36,7 @@ class ApplicationUpdate(BaseModel):
     description: Optional[str] = Field(None, description="Application description")
     version: Optional[str] = Field(None, max_length=20, description="Application version")
     status: Optional[str] = Field(None, description="Application status")
+    domain_id: Optional[uuid.UUID] = Field(None, description="Domain ID this application belongs to")
     config: Optional[Dict[str, Any]] = Field(None, description="Application configuration")
     is_active: Optional[bool] = Field(None, description="Whether the application is active")
     access: Optional[List[str]] = Field(None, description="Array of access permissions")

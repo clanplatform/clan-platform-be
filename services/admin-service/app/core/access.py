@@ -1,5 +1,5 @@
 """
-Shared helpers for the ``access`` permission field used by applications,
+Shared helpers for the ``access`` permission field used by application's,
 modules and menus.
 
 The access field is an array of permission strings restricted to

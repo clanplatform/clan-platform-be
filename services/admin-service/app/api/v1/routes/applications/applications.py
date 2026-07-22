@@ -6,6 +6,7 @@ from app.applications.models.application import Application
 from app.menus.models.menu import Menu
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse
 from app.applications.exceptions import ApplicationNotFoundError, DuplicateApplicationNameError
+from app.core.access import is_active_from_access
 from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
@@ -618,6 +619,17 @@ async def update_application(
 
     # Update PostgreSQL
     update_data = application_data.dict(exclude_unset=True)
+
+    # Keep is_active in sync when access changes: "disable" forces it off,
+    # "write"/"read" keep it on (access wins over any is_active in the payload).
+    # Without this, an app left is_active=False stays that way even after the
+    # access change, and the MongoDB sync below silently no-ops since it
+    # requires is_active=True - modules then appear to "disappear".
+    if "access" in update_data:
+        derived_active = is_active_from_access(update_data.get("access"))
+        if derived_active is not None:
+            update_data["is_active"] = derived_active
+
     for field, value in update_data.items():
         setattr(application, field, value)
 

@@ -18,36 +18,52 @@ def get_client_ip(request: Request) -> Optional[str]:
 
 def get_audit_org_context(db: Session, user_id: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """
-    Look up client_id and entity_id for the acting user.
+    Look up tenant_id and entity_id for the acting user.
 
     The JWT carries usersetup_basic.id as the user identifier, so we query
     UserSetupBasic.id directly.
 
-    Returns (client_id, entity_id) as strings, or (None, None) if not found.
+    Returns (tenant_id, entity_id) as strings, or (None, None) if not found.
+    Master-DB users legitimately have tenant_id NULL.
     """
     if not user_id:
         return None, None
     try:
         from app.user_setup.models.user_setup import UserSetupBasic
-        basic = db.query(UserSetupBasic).filter(
-            UserSetupBasic.id == user_id
-        ).first()
-        if not basic:
+        # Select only the needed columns — tenant DBs lag behind the master
+        # schema (e.g. no allowed_origins), so a full-model SELECT can fail.
+        row = db.query(
+            UserSetupBasic.tenant_id,
+            UserSetupBasic.default_entity,
+            UserSetupBasic.entities,
+        ).filter(UserSetupBasic.id == user_id).first()
+        if not row:
             return None, None
 
-        client_id = str(basic.client_id) if basic.client_id else None
+        tenant_id = str(row.tenant_id) if row.tenant_id else None
 
         entity_id = None
-        if basic.default_entity:
-            entity_id = str(basic.default_entity)
-        elif basic.roles_entities:
-            for re in basic.roles_entities:
-                if re.assigned_entities:
-                    entity_id = str(re.assigned_entities[0])
-                    break
+        if row.default_entity:
+            entity_id = str(row.default_entity)
+        elif row.entities:
+            entity_id = str(row.entities[0])
 
-        return client_id, entity_id
+        if entity_id is None:
+            # usersetup_roles_entity exists only in the master DB
+            try:
+                from app.user_setup.models.user_setup import UserSetupRolesEntity
+                re_row = db.query(UserSetupRolesEntity.assigned_entities).filter(
+                    UserSetupRolesEntity.usersetup_basic_id == user_id,
+                    UserSetupRolesEntity.assigned_entities.isnot(None),
+                ).first()
+                if re_row and re_row.assigned_entities:
+                    entity_id = str(re_row.assigned_entities[0])
+            except Exception:
+                db.rollback()
+
+        return tenant_id, entity_id
     except Exception:
+        db.rollback()
         return None, None
 
 

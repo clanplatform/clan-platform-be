@@ -296,7 +296,6 @@ async def get_current_user(
         "email": payload.get("email"),
         "roles": payload.get("roles", []),
         "user_setup_id": payload.get("user_setup_id"),
-        "client_id": payload.get("client_id"),
         "tenant_id": payload.get("tenant_id"),
         "session_id": payload.get("jti") or session_id,
     }

@@ -63,6 +63,11 @@ def create_tables():
     from app.buttons.models.button import Button
     from app.tenant_modules.models.tenant_module import TenantModule
     from app.tenant_applications.models.tenant_application import TenantApplication
+    from app.master_datas.models.master_countries import MasterCountry
+    from app.master_datas.models.master_states import MasterState
+    from app.master_datas.models.master_cities import MasterCity
+    from app.master_datas.models.master_languages import MasterLanguage
+    from app.master_datas.models.master_locales import MasterLocale
 
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)

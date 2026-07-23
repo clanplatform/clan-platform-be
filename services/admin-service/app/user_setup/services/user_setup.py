@@ -30,17 +30,30 @@ class UserSetupService:
     """Service class for managing user setup operations"""
 
     @staticmethod
-    def _validate_roles_tenant_match(db: Session, assigned_roles: list, user_tenant_id) -> None:
-        """Raise HTTP 400 if any assigned role belongs to a different tenant than the user."""
-        if not assigned_roles:
+    def _validate_roles_tenant_match(
+        db: Session,
+        role_ids: list,
+        user_tenant_id,
+        field_name: str = "assigned_roles",
+    ) -> None:
+        """Raise HTTP 400 unless every ID is a user_role.id in the user's tenant.
+
+        role_ids holds user_role.id values, so each is resolved through
+        userrole_basic.user_role_id to reach the tenant. A userrole_basic.id will
+        not resolve here, which is what rejects the pre-013 style of ID.
+        """
+        if not role_ids:
             return
         mismatched = []
-        for role_id in assigned_roles:
-            role = db.query(UserRoleBasic).filter(UserRoleBasic.id == role_id).first()
+        for role_id in role_ids:
+            role = db.query(UserRoleBasic).filter(UserRoleBasic.user_role_id == role_id).first()
             if not role:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Role with ID {role_id} not found"
+                    detail=(
+                        f"{field_name}: no role found with user_role ID {role_id}. "
+                        "Expected a user_role.id (the parent role PK), not a userrole_basic.id."
+                    )
                 )
             if str(role.tenant_id) != str(user_tenant_id):
                 mismatched.append(str(role_id))
@@ -48,7 +61,7 @@ class UserSetupService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Role(s) {mismatched} belong to a different tenant than the user. "
+                    f"{field_name}: role(s) {mismatched} belong to a different tenant than the user. "
                     "The role assigned tenant_id and user setup tenant_id must be the same."
                 )
             )
@@ -69,6 +82,13 @@ class UserSetupService:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Manager with ID {user_data.reporting_to} not found. Please create the manager user first or leave reporting_to empty."
                     )
+
+            UserSetupService._validate_roles_tenant_match(
+                db,
+                user_data.manage_roles,
+                user_data.tenant_id,
+                field_name="manage_roles",
+            )
 
             # Create parent UserSetup record first
             db_user_setup = UserSetup()
@@ -230,6 +250,15 @@ class UserSetupService:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Manager with ID {update_data['reporting_to']} not found"
                     )
+
+            # Validate manage_roles against the tenant the user will end up in
+            if update_data.get("manage_roles"):
+                UserSetupService._validate_roles_tenant_match(
+                    db,
+                    update_data["manage_roles"],
+                    update_data.get("tenant_id", db_user.tenant_id),
+                    field_name="manage_roles",
+                )
 
             # Hash password if being updated
             if "password" in update_data:
@@ -515,6 +544,21 @@ class UserSetupService:
                         detail=f"Manager with ID {user_data.basic.reporting_to} not found. Please create the manager user first or leave reporting_to empty."
                     )
 
+            # Both role arrays must hold user_role.id — validate before any writes
+            UserSetupService._validate_roles_tenant_match(
+                db,
+                user_data.basic.manage_roles,
+                user_data.basic.tenant_id,
+                field_name="manage_roles",
+            )
+            if user_data.roles_entities:
+                UserSetupService._validate_roles_tenant_match(
+                    db,
+                    user_data.roles_entities.assigned_roles,
+                    user_data.basic.tenant_id,
+                    field_name="assigned_roles",
+                )
+
             # Create parent UserSetup record first
             db_user_setup = UserSetup()
             db.add(db_user_setup)
@@ -538,14 +582,8 @@ class UserSetupService:
             db.add(db_user_basic)
             db.flush()  # Get the ID without committing
 
-            # Create roles and entities assignment if provided
+            # Create roles and entities assignment if provided (already validated above)
             if user_data.roles_entities:
-                if user_data.roles_entities.assigned_roles:
-                    UserSetupService._validate_roles_tenant_match(
-                        db,
-                        user_data.roles_entities.assigned_roles,
-                        user_data.basic.tenant_id
-                    )
                 db_roles_entity = UserSetupRolesEntity(
                     user_setup_id=db_user_setup.id,
                     usersetup_basic_id=db_user_basic.id,

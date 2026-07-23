@@ -63,7 +63,7 @@ class UserSetupBasic(Base):
     job_code = Column(UUID(as_uuid=True), ForeignKey("job_codes.id"), nullable=True)
 
     # Role Management
-    manage_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of role IDs user can manage
+    manage_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of user_role.id the user can manage
 
     # Default Settings
     default_dept = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
@@ -111,16 +111,16 @@ class UserSetupBasic(Base):
 
         # Check if user has admin roles assigned
         if hasattr(self, 'roles_entities') and self.roles_entities:
-            from app.models.user_role import UserRoleBasic
-            from app.db.database import SessionLocal
+            from app.user_role.models.user_role import UserRoleBasic
+            from app.infrastructure.database.session import SessionLocal
 
             db = SessionLocal()
             try:
                 for role_entity in self.roles_entities:
                     if role_entity.assigned_roles:
-                        # Query the roles to check if any are admin roles
+                        # assigned_roles holds user_role.id, so resolve via user_role_id
                         admin_roles = db.query(UserRoleBasic).filter(
-                            UserRoleBasic.id.in_(role_entity.assigned_roles),
+                            UserRoleBasic.user_role_id.in_(role_entity.assigned_roles),
                             UserRoleBasic.is_admin == True,
                             UserRoleBasic.active == True
                         ).first()
@@ -145,7 +145,7 @@ class UserSetupRolesEntity(Base):
     user_setup_id = Column(UUID(as_uuid=True), ForeignKey("user_setup.id", ondelete="CASCADE"), nullable=False)
     usersetup_basic_id = Column(UUID(as_uuid=True), ForeignKey("usersetup_basic.id", ondelete="CASCADE"), nullable=False)
 
-    # Assigned Roles - Array of role IDs from userrole_basic table
+    # Assigned Roles - Array of user_role.id (the parent role PK, not userrole_basic.id)
     assigned_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
 
     # Assigned Entities - Array of entity IDs
@@ -183,6 +183,8 @@ class UserSetupPreference(Base):
     language = Column(String(10), nullable=False, default='en')  # e.g., 'en', 'es', 'fr'
     timezone = Column(String(50), nullable=False, default='UTC')  # e.g., 'America/New_York', 'UTC'
     theme = Column(String(20), nullable=False, default='light')  # e.g., 'light', 'dark', 'auto'
+    accent_color = Column(String(50), nullable=False, default='blue', server_default='blue')  # e.g., 'blue'
+    density = Column(String(20), nullable=False, default='comfortable', server_default='comfortable')  # compact | comfortable | spacious
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

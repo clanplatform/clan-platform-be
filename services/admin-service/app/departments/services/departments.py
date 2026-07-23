@@ -1,7 +1,19 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
 from typing import List, Optional
 from uuid import UUID
+
+from app.departments.exceptions import (
+    DepartmentNotFoundError,
+    ParentDepartmentNotFoundError,
+    DuplicateDepartmentCodeError,
+    DepartmentTenantNotFoundError,
+    DepartmentEntityNotFoundError,
+    EntityTenantMismatchError,
+    ParentDepartmentMismatchError,
+    DepartmentSelfParentError,
+    DepartmentHasChildrenError,
+    DepartmentNotDeletedError,
+)
 from datetime import datetime
 
 from app.departments.models.departments import Department
@@ -85,33 +97,33 @@ def create_department(db: Session, department: DepartmentCreate, user_id: Option
     from app.tenants.services.tenants import get_tenant
     tenant = get_tenant(db, department.tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise DepartmentTenantNotFoundError(str(department.tenant_id))
 
     # Verify entity exists if provided
     if department.entity_id:
         from app.entities.services.entity import get_entity
         entity = get_entity(db, department.entity_id)
         if not entity:
-            raise HTTPException(status_code=404, detail="Entity not found")
+            raise DepartmentEntityNotFoundError(str(department.entity_id))
         # Verify entity belongs to the tenant
         if entity.tenant_id != department.tenant_id:
-            raise HTTPException(status_code=400, detail="Entity does not belong to the specified tenant")
+            raise EntityTenantMismatchError()
 
     # Check if department code already exists within the entity
     if department.department_code:
         existing_dept = get_department_by_code(db, department.department_code, department.tenant_id, department.entity_id)
         if existing_dept:
-            raise HTTPException(status_code=400, detail="Department code already exists for this entity")
+            raise DuplicateDepartmentCodeError()
 
     # Verify parent department exists and belongs to same tenant/entity if provided
     if department.parent_department_id:
         parent_dept = get_department(db, department.parent_department_id)
         if not parent_dept:
-            raise HTTPException(status_code=404, detail="Parent department not found")
+            raise ParentDepartmentNotFoundError()
         if parent_dept.tenant_id != department.tenant_id:
-            raise HTTPException(status_code=400, detail="Parent department does not belong to the same tenant")
+            raise ParentDepartmentMismatchError("tenant")
         if department.entity_id and parent_dept.entity_id != department.entity_id:
-            raise HTTPException(status_code=400, detail="Parent department does not belong to the same entity")
+            raise ParentDepartmentMismatchError("entity")
 
     # Create new department
     department_data = department.model_dump()
@@ -144,7 +156,7 @@ def create_department(db: Session, department: DepartmentCreate, user_id: Option
         action="CREATE",
         object_type="Department",
         object_id=str(db_department.department_id),
-        client_id=str(department.tenant_id),
+        tenant_id=str(department.tenant_id),
         entity_id=str(department.entity_id) if department.entity_id else None,
         user_id=str(user_id) if user_id else None,
         new_values=department_data,
@@ -162,7 +174,7 @@ def update_department(
     """Update a department"""
     db_department = get_department(db, department_id=department_id)
     if not db_department:
-        raise HTTPException(status_code=404, detail="Department not found")
+        raise DepartmentNotFoundError()
 
     update_data = department.model_dump(exclude_unset=True)
     old_values = {key: getattr(db_department, key) for key in update_data.keys() if hasattr(db_department, key)}
@@ -171,17 +183,17 @@ def update_department(
     if "department_code" in update_data and update_data["department_code"] != db_department.department_code:
         existing_dept = get_department_by_code(db, update_data["department_code"], db_department.tenant_id, db_department.entity_id)
         if existing_dept:
-            raise HTTPException(status_code=400, detail="Department code already exists for this entity")
+            raise DuplicateDepartmentCodeError()
 
     # Verify parent department if being updated
     if "parent_department_id" in update_data and update_data["parent_department_id"]:
         if update_data["parent_department_id"] == department_id:
-            raise HTTPException(status_code=400, detail="Department cannot be its own parent")
+            raise DepartmentSelfParentError()
         parent_dept = get_department(db, update_data["parent_department_id"])
         if not parent_dept:
-            raise HTTPException(status_code=404, detail="Parent department not found")
+            raise ParentDepartmentNotFoundError()
         if parent_dept.tenant_id != db_department.tenant_id:
-            raise HTTPException(status_code=400, detail="Parent department does not belong to the same tenant")
+            raise ParentDepartmentMismatchError("tenant")
 
     # Update department fields
     for key, value in update_data.items():
@@ -197,7 +209,7 @@ def update_department(
         action="UPDATE",
         object_type="Department",
         object_id=str(department_id),
-        client_id=str(db_department.tenant_id),
+        tenant_id=str(db_department.tenant_id),
         entity_id=str(db_department.entity_id) if db_department.entity_id else None,
         user_id=str(user_id) if user_id else None,
         old_values=old_values,
@@ -211,15 +223,12 @@ def delete_department(db: Session, department_id: UUID, user_id: Optional[UUID] 
     """Soft delete a department"""
     db_department = get_department(db, department_id=department_id)
     if not db_department:
-        raise HTTPException(status_code=404, detail="Department not found")
+        raise DepartmentNotFoundError()
 
     # Check if department has child departments
     child_departments = get_departments_by_parent(db, department_id)
     if child_departments:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete department with active child departments"
-        )
+        raise DepartmentHasChildrenError()
 
     pass  # Skip user validation for now
 
@@ -241,7 +250,7 @@ def delete_department(db: Session, department_id: UUID, user_id: Optional[UUID] 
         action="DELETE",
         object_type="Department",
         object_id=str(department_id),
-        client_id=str(db_department.tenant_id),
+        tenant_id=str(db_department.tenant_id),
         entity_id=str(db_department.entity_id) if db_department.entity_id else None,
         user_id=str(user_id) if user_id else None,
         old_values=old_values,
@@ -258,10 +267,10 @@ def restore_department(db: Session, department_id: UUID, user_id: Optional[UUID]
     ).first()
 
     if not db_department:
-        raise HTTPException(status_code=404, detail="Department not found")
+        raise DepartmentNotFoundError()
 
     if not db_department.is_deleted:
-        raise HTTPException(status_code=400, detail="Department is not deleted")
+        raise DepartmentNotDeletedError()
 
     db_department.is_deleted = False
     db_department.is_active = True
@@ -276,7 +285,7 @@ def restore_department(db: Session, department_id: UUID, user_id: Optional[UUID]
         action="RESTORE",
         object_type="Department",
         object_id=str(department_id),
-        client_id=str(db_department.tenant_id),
+        tenant_id=str(db_department.tenant_id),
         entity_id=str(db_department.entity_id) if db_department.entity_id else None,
         user_id=str(user_id) if user_id else None,
         old_values={"is_deleted": True},
@@ -290,7 +299,7 @@ def get_department_hierarchy(db: Session, department_id: UUID) -> dict:
     """Get the complete hierarchy for a department (parents and children)"""
     department = get_department(db, department_id)
     if not department:
-        raise HTTPException(status_code=404, detail="Department not found")
+        raise DepartmentNotFoundError()
 
     # Get parent hierarchy
     parents = []

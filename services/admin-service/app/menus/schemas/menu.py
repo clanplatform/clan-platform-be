@@ -1,7 +1,9 @@
 from typing import Optional, Dict, Any, List, Union
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from uuid import UUID
+
+from app.core.access import normalize_access as _normalize_access
 
 
 class BadgeConfig(BaseModel):
@@ -37,7 +39,7 @@ class MenuBase(BaseModel):
     # ✅ Access permission field (root level - always has a value)
     # Array of strings to support multiple access permissions
     access: List[str] = Field(
-        default=["read"],
+        default=["write"],
         description="Access permissions for this menu (e.g., ['read', 'write', 'disable'])"
     )
 
@@ -49,6 +51,11 @@ class MenuBase(BaseModel):
 class MenuCreate(MenuBase):
     # Accept nested children from modal submissions; each child mirrors navigation item shape
     children: List[Dict[str, Any]] = Field(default_factory=list, description="Nested child items for this menu", json_schema_extra={"example": []})
+
+    @field_validator("access")
+    @classmethod
+    def validate_access(cls, v):
+        return _normalize_access(v)
 
 
 class MenuBatchCreate(BaseModel):
@@ -95,6 +102,11 @@ class MenuUpdate(BaseModel):
     children: List[Dict[str, Any]] = Field(default_factory=list, description="Nested child items for this menu", json_schema_extra={"example": []})
     # Note: mongo_id is managed internally and should not be user-editable
 
+    @field_validator("access")
+    @classmethod
+    def validate_access(cls, v):
+        return _normalize_access(v)
+
     # ✅ New navigation/UI fields can be updated
     
 
@@ -107,7 +119,7 @@ class MenuResponse(MenuBase):
     # ✅ Access permission (always has a value for Menu)
     # Array of strings to support multiple access permissions
     access: List[str] = Field(
-        default=["read"],
+        default=["write"],
         description="Access permissions"
     )
 

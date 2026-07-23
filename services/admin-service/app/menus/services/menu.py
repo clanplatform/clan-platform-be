@@ -46,7 +46,7 @@ class UserMenuService:
         # Fixed: Check for menu_permissions JSONB field, not menu_id
         menu_permissions = db.query(UserRolePermission).filter(
             and_(
-                UserRolePermission.userrole_basic_id.in_(assigned_role_ids),
+                UserRolePermission.user_role_id.in_(assigned_role_ids),
                 UserRolePermission.menu_permissions.isnot(None),
                 UserRolePermission.menu_permissions != []
             )
@@ -172,7 +172,7 @@ class UserMenuService:
         # Check permissions in JSONB menu_permissions field
         permissions = db.query(UserRolePermission).filter(
             and_(
-                UserRolePermission.userrole_basic_id.in_(roles_entity.assigned_roles),
+                UserRolePermission.user_role_id.in_(roles_entity.assigned_roles),
                 UserRolePermission.menu_permissions.isnot(None)
             )
         ).all()

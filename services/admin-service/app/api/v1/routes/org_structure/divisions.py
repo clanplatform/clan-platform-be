@@ -17,23 +17,23 @@ def get_divisions(
     request: Request,
     skip: int = 0,
     limit: int = 100,
-    client_id: Optional[uuid.UUID] = None,
+    tenant_id: Optional[uuid.UUID] = None,
     entity_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Get all divisions with pagination and optional client/entity filtering, sorted by newest first (FILO)"""
+    """Get all divisions with pagination and optional tenant/entity filtering, sorted by newest first (FILO)"""
     try:
         divisions = division_service.get_all_divisions(
-            db, client_id=client_id, entity_id=entity_id, skip=skip, limit=limit
+            db, tenant_id=tenant_id, entity_id=entity_id, skip=skip, limit=limit
         )
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Division",
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -68,13 +68,13 @@ def get_divisions_by_department(
             db, department_id=department_id, skip=skip, limit=limit
         )
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Division",
                 object_id=str(department_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -109,19 +109,19 @@ def create_division(
 
         # Audit log: division created
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="Division",
                 object_id=str(division.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["CREATE"],
-                new_values={"name": division.name},
+                new_values={"name": division.division_name},
             )
         except Exception:
             pass
@@ -161,19 +161,19 @@ def update_division(
 
         # Audit log: division updated
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="UPDATE",
                 object_type="Division",
                 object_id=str(division_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["UPDATE"],
-                new_values={"name": division.name},
+                new_values={"name": division.division_name},
             )
         except Exception:
             pass
@@ -205,19 +205,19 @@ async def delete_division(
     try:
         # Query before delete to capture snapshot for audit
         division_snapshot = db.query(Division).filter(Division.id == division_id).first()
-        old_division_name = division_snapshot.name if division_snapshot else None
+        old_division_name = division_snapshot.division_name if division_snapshot else None
 
         division_service.delete_division(db, division_id=division_id)
 
         # Audit log: division deleted
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="DELETE",
                 object_type="Division",
                 object_id=str(division_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),

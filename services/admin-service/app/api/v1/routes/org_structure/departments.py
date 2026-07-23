@@ -5,6 +5,7 @@ from app.infrastructure.database.session import get_db, get_tenant_db
 from app.departments.models.departments import Department
 from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate, DepartmentResponse
 from app.departments.services import departments as department_service
+from app.departments.exceptions import DepartmentNotFoundError
 from app.core.security import get_current_user  # Uses optional auth support
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
@@ -36,12 +37,12 @@ def get_departments(
             departments = department_service.get_all_departments(db, skip=skip, limit=limit)
 
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Department",
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -72,18 +73,15 @@ def get_department(
     try:
         department = department_service.get_department(db, department_id=department_id)
         if not department:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Department not found"
-            )
+            raise DepartmentNotFoundError()
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Department",
                 object_id=str(department_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -122,19 +120,19 @@ def create_department(
 
         # Audit log: department created
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="Department",
                 object_id=str(department.department_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["CREATE"],
-                new_values={"name": department.name},
+                new_values={"name": department.department_name},
             )
         except Exception:
             pass
@@ -175,19 +173,19 @@ def update_department(
 
         # Audit log: department updated
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="UPDATE",
                 object_type="Department",
                 object_id=str(department_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
                 risk_score=RISK_SCORE["UPDATE"],
-                new_values={"name": department.name},
+                new_values={"name": department.department_name},
             )
         except Exception:
             pass
@@ -220,27 +218,27 @@ async def delete_department(
         # Check access control for non-admin users
         department = department_service.get_department(db, department_id=department_id)
         if not department:
-            raise HTTPException(status_code=404, detail="Department not found")
+            raise DepartmentNotFoundError()
 
         if hasattr(current_user, 'is_admin') and not current_user.is_admin():
-            if hasattr(current_user, 'client_id') and department.client_id != current_user.client_id:
+            if hasattr(current_user, 'tenant_id') and department.tenant_id != current_user.tenant_id:
                 raise HTTPException(status_code=403, detail="Access denied")
 
         # Snapshot name before delete for audit
-        old_dept_name = department.name
+        old_dept_name = department.department_name
 
         user_id = current_user.user_id if hasattr(current_user, 'user_id') else None
         department_service.delete_department(db, department_id=department_id, user_id=user_id)
 
         # Audit log: department deleted
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="DELETE",
                 object_type="Department",
                 object_id=str(department_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -267,10 +265,10 @@ async def delete_department(
             detail=f"Failed to delete department: {str(e)}"
         )
 
-@router.get("/by-client/{client_id}", response_model=List[DepartmentResponse])
+@router.get("/by-client/{tenant_id}", response_model=List[DepartmentResponse])
 def get_departments_by_client(
     request: Request,
-    client_id: uuid.UUID,
+    tenant_id: uuid.UUID,
     skip: int = 0,
     limit: int = 100,
     entity_id: Optional[uuid.UUID] = None,
@@ -278,17 +276,17 @@ def get_departments_by_client(
     db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
-    """Get all departments for a specific client (supports both entity-based and entity-less clients)"""
+    """Get all departments for a specific tenant (supports both entity-based and entity-less tenants)"""
     try:
-        # Check if user has access to this client
-        if hasattr(current_user, 'is_admin') and not current_user.is_admin() and hasattr(current_user, 'client_id') and current_user.client_id != client_id:
+        # Check if user has access to this tenant
+        if hasattr(current_user, 'is_admin') and not current_user.is_admin() and hasattr(current_user, 'tenant_id') and current_user.tenant_id != tenant_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
         # Use service layer with appropriate filters
         if entity_id:
-            # Use client-scoped query so entity_id is validated against client_id
-            departments = department_service.get_departments_by_client(
-                db, client_id=client_id, entity_id=entity_id, skip=skip, limit=limit
+            # Use tenant-scoped query so entity_id is validated against tenant_id
+            departments = department_service.get_departments_by_tenant(
+                db, tenant_id=tenant_id, entity_id=entity_id, skip=skip, limit=limit
             )
             if parent_department_id:
                 departments = [d for d in departments if d.parent_department_id == parent_department_id]
@@ -297,18 +295,18 @@ def get_departments_by_client(
                 db, parent_department_id=parent_department_id, skip=skip, limit=limit
             )
         else:
-            departments = department_service.get_departments_by_client(
-                db, client_id=client_id, skip=skip, limit=limit
+            departments = department_service.get_departments_by_tenant(
+                db, tenant_id=tenant_id, skip=skip, limit=limit
             )
 
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Department",
-                object_id=str(client_id),
+                object_id=str(tenant_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),

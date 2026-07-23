@@ -39,13 +39,13 @@ class Menu(Base):
     parent_menu_id = Column(UUID(as_uuid=True), ForeignKey("menus.id"), nullable=True, index=True)
    
 
-    # ✅ Access permission field (root level - NOT NULL, default=['read'])
+    # ✅ Access permission field (root level - NOT NULL, default=['write'])
     # This is the root of the permission hierarchy
     # Array of strings to support multiple access permissions
     access = Column(
         ARRAY(String),
         nullable=False,
-        default=["read"]
+        default=["write"]
     )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

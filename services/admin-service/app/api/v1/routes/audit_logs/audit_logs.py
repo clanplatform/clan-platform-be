@@ -23,7 +23,7 @@ router = APIRouter()
 
 @router.get("", summary="List audit logs")
 def list_audit_logs(
-    client_id: Optional[UUID] = Query(None, description="Filter by client UUID"),
+    tenant_id: Optional[UUID] = Query(None, description="Filter by tenant UUID"),
     user_id: Optional[UUID] = Query(None, description="Filter by user UUID"),
     action: Optional[str] = Query(None, max_length=100, description="CREATE / UPDATE / DELETE / READ"),
     object_type: Optional[str] = Query(None, max_length=100, description="Domain / Department / Entity / …"),
@@ -33,7 +33,7 @@ def list_audit_logs(
 ):
     """Retrieve audit logs with optional filters (proxied from audit service)."""
     params = {k: v for k, v in {
-        "client_id": str(client_id) if client_id else None,
+        "tenant_id": str(tenant_id) if tenant_id else None,
         "user_id": str(user_id) if user_id else None,
         "action": action,
         "object_type": object_type,
@@ -59,7 +59,7 @@ def list_audit_logs(
 @router.get("/export", summary="Export audit logs as Excel or PDF")
 def export_audit_logs(
     file_format: str = Query("excel", alias="format", pattern="^(excel|pdf)$", description="excel or pdf"),
-    client_id: Optional[UUID] = Query(None, description="Filter by client UUID"),
+    tenant_id: Optional[UUID] = Query(None, description="Filter by tenant UUID"),
     user_id: Optional[UUID] = Query(None, description="Filter by user UUID"),
     action: Optional[str] = Query(None, max_length=100, description="CREATE / UPDATE / DELETE / READ"),
     object_type: Optional[str] = Query(None, max_length=100, description="Domain / Department / Entity / …"),
@@ -76,7 +76,7 @@ def export_audit_logs(
     """
     params = {k: v for k, v in {
         "format": file_format,
-        "client_id": str(client_id) if client_id else None,
+        "tenant_id": str(tenant_id) if tenant_id else None,
         "user_id": str(user_id) if user_id else None,
         "action": action,
         "object_type": object_type,

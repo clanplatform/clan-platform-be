@@ -5,6 +5,8 @@ from app.infrastructure.database.session import get_tenant_db as get_db
 from app.applications.models.application import Application
 from app.menus.models.menu import Menu
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse
+from app.applications.exceptions import ApplicationNotFoundError, DuplicateApplicationNameError
+from app.core.access import is_active_from_access
 from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
@@ -94,12 +96,12 @@ def get_applications(
             print(f"Redis cache set error (continuing without cache): {str(cache_error)}")
 
         try:
-            client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="READ",
                 object_type="Application",
                 user_id=get_user_id(current_user),
-                client_id=client_id_audit,
+                tenant_id=tenant_id_audit,
                 entity_id=entity_id_audit,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -128,10 +130,7 @@ def get_applications(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
     return application
 
 @router.get("/{application_id}/menus")
@@ -167,10 +166,7 @@ async def get_menus_by_application(
     ).first()
     
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application with id {application_id} not found"
-        )
+        raise ApplicationNotFoundError(str(application_id))
     
     # Create cache key
     cache_key = f"menus:application:{application_id}:navigation:skip={skip}:limit={limit}:children={include_children}"
@@ -462,13 +458,13 @@ def get_applications_by_domain(
     redis_cache.set(cache_key, apps_list, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Application",
             object_id=str(domain_id),
             user_id=get_user_id(current_user),
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -494,10 +490,7 @@ def create_application(
             Application.domain_id == application_data.domain_id
         ).first()
         if existing_application:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Application with this name already exists in the domain"
-            )
+            raise DuplicateApplicationNameError()
 
         # Create application using dict() method
         application_dict = application_data.dict()
@@ -535,13 +528,13 @@ def create_application(
 
         # Audit log: application created
         try:
-            client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="CREATE",
                 object_type="Application",
                 object_id=str(application.id),
                 user_id=get_user_id(current_user),
-                client_id=client_id,
+                tenant_id=tenant_id,
                 entity_id=entity_id,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),
@@ -601,22 +594,20 @@ async def update_application(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
 
-    # Check if new name conflicts with existing application in the same domain
-    if application_data.name and application_data.name != application.name:
+    # Check if new name conflicts with existing application in the target domain
+    target_domain_id = application_data.domain_id or application.domain_id
+    if application_data.name and application_data.name != application.name or (
+        application_data.domain_id and application_data.domain_id != application.domain_id
+    ):
         existing_application = db.query(Application).filter(
-            Application.name == application_data.name,
-            Application.domain_id == application.domain_id
+            Application.name == (application_data.name or application.name),
+            Application.domain_id == target_domain_id,
+            Application.id != application.id
         ).first()
         if existing_application:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Application with this name already exists in the domain"
-            )
+            raise DuplicateApplicationNameError()
 
     # Capture old values before update for audit
     old_values = {
@@ -628,6 +619,17 @@ async def update_application(
 
     # Update PostgreSQL
     update_data = application_data.dict(exclude_unset=True)
+
+    # Keep is_active in sync when access changes: "disable" forces it off,
+    # "write"/"read" keep it on (access wins over any is_active in the payload).
+    # Without this, an app left is_active=False stays that way even after the
+    # access change, and the MongoDB sync below silently no-ops since it
+    # requires is_active=True - modules then appear to "disappear".
+    if "access" in update_data:
+        derived_active = is_active_from_access(update_data.get("access"))
+        if derived_active is not None:
+            update_data["is_active"] = derived_active
+
     for field, value in update_data.items():
         setattr(application, field, value)
 
@@ -638,13 +640,13 @@ async def update_application(
 
     # Audit log: application updated
     try:
-        client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
         fire_audit_log(
             action="UPDATE",
             object_type="Application",
             object_id=str(application.id),
             user_id=get_user_id(current_user),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -695,10 +697,7 @@ async def delete_application(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
     
     try:
         # Import datetime for soft delete
@@ -716,13 +715,13 @@ async def delete_application(
 
         # Audit log: application deleted
         try:
-            client_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
             fire_audit_log(
                 action="DELETE",
                 object_type="Application",
                 object_id=str(application_id),
                 user_id=get_user_id(current_user),
-                client_id=client_id,
+                tenant_id=tenant_id,
                 entity_id=entity_id,
                 session_id=get_session_id(current_user),
                 ip_address=get_client_ip(request),

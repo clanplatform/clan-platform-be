@@ -57,14 +57,14 @@ async def create_user_role_with_details(
     # Audit log: user role created
     try:
         user_id = get_user_id(current_user)
-        client_id, entity_id = get_audit_org_context(db, user_id)
+        tenant_id, entity_id = get_audit_org_context(db, user_id)
         role_id = str(role.basic.id) if hasattr(role, 'basic') and role.basic else str(getattr(role, 'id', ''))
         fire_audit_log(
             action="CREATE",
             object_type="UserRole",
             object_id=role_id,
             user_id=user_id,
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -97,7 +97,7 @@ async def get_all_user_roles(
             action="READ",
             object_type="UserRole",
             user_id=user_id,
-            client_id=audit_tenant_id,
+            tenant_id=audit_tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -147,7 +147,7 @@ async def get_user_role_with_details(
             object_type="UserRole",
             object_id=str(role_id),
             user_id=user_id,
-            client_id=audit_tenant_id,
+            tenant_id=audit_tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -178,13 +178,13 @@ async def update_user_role_with_details(
     # Audit log: user role updated
     try:
         user_id = get_user_id(current_user)
-        client_id, entity_id = get_audit_org_context(db, user_id)
+        tenant_id, entity_id = get_audit_org_context(db, user_id)
         fire_audit_log(
             action="UPDATE",
             object_type="UserRole",
             object_id=str(role_id),
             user_id=user_id,
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -233,13 +233,13 @@ async def delete_user_role(
     # Audit log: user role deleted
     try:
         user_id = get_user_id(current_user)
-        client_id, entity_id = get_audit_org_context(db, user_id)
+        tenant_id, entity_id = get_audit_org_context(db, user_id)
         fire_audit_log(
             action="DELETE",
             object_type="UserRole",
             object_id=str(role_id),
             user_id=user_id,
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

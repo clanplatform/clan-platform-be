@@ -17,11 +17,8 @@ class RedisCache:
     def _connect(self):
         """Initialize Redis connection."""
         try:
-            self.redis_client = redis.Redis(
-                host=getattr(settings, 'REDIS_HOST', 'localhost'),
-                port=getattr(settings, 'REDIS_PORT', 6379),
-                db=getattr(settings, 'REDIS_DB', 0),
-                password=getattr(settings, 'REDIS_PASSWORD', None),
+            self.redis_client = redis.Redis.from_url(
+                settings.REDIS_URL,
                 decode_responses=True,
                 socket_connect_timeout=5,
                 socket_timeout=5,
@@ -124,24 +121,24 @@ class RedisCache:
     
     # Hierarchical caching methods
     
-    def cache_client(self, client_id: int, client_data: Dict, ttl: int = 3600) -> bool:
+    def cache_tenant(self, tenant_id: int, tenant_data: Dict, ttl: int = 3600) -> bool:
         """Cache client data."""
-        key = f"client:{client_id}"
-        return self.set(key, client_data, ttl)
+        key = f"tenant:{tenant_id}"
+        return self.set(key, tenant_data, ttl)
     
-    def get_cached_client(self, client_id: int) -> Optional[Dict]:
+    def get_cached_tenant(self, tenant_id: int) -> Optional[Dict]:
         """Get cached client data."""
-        key = f"client:{client_id}"
+        key = f"tenant:{tenant_id}"
         return self.get(key)
     
-    def cache_client_domains(self, client_id: int, domains_data: List[Dict], ttl: int = 1800) -> bool:
+    def cache_tenant_domains(self, tenant_id: int, domains_data: List[Dict], ttl: int = 1800) -> bool:
         """Cache domains for a specific client."""
-        key = f"client:{client_id}:domains"
+        key = f"tenant:{tenant_id}:domains"
         return self.set(key, domains_data, ttl)
     
-    def get_cached_client_domains(self, client_id: int) -> Optional[List[Dict]]:
+    def get_cached_tenant_domains(self, tenant_id: int) -> Optional[List[Dict]]:
         """Get cached domains for a client."""
-        key = f"client:{client_id}:domains"
+        key = f"tenant:{tenant_id}:domains"
         return self.get(key)
     
     def cache_domain(self, domain_id: int, domain_data: Dict, ttl: int = 3600) -> bool:
@@ -181,17 +178,17 @@ class RedisCache:
 
     def get_cached_tenant_applications(self, tenant_id: int) -> Optional[List[Dict]]:
         """Get cached applications for a tenant."""
-        key = f"client:{client_id}:applications"
+        key = f"tenant:{tenant_id}:applications"
         return self.get(key)
     
-    def cache_client_hierarchy(self, client_id: int, hierarchy_data: Dict, ttl: int = 1800) -> bool:
+    def cache_tenant_hierarchy(self, tenant_id: int, hierarchy_data: Dict, ttl: int = 1800) -> bool:
         """Cache complete client hierarchy (Client -> Domains -> Applications)."""
-        key = f"client:{client_id}:hierarchy"
+        key = f"tenant:{tenant_id}:hierarchy"
         return self.set(key, hierarchy_data, ttl)
     
-    def get_cached_client_hierarchy(self, client_id: int) -> Optional[Dict]:
+    def get_cached_tenant_hierarchy(self, tenant_id: int) -> Optional[Dict]:
         """Get cached client hierarchy."""
-        key = f"client:{client_id}:hierarchy"
+        key = f"tenant:{tenant_id}:hierarchy"
         return self.get(key)
     
     def cache_domain_hierarchy(self, domain_id: int, hierarchy_data: Dict, ttl: int = 1800) -> bool:
@@ -206,9 +203,9 @@ class RedisCache:
     
     # Cache invalidation methods
     
-    def invalidate_client_cache(self, client_id: int) -> int:
+    def invalidate_tenant_cache(self, tenant_id: int) -> int:
         """Invalidate all cache entries related to a client."""
-        pattern = f"client:{client_id}*"
+        pattern = f"tenant:{tenant_id}*"
         return self.delete_pattern(pattern)
     
     def invalidate_domain_cache(self, domain_id: int) -> int:
@@ -221,11 +218,11 @@ class RedisCache:
         pattern = f"application:{app_id}*"
         return self.delete_pattern(pattern)
     
-    def invalidate_client_domain_cache(self, client_id: int, domain_id: int) -> bool:
+    def invalidate_tenant_domain_cache(self, tenant_id: int, domain_id: int) -> bool:
         """Invalidate cache when client-domain relationship changes."""
         keys_to_delete = [
-            f"client:{client_id}:domains",
-            f"client:{client_id}:hierarchy",
+            f"tenant:{tenant_id}:domains",
+            f"tenant:{tenant_id}:hierarchy",
             f"domain:{domain_id}:hierarchy"
         ]
         
@@ -251,11 +248,11 @@ class RedisCache:
         
         return deleted_count > 0
     
-    def invalidate_client_application_cache(self, client_id: int, app_id: int) -> bool:
+    def invalidate_tenant_application_cache(self, tenant_id: int, app_id: int) -> bool:
         """Invalidate cache when client-application relationship changes."""
         keys_to_delete = [
-            f"client:{client_id}:applications",
-            f"client:{client_id}:hierarchy",
+            f"tenant:{tenant_id}:applications",
+            f"tenant:{tenant_id}:hierarchy",
             f"application:{app_id}"
         ]
         

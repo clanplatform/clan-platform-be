@@ -45,13 +45,13 @@ async def create_user_setup_with_details(
 
     try:
         uid = get_user_id(current_user)
-        client_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
         fire_audit_log(
             action="CREATE",
             object_type="UserSetup",
             object_id=str(result.id),
             user_id=uid,
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -97,12 +97,12 @@ def get_all_user_setups(
 
     try:
         uid = get_user_id(current_user)
-        client_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
         fire_audit_log(
             action="READ",
             object_type="UserSetup",
             user_id=uid,
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -133,13 +133,13 @@ def get_user_setup(
 
     try:
         uid = get_user_id(current_user)
-        client_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
         fire_audit_log(
             action="READ",
             object_type="UserSetup",
             object_id=str(user_id),
             user_id=uid,
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -169,13 +169,13 @@ def get_user_setup_with_details(
 
     try:
         uid = get_user_id(current_user)
-        client_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
         fire_audit_log(
             action="READ",
             object_type="UserSetup",
             object_id=str(user_id),
             user_id=uid,
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -206,14 +206,14 @@ async def update_user_setup(
 
     try:
         uid = get_user_id(current_user)
-        client_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
         changed_fields = {k: v for k, v in user_data.model_dump(exclude_unset=True).items() if k != "password"}
         fire_audit_log(
             action="UPDATE",
             object_type="UserSetup",
             object_id=str(user_id),
             user_id=uid,
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),
@@ -244,13 +244,13 @@ async def delete_user_setup(
 
     try:
         uid = get_user_id(current_user)
-        client_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
         fire_audit_log(
             action="DELETE",
             object_type="UserSetup",
             object_id=str(user_id),
             user_id=uid,
-            client_id=client_id_audit,
+            tenant_id=tenant_id_audit,
             entity_id=entity_id_audit,
             session_id=get_session_id(current_user),
             ip_address=get_client_ip(request),

@@ -23,7 +23,7 @@ class UserSetupBasicBase(BaseModel):
     department: Optional[UUID] = Field(None, description="Department ID")
     division: Optional[UUID] = Field(None, description="Division ID")
     job_code: Optional[UUID] = Field(None, description="Job code ID")
-    manage_roles: Optional[List[UUID]] = Field(None, description="Array of role IDs user can manage")
+    manage_roles: Optional[List[UUID]] = Field(None, description="Array of user_role IDs (user_role.id) the user can manage")
     default_dept: Optional[UUID] = Field(None, description="Default department ID")
     reporting_to: Optional[UUID] = Field(None, description="Manager's user ID")
     entities: Optional[List[UUID]] = Field(None, description="Array of entity IDs")
@@ -117,7 +117,7 @@ class UserSetupBasicResponse(UserSetupBasicBase):
 
 class UserSetupRolesEntityBase(BaseModel):
     """Base schema for UserSetupRolesEntity"""
-    assigned_roles: Optional[List[UUID]] = Field(None, description="Array of assigned role IDs")
+    assigned_roles: Optional[List[UUID]] = Field(None, description="Array of assigned user_role IDs (user_role.id, not userrole_basic.id)")
     assigned_entities: Optional[List[UUID]] = Field(None, description="Array of assigned entity IDs")
     assigned_tenant_id: Optional[UUID] = Field(None, description="Assigned tenant ID (foreign key to tenants table)")
 
@@ -156,6 +156,8 @@ class UserSetupPreferenceBase(BaseModel):
     language: str = Field(default='en', max_length=10, description="Language preference")
     timezone: str = Field(default='UTC', max_length=50, description="Timezone preference")
     theme: str = Field(default='light', max_length=20, description="Theme preference")
+    accent_color: str = Field(default='blue', max_length=50, description="Accent color preference")
+    density: str = Field(default='comfortable', max_length=20, description="Density preference")
 
     @field_validator('language')
     @classmethod
@@ -190,6 +192,8 @@ class UserSetupPreferenceUpdate(BaseModel):
     language: Optional[str] = Field(None, max_length=10)
     timezone: Optional[str] = Field(None, max_length=50)
     theme: Optional[str] = Field(None, max_length=20)
+    accent_color: Optional[str] = Field(None, max_length=50)
+    density: Optional[str] = Field(None, max_length=20)
 
     @field_validator('language')
     @classmethod

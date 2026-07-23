@@ -5,6 +5,11 @@ from uuid import UUID
 from app.infrastructure.database.session import get_db, get_tenant_db
 from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainResponse
+from app.domains.exceptions import (
+    DomainNotFoundError,
+    DuplicateDomainNameError,
+    DuplicateDomainCodeError,
+)
 from app.core.config import settings
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.core.security import get_current_user
@@ -75,12 +80,12 @@ async def get_domains(
     redis_cache.set(cache_key, domains_list, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        tenant_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Domain",
             user_id=_get_user_id(current_user),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=_get_session_id(current_user),
             ip_address=_client_ip(request),
@@ -107,10 +112,7 @@ async def get_domain(
     # Query database if not in cache
     domain = db.query(Domain).filter(Domain.id == domain_id, Domain.is_deleted == False).first()
     if not domain:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found"
-        )
+        raise DomainNotFoundError()
 
     # Cache the domain
     domain_dict = {
@@ -128,13 +130,13 @@ async def get_domain(
     redis_cache.cache_domain(str(domain_id), domain_dict, ttl=settings.CACHE_DEFAULT_TTL)
 
     try:
-        client_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        tenant_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
         fire_audit_log(
             action="READ",
             object_type="Domain",
             object_id=str(domain_id),
             user_id=_get_user_id(current_user),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=_get_session_id(current_user),
             ip_address=_client_ip(request),
@@ -160,10 +162,7 @@ async def create_domain(
     ).first()
 
     if existing_domain:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Domain with this name already exists"
-        )
+        raise DuplicateDomainNameError(domain.name)
 
     # Check if domain code already exists
     existing_code = db.query(Domain).filter(
@@ -172,10 +171,7 @@ async def create_domain(
     ).first()
 
     if existing_code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Domain with this code already exists"
-        )
+        raise DuplicateDomainCodeError(domain.code)
 
     # Create new domain
     db_domain = Domain(**domain.model_dump())
@@ -183,13 +179,13 @@ async def create_domain(
     db.commit()
     db.refresh(db_domain)
 
-    client_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+    tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
     fire_audit_log(
         action="CREATE",
         object_type="Domain",
         object_id=str(db_domain.id),
         user_id=current_user.get("id"),
-        client_id=client_id,
+        tenant_id=tenant_id,
         entity_id=entity_id,
         session_id=current_user.get("session_id"),
         ip_address=_client_ip(request),
@@ -239,10 +235,7 @@ async def update_domain(
     ).first()
     
     if not db_domain:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found"
-        )
+        raise DomainNotFoundError()
     
     # Check if new name already exists (if name is being updated)
     if domain.name and domain.name != db_domain.name:
@@ -253,10 +246,7 @@ async def update_domain(
         ).first()
         
         if existing_domain:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Domain with this name already exists"
-            )
+            raise DuplicateDomainNameError(domain.name)
     
     # Check if new code already exists (if code is being updated)
     if domain.code and domain.code != db_domain.code:
@@ -267,10 +257,7 @@ async def update_domain(
         ).first()
         
         if existing_code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Domain with this code already exists"
-            )
+            raise DuplicateDomainCodeError(domain.code)
     
     # Snapshot old values before applying changes
     update_data = domain.model_dump(exclude_unset=True)
@@ -282,13 +269,13 @@ async def update_domain(
     db.commit()
     db.refresh(db_domain)
 
-    client_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+    tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
     fire_audit_log(
         action="UPDATE",
         object_type="Domain",
         object_id=str(domain_id),
         user_id=current_user.get("id"),
-        client_id=client_id,
+        tenant_id=tenant_id,
         entity_id=entity_id,
         session_id=current_user.get("session_id"),
         ip_address=_client_ip(request),
@@ -316,10 +303,7 @@ async def delete_domain(
     """Soft delete a domain and all related applications"""
     domain = db.query(Domain).filter(Domain.id == domain_id, Domain.is_deleted == False).first()
     if not domain:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found"
-        )
+        raise DomainNotFoundError()
     
     try:
         from app.applications.models.application import Application
@@ -344,13 +328,13 @@ async def delete_domain(
 
         db.commit()
 
-        client_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+        tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
         fire_audit_log(
             action="DELETE",
             object_type="Domain",
             object_id=str(domain_id),
             user_id=current_user.get("id"),
-            client_id=client_id,
+            tenant_id=tenant_id,
             entity_id=entity_id,
             session_id=current_user.get("session_id"),
             ip_address=_client_ip(request),

@@ -1,12 +1,15 @@
 from typing import List, Optional, Dict, Any, Union
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, and_
 from datetime import datetime, timezone
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.menus.models.menu import Menu
 from app.applications.models.application import Application
+from app.applications.services.application import ensure_application_writable
+from app.core.access import is_active_from_access, is_write_locked
 from app.modules.models.module import Module
+from app.modules.services.module import ensure_module_writable
 from app.menus.schemas.menu import MenuCreate, MenuUpdate, MenuResponse, MenuBatchCreate
 from app.menu_reorder.schemas.menu_reorder import (
     MenuReorderRequest,
@@ -18,14 +21,15 @@ from app.menu_reorder.schemas.menu_reorder import (
     MenuBatchUpdateItem
 )
 from app.menu_navigation.schemas.menu_navigation import create_navigation_item, validate_navigation_item  # ✅ Import validation helpers
-from app.core.security import get_current_user, get_current_user_id, decode_access_token, DISABLE_AUTH_FOR_TESTING  # Uses optional auth support
+from app.core.security import get_current_user, get_current_user_id, decode_access_token
 from app.core.config import settings
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.menu_details.services.menu_details import menu_details_service
 from app.menu_reorder.services.menu_reorder import MenuReorderService
-from app.menu_soft_delete.services.menu_soft_delete import menu_cleanup_service
 from app.infrastructure.redis_cache.redis_cache import redis_cache
-# from app.models.menu_language import MenuLanguage
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_tenant import fire_audit_log
+from app.menu_language.models.menu_language import MenuLanguage
 from bson import ObjectId
 from app.infrastructure.mongodb import get_mongodb
 from app.user_setup.models.user_setup import UserSetupBasic, UserSetupRolesEntity
@@ -131,254 +135,16 @@ def apply_translations_to_navigation(
 
 async def working_sync_to_mongodb(db: Session, application_id: UUID) -> bool:
     """
-    Working sync function that replaces the broken MenuReorderService.sync_to_mongodb
-    This function connects directly to MongoDB and syncs the application menus
+    Sync the application's menus to MongoDB.
+    Thin wrapper kept for backward compatibility - the actual implementation
+    lives in app.menus.services.menu_sync (shared with MenuReorderService).
     """
-    try:
-        from app.core.mongodb import get_mongodb
-        from bson import ObjectId
-        from datetime import datetime, timezone
-        from app.applications.models.application import Application
-        from app.modules.models.module import Module
-        
-        print(f"[Working Sync] Starting sync for application: {application_id}")
-        
-        # Get MongoDB connection
-        db_mongo = await get_mongodb()
-        if db_mongo is None:
-            print(f"[Working Sync] MongoDB not available")
-            return False
-        
-        print(f"[Working Sync] MongoDB connected")
-        
-        # Get application details
-        app = db.query(Application).filter(
-            Application.id == application_id,
-            Application.is_active == True,
-            Application.is_deleted == False
-        ).first()
-        
-        if not app:
-            print(f"[Working Sync] Application not found: {application_id}")
-            return False
-        
-        print(f"[Working Sync] Application found: {app.name}")
-        
-        # Get all menus for this application
-        from app.menus.models.menu import Menu
-        menus = db.query(Menu).filter(
-            Menu.application_id == application_id,
-            Menu.deleted_at.is_(None)
-        ).order_by(Menu.level, Menu.order_index).all()
-        
-        print(f"[Working Sync] Found {len(menus)} menus")
-        
-        # Get modules for this application
-        modules = db.query(Module).filter(
-            Module.application_id == application_id,
-            Module.is_deleted == False
-        ).order_by(Module.order_index).all()
-        
-        print(f"[Working Sync] Found {len(modules)} modules")
-        
-        # Build navigation structure organized by modules
-        navigation_structure = []
-        
-        if modules:
-            # Group menus by module_id
-            for module in modules:
-                module_menus = [m for m in menus if m.module_id == module.id and m.parent_menu_id is None]
-                
-                if module_menus:  # Only add module if it has menus
-                    module_item = {
-                        "key": module.name.lower().replace(" ", "-") if module.name else f"module-{module.id}",
-                        "name": module.name,
-                        "label": module.label or module.name,
-                        "route": module.route or "",
-                        "icon": module.icon or "ri-folder-line",
-                        "module_id": str(module.id),
-                        "application_id": str(application_id),
-                        "order_index": module.order_index,
-                        "level": 2,
-                        "is_visible": True,  # Default to True since modules table doesn't have is_visible
-                        "is_active": module.is_active,
-                        "access": module.access if hasattr(module, 'access') and module.access else [],
-                        "children": []
-                    }
-                    
-                    # Add menus to this module
-                    for menu in module_menus:
-                        menu_item = {
-                            "key": menu.key or menu.name or str(menu.id),
-                            "name": menu.name,
-                            "label": menu.label,
-                            "route": menu.route,
-                            "icon": menu.icon,
-                            "component": menu.component,
-                            "menu_id": str(menu.id),
-                            "application_id": str(application_id),
-                            "module_id": str(menu.module_id) if menu.module_id else None,
-                            "order_index": menu.order_index,
-                            "level": menu.level,
-                            "is_visible": menu.is_visible,
-                            "is_active": menu.is_active,
-                            "children": []
-                        }
-                        
-                        # Add optional fields
-                        if hasattr(menu, 'badge') and menu.badge:
-                            menu_item["badge"] = menu.badge
-                        if hasattr(menu, 'section_title') and menu.section_title:
-                            menu_item["sectionTitle"] = menu.section_title
-                        if hasattr(menu, 'menus_description') and menu.menus_description:
-                            menu_item["description"] = menu.menus_description
-                        if hasattr(menu, 'access') and menu.access:
-                            menu_item["access"] = menu.access
-                        
-                        module_item["children"].append(menu_item)
-                    
-                    navigation_structure.append(module_item)
-        
-        # Handle menus without modules (orphaned menus)
-        orphaned_menus = [m for m in menus if m.module_id is None and m.parent_menu_id is None]
-        if orphaned_menus:
-            default_module = {
-                "key": "default-module",
-                "name": "default-module",
-                "label": "Default Module", 
-                "route": "",
-                "icon": "ri-folder-line",
-                "module_id": "default",
-                "application_id": str(application_id),
-                "order_index": 1000,
-                "level": 2,
-                "is_visible": True,
-                "is_active": True,
-                "access": [],
-                "children": []
-            }
-            
-            for menu in orphaned_menus:
-                menu_item = {
-                    "key": menu.key or menu.name or str(menu.id),
-                    "name": menu.name,
-                    "label": menu.label,
-                    "route": menu.route,
-                    "icon": menu.icon,
-                    "component": menu.component,
-                    "menu_id": str(menu.id),
-                    "application_id": str(application_id),
-                    "module_id": str(menu.module_id) if menu.module_id else None,
-                    "order_index": menu.order_index,
-                    "level": menu.level,
-                    "is_visible": menu.is_visible,
-                    "is_active": menu.is_active,
-                    "children": []
-                }
-                
-                # Add optional fields
-                if hasattr(menu, 'badge') and menu.badge:
-                    menu_item["badge"] = menu.badge
-                if hasattr(menu, 'section_title') and menu.section_title:
-                    menu_item["sectionTitle"] = menu.section_title
-                if hasattr(menu, 'menus_description') and menu.menus_description:
-                    menu_item["description"] = menu.menus_description
-                if hasattr(menu, 'access') and menu.access:
-                    menu_item["access"] = menu.access
-                
-                default_module["children"].append(menu_item)
-            
-            navigation_structure.append(default_module)
-        
-        # Check if application document exists in MongoDB
-        existing_app_doc = await db_mongo.menu_details.find_one({
-            "application_id": str(application_id),
-            "_id": {"$ne": ObjectId("69074724f217ab8fcb2e3b24")}
-        })
-        
-        if existing_app_doc:
-            # Update existing document with access field from PostgreSQL
-            app_object_id = existing_app_doc["_id"]
-            app_access = getattr(app, 'access', None) or []
-            
-            await db_mongo.menu_details.update_one(
-                {"_id": app_object_id},
-                {
-                    "$set": {
-                        "access": app_access,  # Update access field from PostgreSQL
-                        "children": navigation_structure,
-                        "updated_at": datetime.now(timezone.utc).isoformat()
-                    }
-                }
-            )
-            
-            print(f"[Working Sync] Updated existing MongoDB document: {app_object_id}")
-            
-            # Ensure it's in the master navigation array
-            master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-            await db_mongo.menu_details.update_one(
-                {"_id": master_doc_id},
-                {"$addToSet": {"mainNavigation": app_object_id}}
-            )
-            
-            print(f"[Working Sync] Ensured document is in master navigation")
-        else:
-            # Create new application document with access field from PostgreSQL
-            app_access = getattr(app, 'access', None) or []
-            
-            app_doc = {
-                "key": app.name.lower().replace(" ", "-"),
-                "label": app.name,
-                "icon": getattr(app, 'icon', None) or "ri-apps-line",
-                "description": getattr(app, 'description', None) or f"Manage {app.name}",
-                "badge": None,
-                "sectionTitle": app.name,
-                "route": getattr(app, 'route', None) or f"/{app.name.lower().replace(' ', '-')}",
-                "application_id": str(application_id),
-                "level": 1,
-                "order_index": 1000,
-                "is_visible": True,
-                "is_active": True,
-                "access": app_access,  # Add access field from PostgreSQL applications table
-                "children": navigation_structure,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            result = await db_mongo.menu_details.insert_one(app_doc)
-            app_object_id = result.inserted_id
-            
-            print(f"[Working Sync] Created new MongoDB document: {app_object_id}")
-            
-            # Add to master navigation
-            master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-            await db_mongo.menu_details.update_one(
-                {"_id": master_doc_id},
-                {"$addToSet": {"mainNavigation": app_object_id}}
-            )
-            
-            print(f"[Working Sync] Added to master navigation")
-        
-        # Update PostgreSQL menus with mongo_id
-        for menu in menus:
-            if menu.mongo_id is None:
-                menu.mongo_id = str(app_object_id)
-        
-        db.commit()
-        
-        updated_count = len([m for m in menus if m.mongo_id == str(app_object_id)])
-        print(f"[Working Sync] Updated {updated_count} menus with mongo_id")
-        
-        return True
-        
-    except Exception as e:
-        print(f"[Working Sync] Sync failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+    return await sync_application_menus_to_mongodb(db, application_id)
 
 @router.get("/")
 async def get_menus(
+    request: Request,
     lang_code: Optional[str] = Query(None, description="Language code for menu translations (e.g., 'en', 'es', 'fr')"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -414,7 +180,7 @@ async def get_menus(
     print(f"[GET Menus] ⚠️ Cache bypassed for debugging")
 
     # Fetch from MongoDB
-    db_mongo = await get_mongodb()
+    db_mongo = get_mongodb()
     if db_mongo is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -618,6 +384,28 @@ async def get_menus(
     # Get profileSection and config
     profile_section = master_doc.get("profileSection", {})
     config = master_doc.get("config", {})
+    
+    # Populate profileSection with logged-in user's data dynamically
+    try:
+        from app.menu_details.services.menu_details import menu_details_service
+        from app.user_setup.models.user_setup import UserSetupBasic
+        from uuid import UUID
+        
+        # Get the user from database
+        user_id = current_user.get("user_id") or current_user.get("id")
+        if user_id:
+            try:
+                user_uuid = UUID(user_id)
+                user = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_uuid).first()
+                
+                if user:
+                    profile_section = menu_details_service.populate_profile_section_with_user_data(
+                        profile_section, user, db
+                    )
+            except Exception as e:
+                print(f"[GET Menus] ⚠️ Error fetching user: {str(e)}")
+    except Exception as e:
+        print(f"[GET Menus] ⚠️ Error populating profile section: {str(e)}")
 
     # Ensure userData fields are simple strings (not {value, color} objects)
     if profile_section and "userData" in profile_section:
@@ -660,6 +448,22 @@ async def get_menus(
 
     # Cache the result for configured TTL (default 5 minutes)
     redis_cache.set(cache_key, response_data, ttl=settings.CACHE_DEFAULT_TTL)
+
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Menu",
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
 
     print(f"[GET Menus] ✅ Returning {len(application_documents)} application structures with inline menu data and access permissions")
     return response_data
@@ -708,44 +512,31 @@ async def get_login_user_menus(
     try:
         print(f"[GET Login User Menus] 🚀 Starting request with lang_code: {lang_code}...")
 
-        # BYPASS AUTHENTICATION FOR TESTING
-        if DISABLE_AUTH_FOR_TESTING:
-            print(f"[GET Login User Menus] ⚠️ Authentication is DISABLED for testing")
-            # Use a test user for development
-            current_user_id = None  # Will fallback to email/username lookup
-            user_email = "test@example.com"  # Default test email
-            username = "test_user"
-            payload = {
-                "user_id": None,
-                "email": user_email,
-                "username": username
-            }
-        else:
-            # Check if credentials are provided
-            if not credentials:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            
-            # Verify and decode the JWT token
-            token = credentials.credentials
-            print(f"[GET Login User Menus] 🔍 Token received (length: {len(token)})")
-            payload = decode_access_token(token)
-            print(f"[GET Login User Menus] ✅ Token verified successfully")
+        # Check if credentials are provided
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Verify and decode the JWT token
+        token = credentials.credentials
+        print(f"[GET Login User Menus] 🔍 Token received (length: {len(token)})")
+        payload = decode_access_token(token)
+        print(f"[GET Login User Menus] ✅ Token verified successfully")
 
-            if payload is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+        if payload is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-            # Extract user information from token
-            current_user_id = payload.get("user_id")
-            user_email = payload.get("email")
-            username = payload.get("username")
+        # Extract user information from token
+        current_user_id = payload.get("user_id")
+        user_email = payload.get("email")
+        username = payload.get("username")
 
         print(f"[GET Login User Menus] 🔍 Token payload: user_id={current_user_id}, email={user_email}, username={username}")
 
@@ -813,7 +604,7 @@ async def get_login_user_menus(
             from app.user_role.models.user_role import UserRoleBasic
             admin_roles = db.query(UserRoleBasic).filter(
                 and_(
-                    UserRoleBasic.id.in_(assigned_role_ids),
+                    UserRoleBasic.user_role_id.in_(assigned_role_ids),
                     UserRoleBasic.is_admin == True,
                     UserRoleBasic.active == True
                 )
@@ -830,7 +621,7 @@ async def get_login_user_menus(
 
             # 3. Get all permissions for these roles from userrole_permission
             permissions = db.query(UserRolePermission).filter(
-                UserRolePermission.userrole_basic_id.in_(assigned_role_ids)
+                UserRolePermission.user_role_id.in_(assigned_role_ids)
             ).all()
 
             if not permissions:
@@ -932,7 +723,7 @@ async def get_login_user_menus(
 
         # 5. Fetch the full mainNavigation structure from MongoDB
         print(f"[GET Login User Menus] 🔍 Connecting to MongoDB...")
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1069,6 +860,17 @@ async def get_login_user_menus(
         # 8. Get profileSection and config from master document
         profile_section = master_doc.get("profileSection", {})
         config = master_doc.get("config", {})
+        
+        # 8b. Populate profileSection with logged-in user's data dynamically
+        try:
+            from app.menu_details.services.menu_details import menu_details_service
+            profile_section = menu_details_service.populate_profile_section_with_user_data(
+                profile_section, user, db
+            )
+        except Exception as e:
+            print(f"[GET Login User Menus] ⚠️ Error populating profile section with user data: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
         # 8a. Ensure userData fields are simple strings (not {value, color} objects)
         if profile_section and "userData" in profile_section:
@@ -1257,286 +1059,124 @@ async def _filter_menu_by_permissions(
         return None
 
 
-@router.get("/structured-hierarchy")
-async def get_structured_navigation_hierarchy(
-    nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
+
+
+
+@router.get("/by-module/{module_id}")
+async def get_menus_by_module(
+    request: Request,
+    module_id: uuid.UUID,
+    include_inactive: bool = Query(False, description="Include inactive menus in the response"),
+    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
-    Get structured navigation hierarchy: Applications -> Modules -> Menus -> Nested Menus
-    
-    Returns a 4-level hierarchical structure:
-    - Level 1: Applications (root level applications)
-    - Level 2: Modules (grouped functionality within applications)  
-    - Level 3: Menus (individual menu items within modules)
-    - Level 4: Nested Menus (sub-menus within menus)
-    
-    Response structure:
-    ```json
-    {
-        "_id": "navigation_document_id",
-        "applications": [
-            {
-                "_id": "app_object_id",
-                "key": "admin-app",
-                "label": "Admin Application",
-                "icon": "ri-admin-line",
-                "description": "Administrative functions",
-                "level": 1,
-                "modules": [
-                    {
-                        "module_id": "user-management",
-                        "key": "user-mgmt",
-                        "label": "User Management",
-                        "icon": "ri-user-line",
-                        "level": 2,
-                        "menus": [
-                            {
-                                "key": "users",
-                                "label": "Users",
-                                "icon": "ri-user-line",
-                                "route": "/users",
-                                "level": 3,
-                                "children": [
-                                    {
-                                        "key": "user-profile",
-                                        "label": "User Profile",
-                                        "route": "/users/profile",
-                                        "level": 4,
-                                        "children": []
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-    ```
+    Get all menus belonging to a specific module (Level 2 in hierarchy).
+
+    Returns menus from PostgreSQL organized in parent → children hierarchy:
+    - Level 3: Menus directly under the module
+    - Level 4+: Nested child menus under their parent menu
+
+    Parameters:
+    - module_id: UUID of the module
+    - include_inactive: Include inactive menus (default: False). Soft-deleted menus are always excluded.
     """
-    try:
-        print(f"[Structured Hierarchy] 🚀 Fetching structured navigation hierarchy")
-        print(f"[Structured Hierarchy] Navigation document ID: {nav_doc_id}")
-        
-        # Import the menu details service
-        from app.services.menu_details import menu_details_service
-        
-        # Get the structured hierarchy using the new service method
-        hierarchy = await menu_details_service.get_structured_navigation_hierarchy(nav_doc_id)
-        
-        if "error" in hierarchy:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=hierarchy["error"]
-            )
-        
-        print(f"[Structured Hierarchy] ✅ Found {len(hierarchy.get('applications', []))} applications")
-        
-        # Log structure summary
-        for app in hierarchy.get("applications", []):
-            app_label = app.get("label", "Unknown")
-            modules_count = len(app.get("modules", []))
-            print(f"[Structured Hierarchy]   - {app_label}: {modules_count} modules")
-            
-            for module in app.get("modules", []):
-                module_label = module.get("label", "Unknown")
-                menus_count = len(module.get("menus", []))
-                print(f"[Structured Hierarchy]     - {module_label}: {menus_count} menus")
-        
-        return hierarchy
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[Structured Hierarchy] ❌ Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch structured hierarchy: {str(e)}"
-        )
+    print(f"[GET Menus By Module] 🚀 Fetching menus for module: {module_id}")
 
-
-
-    """
-    Create a complete application menu structure as a separate MongoDB document.
-
-    This creates a new document in menu_details collection with the full unified structure
-    combining both application-level and menu-item fields.
-
-    Request body:
-    {
-      "application_id": "f8130b7c-c78f-4ad5-b5ea-983f5ca9ce49",
-      "menu_structure": {
-        "key": "admin-app",
-        "label": "Admin App",
-        "route": "/admin",
-        "icon": "ri-admin-line",
-        "order_index": 1,
-        "parent_menu_id": null,
-        "level": 1,
-        "is_visible": true,
-        "component": "AdminLayout",
-        "description": "Manage applications and configurations",
-        "badge": null,
-        "sectionTitle": "Application Configuration",
-        "children": [...]
-      }
-    }
-    """
-    from datetime import datetime, timezone
-
-    print(f"[Create App Menu Structure] Creating for application_id: {application_id}")
-
-    # Validate application exists
-    try:
-        app_uuid = uuid.UUID(application_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid application_id format"
-        )
-
-    application = db.query(Application).filter(
-        Application.id == app_uuid,
-        Application.is_active == True,
-        Application.deleted_at.is_(None)
+    # Validate module exists
+    module = db.query(Module).filter(
+        Module.id == module_id,
+        Module.is_deleted == False
     ).first()
 
-    if not application:
+    if not module:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
+            detail=f"Module not found: {module_id}"
         )
 
-    # Create menu entry in PostgreSQL first to get menu_id
-    menu_data = {
-        "name": menu_structure.get("key", application.name.lower().replace(" ", "-")),
-        "label": menu_structure.get("label", application.name),
-        "application_id": app_uuid,
-        "route": menu_structure.get("route"),
-        "icon": menu_structure.get("icon"),
-        "order_index": menu_structure.get("order_index", 0),
-        "parent_menu_id": None,  # Top-level menu
-        "level": menu_structure.get("level", 1),
-        "is_visible": menu_structure.get("is_visible", True),
-        "component": menu_structure.get("component"),
-        "menu_metadata": menu_structure.get("menu_metadata", {}),
-        "is_active": menu_structure.get("is_active", True)
-    }
+    print(f"[GET Menus By Module] ✅ Module found: {module.name}")
 
-    # Handle parent_menu_id if provided
-    if menu_structure.get("parent_menu_id"):
-        try:
-            parent_uuid = uuid.UUID(menu_structure["parent_menu_id"])
-            menu_data["parent_menu_id"] = parent_uuid
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid parent_menu_id format"
-            )
+    # Fetch all menus for this module (soft-deleted always excluded)
+    filters = [
+        Menu.module_id == module_id,
+        Menu.deleted_at.is_(None)
+    ]
+    if not include_inactive:
+        filters.append(Menu.is_active == True)
 
-    # Create PostgreSQL menu record
-    menu = Menu(**menu_data)
-    db.add(menu)
-    db.commit()
-    db.refresh(menu)
+    menus = db.query(Menu).filter(and_(*filters)).order_by(Menu.level, Menu.order_index).all()
+    print(f"[GET Menus By Module] ✅ Found {len(menus)} menus for module: {module.name}")
 
-    print(f"[Create App Menu Structure] ✅ Created PostgreSQL menu: {menu.id}")
+    def serialize_menu(menu: Menu) -> Dict[str, Any]:
+        return {
+            "id": str(menu.id),
+            "application_id": str(menu.application_id) if menu.application_id else None,
+            "module_id": str(menu.module_id) if menu.module_id else None,
+            "parent_menu_id": str(menu.parent_menu_id) if menu.parent_menu_id else None,
+            "name": menu.name,
+            "label": menu.label,
+            "key": menu.key,
+            "icon": menu.icon,
+            "route": menu.route,
+            "component": menu.component,
+            "badge": menu.badge,
+            "section_title": menu.section_title,
+            "description": menu.menus_description,
+            "order_index": menu.order_index,
+            "level": menu.level,
+            "is_visible": menu.is_visible,
+            "is_active": menu.is_active,
+            "showtopbar": menu.showtopbar,
+            "showsidebar": menu.showsidebar,
+            "access": menu.access if menu.access else ["read"],
+            "menu_metadata": menu.menu_metadata,
+            "created_at": menu.created_at.isoformat() if menu.created_at else None,
+            "updated_at": menu.updated_at.isoformat() if menu.updated_at else None,
+            "children": []
+        }
 
-    # Prepare the complete unified MongoDB document structure
-    current_time = datetime.now(timezone.utc).isoformat()
+    # Build parent → children hierarchy (menus are already ordered by level, order_index)
+    menu_map = {str(menu.id): serialize_menu(menu) for menu in menus}
+    root_menus = []
 
-    complete_menu_doc = {
-        "menu_id": str(menu.id),
-        "application_id": application_id,
-        "key": menu_structure.get("key", application.name.lower().replace(" ", "-")),
-        "label": menu_structure.get("label", application.name),
-        "route": menu_structure.get("route"),
-        "icon": menu_structure.get("icon"),
-        "order_index": menu_structure.get("order_index", 0),
-        "parent_menu_id": str(menu_structure["parent_menu_id"]) if menu_structure.get("parent_menu_id") else None,
-        "level": menu_structure.get("level", 1),
-        "is_visible": menu_structure.get("is_visible", True),
-        "component": menu_structure.get("component"),
-        "description": menu_structure.get("description", f"Manage {application.name}"),
-        "badge": menu_structure.get("badge"),
-        "sectionTitle": menu_structure.get("sectionTitle", application.name),
-        "children": menu_structure.get("children", []),
-        "menu_metadata": menu_structure.get("menu_metadata", {}),
-        "is_active": menu_structure.get("is_active", True),
-        "created_at": current_time,
-        "updated_at": current_time
-    }
-
-    # Connect to MongoDB
-    db_mongo = await get_mongodb()
-    if db_mongo is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="MongoDB not available"
-        )
-
-    # Insert the new menu document
-    try:
-        result = await db_mongo.menu_details.insert_one(complete_menu_doc)
-        new_menu_object_id = result.inserted_id
-        print(f"[Create App Menu Structure] ✅ Created MongoDB document: {new_menu_object_id}")
-
-        # Update PostgreSQL menu with mongo_id
-        menu.mongo_id = str(new_menu_object_id)
-        db.commit()
-        db.refresh(menu)
-
-    except Exception as e:
-        print(f"[Create App Menu Structure] ❌ Error: {str(e)}")
-        # Rollback PostgreSQL if MongoDB fails
-        db.delete(menu)
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create menu document: {str(e)}"
-        )
-
-    # Update master navigation document
-    master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
+    for menu_dict in menu_map.values():
+        parent_id = menu_dict["parent_menu_id"]
+        if parent_id and parent_id in menu_map:
+            menu_map[parent_id]["children"].append(menu_dict)
+        else:
+            root_menus.append(menu_dict)
 
     try:
-        update_result = await db_mongo.menu_details.update_one(
-            {"_id": master_doc_id},
-            {
-                "$push": {
-                    "mainNavigation": {
-                        "label": complete_menu_doc["label"],
-                        "menu_object_id": str(new_menu_object_id)
-                    }
-                }
-            }
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Menu",
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
         )
-        print(f"[Create App Menu Structure] ✅ Added reference to master navigation")
-    except Exception as e:
-        print(f"[Create App Menu Structure] ⚠️ Failed to update master navigation: {str(e)}")
+    except Exception:
+        pass
 
-    # Clear cache
-    redis_cache.delete("menus:mongo:main_navigation_full")
-
+    print(f"[GET Menus By Module] ✅ Returning {len(root_menus)} root menus ({len(menus)} total)")
     return {
-        "success": True,
-        "message": "Application menu structure created successfully",
-        "menu_id": str(menu.id),
-        "menu_object_id": str(new_menu_object_id),
-        "application_id": application_id,
-        "label": complete_menu_doc["label"],
-        "structure": complete_menu_doc
+        "module_id": str(module.id),
+        "module_name": module.name,
+        "module_label": module.label,
+        "application_id": str(module.application_id) if module.application_id else None,
+        "total_menus": len(menus),
+        "menus": root_menus
     }
-
-
-
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_menu(
+    request: Request,
     menu_data: Union[MenuCreate, MenuBatchCreate],
     nav_doc_id: Optional[str] = Query("69074724f217ab8fcb2e3b24", description="Mongo navigation doc ObjectId (defaults to known id)"),
     db: Session = Depends(get_db),
@@ -1582,14 +1222,15 @@ async def create_menu(
         return await create_menus_batch_structured(menu_data, nav_doc_id, db, current_user)
     else:
         print(f"[Menu Create] 🚀 Single menu creation")
-        return await create_single_menu_structured(menu_data, nav_doc_id, db, current_user)
+        return await create_single_menu_structured(menu_data, nav_doc_id, db, current_user, request)
 
 
 async def create_single_menu_structured(
     menu_data: MenuCreate,
     nav_doc_id: str,
     db: Session,
-    current_user
+    current_user,
+    request: Optional[Request] = None
 ) -> MenuResponse:
     """
     Create a single menu with structured hierarchy support
@@ -1629,6 +1270,9 @@ async def create_single_menu_structured(
     if not app_exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
 
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, create_data['application_id'], "menus")
+
     # Validate module exists if module_id is provided
     if create_data.get('module_id'):
         module_exists = db.execute(
@@ -1637,6 +1281,9 @@ async def create_single_menu_structured(
         ).scalar()
         if not module_exists:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
+
+    # Block writes when the parent module is read-only
+    ensure_module_writable(db, create_data.get('module_id'), "menus")
 
     # Set hierarchy level based on structure
     if create_data.get('module_id'):
@@ -1700,6 +1347,11 @@ async def create_single_menu_structured(
         if field not in create_data:
             create_data[field] = None if field != 'menu_metadata' else {}
 
+    # Access drives the active state: "disable" -> False, "write"/"read" -> True
+    derived_active = is_active_from_access(create_data.get('access'))
+    if derived_active is not None:
+        create_data['is_active'] = derived_active
+
     # Create menu in PostgreSQL
     menu = Menu(**create_data)
     db.add(menu)
@@ -1707,6 +1359,22 @@ async def create_single_menu_structured(
     db.refresh(menu)
 
     print(f"[Menu Create Structured] ✅ Created menu in PostgreSQL: {menu.id}")
+
+    try:
+        _uid = get_user_id(current_user)
+        _cid, _eid = get_audit_org_context(db, _uid)
+        fire_audit_log(
+            action="CREATE", object_type="Menu",
+            object_id=str(menu.id),
+            user_id=_uid, tenant_id=_cid, entity_id=_eid,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request) if request else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+            risk_score=RISK_SCORE["CREATE"],
+            new_values={"name": menu.name, "label": menu.label, "application_id": str(menu.application_id)},
+        )
+    except Exception:
+        pass
 
     # Process children recursively
     processed_children = await process_children_recursive_structured(
@@ -1802,11 +1470,16 @@ async def process_children_recursive_structured(
             'badge': child_data.get('badge'),
             'section_title': child_data.get('section_title', ''),
             'menus_description': child_data.get('menus_description', ''),
-            'access': child_data.get('access', ['read']),
+            'access': child_data.get('access', ['write']),
             'showtopbar': child_data.get('showtopbar', True),
             'showsidebar': child_data.get('showsidebar', True)
         }
-        
+
+        # Access drives the active state: "disable" -> False, "write"/"read" -> True
+        derived_active = is_active_from_access(child_menu_data.get('access'))
+        if derived_active is not None:
+            child_menu_data['is_active'] = derived_active
+
         # Create child menu
         child_menu = Menu(**child_menu_data)
         db.add(child_menu)
@@ -1856,7 +1529,7 @@ async def update_mongodb_structured_hierarchy(
     Structure: Root Application -> children[Modules] -> children[Menus] -> children[Nested Menus]
     """
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
 
@@ -2210,13 +1883,21 @@ async def create_menus_batch_structured(
     for idx, menu_data in enumerate(batch_data.menus):
         print(f"[Batch Create Structured] Processing menu {idx + 1}/{len(batch_data.menus)}")
         
-        # Create MenuCreate instance with batch data
-        menu_create_data = {
-            "application_id": batch_data.application_id,
-            "module_id": batch_data.module_id,
-            **menu_data
-        }
-        
+        # Create MenuCreate instance with batch data.
+        # Batch-level application_id always wins; per-item module_id only wins
+        # when actually provided — a per-item "module_id": null must NOT wipe
+        # the batch module (that is what pushed menus into "Default Module").
+        menu_create_data = {**menu_data}
+        menu_create_data["application_id"] = batch_data.application_id
+        if not menu_create_data.get("module_id"):
+            menu_create_data["module_id"] = batch_data.module_id
+
+        # Batch items are menus (level 3+). Drop app/module-shaped levels (1/2)
+        # from nav-export payloads so level is recalculated correctly.
+        if menu_create_data.get("level") is not None and menu_create_data["level"] < 3:
+            print(f"[Batch Create Structured] ⚠️ Dropping invalid level {menu_create_data['level']} for '{menu_create_data.get('name')}' - will be recalculated")
+            menu_create_data.pop("level")
+
         menu_create = MenuCreate(**menu_create_data)
         
         # Create individual menu
@@ -2449,7 +2130,7 @@ async def create_single_menu(
     print(f"[Menu Create] Processing application document in MongoDB")
 
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
 
@@ -2843,7 +2524,7 @@ async def create_menus_batch(
         print(f"[Menu Batch Create] ✅ Committed {len(created_menus)} parent menus to PostgreSQL")
         
         # Update MongoDB application document
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
         
@@ -2992,7 +2673,6 @@ async def create_menus_batch(
     };
     ```
     """
-    from app.services.menu_reorder_service import MenuReorderService
     return await MenuReorderService.reorder_menus(db, reorder_data)
 
 
@@ -3001,6 +2681,7 @@ async def create_menus_batch(
 
 @router.put("/{menu_id}", response_model=MenuResponse)
 async def update_menu(
+    request: Request,
     menu_id: uuid.UUID,
     menu_data: MenuUpdate,
     nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
@@ -3026,8 +2707,23 @@ async def update_menu(
             detail="Menu not found"
         )
 
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, menu.application_id, "menus")
+
+    # Block writes when the parent module is read-only
+    ensure_module_writable(db, menu.module_id, "menus")
+
     # 2️⃣ Prepare update data
     update_data = menu_data.dict(exclude_unset=True, by_alias=False)
+    old_values = {f: getattr(menu, f, None) for f in update_data if f != "children"}
+
+    # Self read-only lock: a write-locked menu can only be edited by a payload
+    # that changes "access" itself (the way to unlock it).
+    if is_write_locked(menu.access) and 'access' not in update_data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Menu is read-only; include an 'access' change to modify it.",
+        )
 
     # ✅ Access is now a list of strings, no enum conversion needed
     if 'access' in update_data and update_data['access'] is not None:
@@ -3036,14 +2732,14 @@ async def update_menu(
         elif isinstance(update_data['access'], list):
             update_data['access'] = [item.lower() if isinstance(item, str) else item for item in update_data['access']]
 
+    # Keep is_active in sync when access changes (disable -> False, write/read -> True)
+    if 'access' in update_data:
+        derived_active = is_active_from_access(update_data.get('access'))
+        if derived_active is not None:
+            update_data['is_active'] = derived_active
+
     # 4️⃣ Update PostgreSQL
-    # Track if order_index or parent_menu_id changed (for reorder sync)
-    order_changed = False
-    if 'order_index' in update_data and update_data['order_index'] != menu.order_index:
-        order_changed = True
-    if 'parent_menu_id' in update_data and update_data['parent_menu_id'] != menu.parent_menu_id:
-        order_changed = True
-    
+
     # Only set attributes that belong to the SQLAlchemy model and skip
     # nested/navigation payloads (e.g., `children`) which are stored in MongoDB.
     for field, value in update_data.items():
@@ -3062,13 +2758,30 @@ async def update_menu(
     db.commit()
     db.refresh(menu)
     print(f"[Menu Update] ✅ Updated PostgreSQL for menu_id: {menu.id}")
-    
-    # 4.5️⃣ If order_index or parent_menu_id changed, trigger full reorder sync
-    if order_changed:
-        print(f"[Menu Update] 🔄 Order or parent changed, triggering full reorder sync...")
-        from app.services.menu_reorder_service import MenuReorderService
+
+    try:
+        _uid = get_user_id(current_user)
+        _cid, _eid = get_audit_org_context(db, _uid)
+        fire_audit_log(
+            action="UPDATE", object_type="Menu",
+            object_id=str(menu_id),
+            user_id=_uid, tenant_id=_cid, entity_id=_eid,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            old_values={k: str(v) if v is not None else None for k, v in old_values.items()},
+            new_values={k: str(v) if v is not None else None for k, v in update_data.items() if k != "children"},
+        )
+    except Exception:
+        pass
+
+    # 4.5️⃣ Sync the application's navigation document (full rebuild) so ANY
+    # field change reaches MongoDB, not just order/parent moves
+    if update_data:
+        print(f"[Menu Update] 🔄 Syncing navigation to MongoDB...")
         await MenuReorderService.sync_to_mongodb(db, menu.application_id)
-        print(f"[Menu Update] ✅ Reorder sync completed")
+        print(f"[Menu Update] ✅ Navigation sync completed")
 
     # 5️⃣ Update MongoDB menu_details collection (individual document)
     try:
@@ -3088,7 +2801,7 @@ async def update_menu(
     # 6️⃣ Update MongoDB mainNavigation tree
     # ✅ Find the application document and update the menu within it
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             print("[Menu Update] MongoDB not initialized, skipping navigation update")
             return menu
@@ -3233,7 +2946,7 @@ async def update_menu(
 
     # 8️⃣ Fetch children from MongoDB to include in response
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is not None and menu.mongo_id:
             # Find the application document to get the menu's children
             try:
@@ -3276,8 +2989,87 @@ async def update_menu(
 
     return menu
 
+async def _remove_menus_from_nav_docs(application_id: UUID, deleted_menu_ids: set) -> int:
+    """
+    Surgically remove deleted menu entries (matched by menu_id) from the MongoDB
+    navigation documents:
+    - the application's own document(s) in menu_details (children tree)
+    - any inline entries in the master navigation document (backward compatibility)
+
+    Removing a parent entry also removes everything nested under it.
+    Returns the number of MongoDB documents updated.
+    """
+    # Use app.core.mongodb (the client the create path uses) — the
+    # infrastructure client is a separate instance and may not be connected.
+    from app.core.mongodb import get_mongodb as get_core_mongodb
+    db_mongo = await get_core_mongodb()
+    if db_mongo is None:
+        print(f"[Menu Delete] ⚠️ MongoDB not available - nav documents not pruned")
+        return 0
+
+    def prune_children(items):
+        """Return (kept_items, changed) with deleted menu entries removed recursively."""
+        changed = False
+        kept = []
+        for item in items:
+            if isinstance(item, dict):
+                if str(item.get("menu_id")) in deleted_menu_ids:
+                    changed = True
+                    continue  # drop this entry and everything nested under it
+                nested = item.get("children")
+                if isinstance(nested, list):
+                    new_nested, nested_changed = prune_children(nested)
+                    if nested_changed:
+                        item["children"] = new_nested
+                        changed = True
+            kept.append(item)
+        return kept, changed
+
+    updated_docs = 0
+    master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
+
+    # 1) Prune the application's own document(s)
+    cursor = db_mongo.menu_details.find({
+        "application_id": str(application_id),
+        "_id": {"$ne": master_doc_id}
+    })
+    async for app_doc in cursor:
+        children = app_doc.get("children")
+        if not isinstance(children, list):
+            continue
+        new_children, changed = prune_children(children)
+        if changed:
+            await db_mongo.menu_details.update_one(
+                {"_id": app_doc["_id"]},
+                {"$set": {
+                    "children": new_children,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            updated_docs += 1
+            print(f"[Menu Delete] ✅ Pruned deleted menu entries from app document {app_doc['_id']}")
+
+    # 2) Prune inline dict entries in the master navigation document
+    #    (ObjectId references are kept untouched by prune_children)
+    master_doc = await db_mongo.menu_details.find_one(
+        {"_id": master_doc_id}, {"mainNavigation": 1}
+    )
+    if master_doc and isinstance(master_doc.get("mainNavigation"), list):
+        new_nav, changed = prune_children(master_doc["mainNavigation"])
+        if changed:
+            await db_mongo.menu_details.update_one(
+                {"_id": master_doc_id},
+                {"$set": {"mainNavigation": new_nav}}
+            )
+            updated_docs += 1
+            print(f"[Menu Delete] ✅ Pruned deleted menu entries from master navigation document")
+
+    return updated_docs
+
+
 @router.delete("/{menu_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_menu(
+    request: Request,
     menu_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -3288,29 +3080,39 @@ async def delete_menu(
     When a parent menu is deleted, all its children and nested children 
     are also deleted automatically (cascading delete).
     """
-    menu = db.query(Menu).filter(
-        Menu.id == menu_id,
-        Menu.is_active == True,
-        Menu.deleted_at.is_(None)
-    ).first()
+    # Look up WITHOUT active/deleted filters: DELETE is idempotent, so retrying
+    # after a half-failed delete (PostgreSQL row soft-deleted but MongoDB nav
+    # entry left behind) still prunes the leftover nav-doc entries instead of 404ing.
+    menu = db.query(Menu).filter(Menu.id == menu_id).first()
     if not menu:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Menu not found"
         )
-    
+
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, menu.application_id, "menus")
+
+    # Block writes when the parent module is read-only
+    ensure_module_writable(db, menu.module_id, "menus")
+
+    was_already_deleted = menu.deleted_at is not None or menu.is_active is False
+    if was_already_deleted:
+        print(f"[Menu Delete] ♻️ Menu {menu_id} already soft-deleted - re-running MongoDB nav cleanup")
+
+    menu_snapshot = {"name": menu.name, "label": menu.label}
+
     # Recursive function to collect all descendant menu IDs
     def get_all_descendant_ids(parent_id):
         """Recursively get all descendant menu IDs"""
         descendant_ids = []
         
-        # Get direct children
+        # Get direct children (no active/deleted filters so previously
+        # soft-deleted children also get their nav-doc entries pruned)
         children = db.query(Menu).filter(
-            Menu.parent_menu_id == parent_id,
-            Menu.is_active == True,
-            Menu.deleted_at.is_(None)
+            Menu.parent_menu_id == parent_id
         ).all()
-        
+
         for child in children:
             descendant_ids.append(child.id)
             # Recursively get grandchildren
@@ -3338,20 +3140,38 @@ async def delete_menu(
     db.commit()
     print(f"[Menu Delete] ✅ Soft deleted {deleted_count} menus in PostgreSQL")
 
-    # ✅ PROPER SYNC: Use MenuReorderService to rebuild the complete tree without deleted menus
-    print(f"[Menu Delete] 🔄 Syncing deletion to MongoDB using MenuReorderService...")
-    from app.services.menu_reorder_service import MenuReorderService
     try:
-        await MenuReorderService.sync_to_mongodb(db, menu.application_id)
-        print(f"[Menu Delete] ✅ MongoDB sync completed - deleted menus removed from tree")
+        _uid = get_user_id(current_user)
+        _cid, _eid = get_audit_org_context(db, _uid)
+        fire_audit_log(
+            action="DELETE", object_type="Menu",
+            object_id=str(menu_id),
+            user_id=_uid, tenant_id=_cid, entity_id=_eid,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values=menu_snapshot,
+        )
+    except Exception:
+        pass
+
+    # ✅ Remove the deleted menu entries from the MongoDB navigation documents.
+    # Wrapped in try/except so a MongoDB failure never 500s after the PostgreSQL
+    # commit — DELETE is idempotent, retry it to prune any leftovers.
+    print(f"[Menu Delete] 🔄 Pruning deleted menus from MongoDB navigation documents...")
+    try:
+        deleted_id_strs = {str(mid) for mid in all_menu_ids}
+        updated_docs = await _remove_menus_from_nav_docs(menu.application_id, deleted_id_strs)
+        print(f"[Menu Delete] ✅ MongoDB nav cleanup done ({updated_docs} document(s) updated)")
     except Exception as e:
-        print(f"[Menu Delete] ⚠️ MongoDB sync failed: {e}")
+        print(f"[Menu Delete] ⚠️ MongoDB nav cleanup failed (menus stay soft-deleted in PostgreSQL, retry DELETE to prune): {e}")
         import traceback
         traceback.print_exc()
 
-    # Clear cache to ensure GET endpoints return updated data
-    redis_cache.delete("menus:mongo:main_navigation_full")
-    print(f"[Menu Delete] ✅ Cleared navigation cache")
+    # Clear all navigation caches (full nav + per-user + per-language variants)
+    redis_cache.delete_pattern("menus:*")
+    print(f"[Menu Delete] ✅ Cleared navigation caches")
 
     return None
 
@@ -3503,7 +3323,7 @@ async def delete_menu(
 
     # 5) Push into navigation structure in MongoDB under admin-app → app-management → children
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is None:
             raise RuntimeError("MongoDB database not initialized")
 
@@ -3629,7 +3449,7 @@ async def delete_menu(
 
     # Fetch children from MongoDB to include in response
     try:
-        db_mongo = await get_mongodb()
+        db_mongo = get_mongodb()
         if db_mongo is not None:
             try:
                 doc_id = ObjectId(nav_doc_id)
@@ -3818,10 +3638,12 @@ async def reorder_menus(
 ):
     """
     Reorder menus based on drag-and-drop action
-    
+
     Handles parent menus, children, and nested children reordering.
     Automatically syncs to both PostgreSQL and MongoDB.
     """
+    # Block writes when the parent application is read-only
+    ensure_application_writable(db, reorder_data.application_id, "menus")
     return await MenuReorderService.reorder_menus(db, reorder_data)
 
 
@@ -3860,223 +3682,3 @@ async def reorder_menus(
     
     return result
 
-
-@router.get("/diagnostic/mongodb-sync-status")
-async def check_mongodb_sync_status(
-    application_id: Optional[str] = Query(None, description="Application ID to check (optional)"),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """
-    Diagnostic endpoint to check MongoDB sync status and troubleshoot sync issues.
-    
-    Returns:
-    - MongoDB connection status
-    - Database configuration
-    - Application document status in MongoDB
-    - MainNavigation array status
-    - Menus count in PostgreSQL vs MongoDB
-    """
-    from app.core.mongodb import mongodb, get_mongodb
-    from bson import ObjectId
-    
-    result = {
-        "mongodb_config": {
-            "enabled": mongodb.enabled,
-            "connected": mongodb.is_connected(),
-            "url": mongodb.url.split('@')[-1] if '@' in mongodb.url else mongodb.url,  # Hide credentials
-            "database_name": mongodb.database_name
-        },
-        "master_document_id": "69074724f217ab8fcb2e3b24",
-        "applications": []
-    }
-    
-    # Check MongoDB connection
-    if not mongodb.enabled:
-        result["error"] = "MongoDB is disabled in configuration (MONGODB_ENABLED=false)"
-        return result
-    
-    if not mongodb.is_connected():
-        result["warning"] = "MongoDB not connected, attempting connection..."
-        try:
-            await mongodb.connect()
-            result["mongodb_config"]["connected"] = mongodb.is_connected()
-        except Exception as e:
-            result["error"] = f"Failed to connect to MongoDB: {str(e)}"
-            return result
-    
-    # Get MongoDB database
-    try:
-        db_mongo = await get_mongodb()
-        if db_mongo is None:
-            result["error"] = "MongoDB database is None"
-            return result
-    except Exception as e:
-        result["error"] = f"Error getting MongoDB database: {str(e)}"
-        return result
-    
-    # Check master document
-    try:
-        master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-        master_doc = await db_mongo.menu_details.find_one({"_id": master_doc_id})
-        
-        if not master_doc:
-            result["error"] = "Master navigation document not found in MongoDB"
-            return result
-        
-        main_navigation = master_doc.get("mainNavigation", [])
-        result["master_document"] = {
-            "found": True,
-            "mainNavigation_count": len(main_navigation),
-            "mainNavigation_refs": [str(ref) for ref in main_navigation]
-        }
-    except Exception as e:
-        result["error"] = f"Error checking master document: {str(e)}"
-        return result
-    
-    # Get applications from PostgreSQL
-    if application_id:
-        # Check specific application
-        try:
-            app_uuid = UUID(application_id)
-            apps = db.query(Application).filter(
-                Application.id == app_uuid,
-                Application.is_active == True,
-                Application.is_deleted == False
-            ).all()
-        except Exception as e:
-            result["error"] = f"Invalid application_id: {str(e)}"
-            return result
-    else:
-        # Check all applications
-        apps = db.query(Application).filter(
-            Application.is_active == True,
-            Application.is_deleted == False
-        ).all()
-    
-    result["applications_checked"] = len(apps)
-    
-    # Check each application's sync status
-    for app in apps:
-        app_info = {
-            "application_id": str(app.id),
-            "application_name": app.name,
-            "postgres_menus_count": 0,
-            "mongodb_document_found": False,
-            "mongodb_document_id": None,
-            "in_mainNavigation": False,
-            "mongodb_menus_count": 0
-        }
-        
-        # Count menus in PostgreSQL
-        menus_count = db.query(Menu).filter(
-            Menu.application_id == app.id,
-            Menu.deleted_at.is_(None)
-        ).count()
-        app_info["postgres_menus_count"] = menus_count
-        
-        # Check if application document exists in MongoDB
-        try:
-            app_doc = await db_mongo.menu_details.find_one({
-                "application_id": str(app.id),
-                "_id": {"$ne": master_doc_id}
-            })
-            
-            if app_doc:
-                app_info["mongodb_document_found"] = True
-                app_info["mongodb_document_id"] = str(app_doc["_id"])
-                
-                # Count menus in MongoDB (recursively count children)
-                def count_menus_recursive(children):
-                    count = 0
-                    for child in children:
-                        if isinstance(child, dict):
-                            count += 1
-                            if "children" in child:
-                                count += count_menus_recursive(child["children"])
-                    return count
-                
-                children = app_doc.get("children", [])
-                app_info["mongodb_menus_count"] = count_menus_recursive(children)
-                
-                # Check if in mainNavigation
-                app_object_id = app_doc["_id"]
-                app_info["in_mainNavigation"] = app_object_id in main_navigation
-                
-                # Sync status
-                if app_info["in_mainNavigation"]:
-                    if app_info["postgres_menus_count"] == app_info["mongodb_menus_count"]:
-                        app_info["sync_status"] = "✅ SYNCED"
-                    else:
-                        app_info["sync_status"] = "⚠️ PARTIAL - Count mismatch"
-                else:
-                    app_info["sync_status"] = "❌ NOT IN MAINNAVIGATION"
-            else:
-                app_info["sync_status"] = "❌ NO MONGODB DOCUMENT"
-                
-        except Exception as e:
-            app_info["error"] = f"Error checking MongoDB: {str(e)}"
-            app_info["sync_status"] = "❌ ERROR"
-        
-        result["applications"].append(app_info)
-    
-    return result
-
-
-@router.post("/diagnostic/force-sync/{application_id}")
-async def force_mongodb_sync(
-    application_id: UUID,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """
-    Force a complete MongoDB sync for a specific application.
-    Use this endpoint if menus are not syncing properly.
-    
-    This will:
-    1. Fetch all menus for the application from PostgreSQL
-    2. Build the complete navigation structure
-    3. Create/update the application document in MongoDB
-    4. Add the application to mainNavigation array
-    """
-    print(f"[Force Sync] Starting forced sync for application: {application_id}")
-    
-    # Verify application exists
-    app = db.query(Application).filter(
-        Application.id == application_id,
-        Application.is_active == True,
-        Application.is_deleted == False
-    ).first()
-    
-    if not app:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application {application_id} not found or inactive"
-        )
-    
-    # Use the working sync function
-    try:
-        sync_success = await working_sync_to_mongodb(db, application_id)
-        
-        if sync_success:
-            return {
-                "success": True,
-                "message": f"Successfully synced application '{app.name}' to MongoDB",
-                "application_id": str(application_id),
-                "application_name": app.name
-            }
-        else:
-            return {
-                "success": False,
-                "message": "MongoDB sync failed - check server logs for details",
-                "application_id": str(application_id),
-                "application_name": app.name
-            }
-    except Exception as e:
-        logger.error(f"Force sync error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {str(e)}"
-        )

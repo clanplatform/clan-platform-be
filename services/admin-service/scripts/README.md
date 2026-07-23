@@ -1,239 +1,218 @@
-# Database Scripts
+# Admin Service Scripts
 
-Python scripts for managing the Admin Service database.
+This directory contains utility scripts for the admin service.
+
+---
 
 ## Available Scripts
 
-### 1. Initialize Database (`init_db.py`)
+### 1. `sync_existing_users.py`
 
-Initialize the database with tables and optionally seed data.
+**Purpose**: Manually sync existing users from admin-service to auth-service.
 
-```bash
-# Create tables only
-python scripts/init_db.py
+**Use Cases**:
+- Initial sync of existing users after implementing the sync feature
+- Re-syncing users that failed to sync during creation
+- Recovering from auth-service database failures
+- Bulk sync operations
 
-# Create tables and seed initial data
-python scripts/init_db.py --seed
-
-# Drop existing tables and recreate (WARNING: destroys data)
-python scripts/init_db.py --drop --seed
-
-# Skip confirmation prompts
-python scripts/init_db.py --seed --force
-```
-
-**Options:**
-- `--seed`: Insert sample data after creating tables
-- `--drop`: Drop all tables before creating (destroys all data)
-- `--force`: Skip confirmation prompts
-
-### 2. Create Tables (`create_tables.py`)
-
-Create database tables using SQLAlchemy models.
+**Examples**:
 
 ```bash
-python scripts/create_tables.py
+# Sync all users
+python scripts/sync_existing_users.py --all
+
+# Sync only active users
+python scripts/sync_existing_users.py --all --status active
+
+# Sync specific users by ID
+python scripts/sync_existing_users.py --user-ids "uuid1,uuid2,uuid3"
+
+# Dry run to see what would be synced without actually syncing
+python scripts/sync_existing_users.py --all --dry-run
+
+# Sync all inactive users
+python scripts/sync_existing_users.py --all --status inactive
 ```
 
-This script:
-- Checks database connection
-- Lists registered models
-- Creates all tables
-- Shows created tables
+**Output**:
+```
+[1/50] Syncing user: john_doe (ID: 123e4567-e89b-12d3-a456-426614174000)
+  Email: john@example.com
+  Name: John Doe
+  Status: active
+  ✅ Successfully synced to auth-service
 
-### 3. Run SQL Migrations (`run_migrations.py`)
+[2/50] Syncing user: jane_smith (ID: 223e4567-e89b-12d3-a456-426614174001)
+  Email: jane@example.com
+  Name: Jane Smith
+  Status: active
+  ⚠️  User already exists in auth-service
 
-Execute SQL migration files in order.
+...
 
+================================================================================
+SYNC SUMMARY
+================================================================================
+✅ Successfully synced: 45
+⚠️  Already existed: 3
+❌ Failed: 2
+================================================================================
+```
+
+**Requirements**:
+- `IDENTITY_SERVICE_URL` must be configured in `.env` file
+- Auth service must be running and accessible
+- Admin service database must be accessible
+
+---
+
+### 2. `check_databases.ps1`
+
+**Purpose**: Check database connectivity and status.
+
+**Examples**:
+
+```powershell
+# Check if databases are accessible
+.\scripts\check_databases.ps1
+```
+
+---
+
+## Common Issues and Solutions
+
+### Issue: "Auth sync is not enabled"
+
+**Solution**: Set `IDENTITY_SERVICE_URL` in your `.env` file:
+```env
+IDENTITY_SERVICE_URL=http://localhost:8001
+```
+
+### Issue: "Failed to connect to auth service"
+
+**Possible causes**:
+1. Auth service is not running
+2. Wrong URL in `IDENTITY_SERVICE_URL`
+3. Network connectivity issues
+
+**Solution**:
 ```bash
-python scripts/run_migrations.py
+# Check if auth service is running
+curl http://localhost:8001/health
+
+# Check if the sync endpoint exists
+curl -X POST http://localhost:8001/api/v1/auth/users/sync
 ```
 
-This script:
-- Finds all SQL files in `sql-files/` directory
-- Executes them in numerical order
-- Uses transactions (rollback on error)
-- Shows progress and summary
-- Prompts to continue if a migration fails
+### Issue: "User already exists in auth-service (409)"
 
-### 4. Seed Data (`seed_data.py`)
+**Explanation**: This is not an error. The user already exists in the auth service, which means it was already synced.
 
-Insert sample data for development/testing.
+**Action**: No action needed. The script will mark it as "Already existed" and continue.
 
+### Issue: Database connection errors
+
+**Solution**: Verify database configuration in `.env`:
+```env
+DATABASE_URL=postgresql://postgres:root@localhost:5432/clan_platform
+```
+
+---
+
+## Running Scripts from Different Directories
+
+### From project root:
 ```bash
-python scripts/seed_data.py
-
-# Force overwrite existing data
-python scripts/seed_data.py --force
+cd /path/to/clan-clan-platform-be
+python services/admin-service/scripts/sync_existing_users.py --all
 ```
 
-### 5. Drop Tables (`drop_tables.py`)
-
-**⚠️ USE WITH EXTREME CAUTION! ⚠️**
-
-Drop all database tables and data.
-
+### From admin-service directory:
 ```bash
-python scripts/drop_tables.py
+cd services/admin-service
+python scripts/sync_existing_users.py --all
 ```
 
-Requires typing "DROP ALL TABLES" to confirm.
-
-## Quick Start
-
-### First Time Setup
-
+### From scripts directory:
 ```bash
-# Option 1: Using Python scripts (SQLAlchemy)
-python scripts/init_db.py --seed
-
-# Option 2: Using SQL migrations
-python scripts/run_migrations.py
+cd services/admin-service/scripts
+python sync_existing_users.py --all
 ```
 
-### Reset Database
+---
 
-```bash
-# Drop all tables and recreate with seed data
-python scripts/init_db.py --drop --seed
+## Script Development Guidelines
+
+When creating new scripts in this directory:
+
+1. **Add proper documentation**: Include docstrings and help text
+2. **Use command-line arguments**: Use `argparse` for flexibility
+3. **Handle errors gracefully**: Catch exceptions and provide helpful error messages
+4. **Support dry-run mode**: Allow users to preview changes before applying
+5. **Provide progress feedback**: Use progress indicators for long-running operations
+6. **Log important actions**: Use Python's `logging` module
+7. **Add to this README**: Document the new script's purpose and usage
+
+---
+
+## Script Template
+
+```python
+"""
+Script description here.
+
+Usage:
+    python scripts/script_name.py [options]
+"""
+import sys
+import os
+import argparse
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.config import settings
+
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description='Script description')
+    parser.add_argument('--option', type=str, help='Option description')
+    args = parser.parse_args()
+    
+    # Script logic here
+    print("Script executed successfully")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n⚠️  Script interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 ```
 
-### Add Sample Data
+---
 
-```bash
-python scripts/seed_data.py
-```
+## Additional Resources
 
-## Environment Variables
+- **Main Documentation**: See `/USERSETUP_AUTH_SYNC_IMPLEMENTATION.md`
+- **SQL Queries**: See `/SQL_VERIFICATION_QUERIES.md`
+- **Test Script**: See `/test_user_sync.py`
 
-All scripts use configuration from `.env` file:
+---
 
-```bash
-DATABASE_URL=postgresql://user:pass@localhost:5432/admin_db
-```
+## Getting Help
 
-Make sure `.env` is properly configured before running scripts.
+If you encounter issues with any script:
 
-## Script Order
-
-1. **init_db.py** - Best for first-time setup
-2. **create_tables.py** - Create tables using models
-3. **run_migrations.py** - Execute SQL files
-4. **seed_data.py** - Add sample data
-5. **drop_tables.py** - Clean up (destructive)
-
-## Using with Docker
-
-### Execute inside container:
-
-```bash
-# Access container
-docker exec -it admin-service bash
-
-# Run scripts
-python scripts/init_db.py --seed
-```
-
-### Execute from host:
-
-```bash
-# Run script in container
-docker exec admin-service python scripts/init_db.py --seed
-```
-
-## Troubleshooting
-
-### Connection Failed
-
-```
-❌ Database connection failed
-```
-
-**Solution:**
-- Check DATABASE_URL in `.env`
-- Ensure PostgreSQL is running
-- Verify credentials
-- Check network/firewall
-
-### Import Errors
-
-```
-ModuleNotFoundError: No module named 'app'
-```
-
-**Solution:**
-- Run scripts from service root directory
-- Ensure virtual environment is activated
-- Install dependencies: `pip install -r requirements.txt`
-
-### Permission Errors
-
-```
-permission denied for schema public
-```
-
-**Solution:**
-- Ensure database user has CREATE privileges
-- Grant permissions: `GRANT ALL ON SCHEMA public TO admin_user;`
-
-### Tables Already Exist
-
-```
-relation "domains" already exists
-```
-
-**Solution:**
-- Use `--drop` flag to recreate: `python scripts/init_db.py --drop --seed`
-- Or manually drop tables first
-
-## Migration vs SQLAlchemy
-
-### Use SQL Migrations when:
-- You need fine-grained control over schema
-- You want explicit migration history
-- Working in production environments
-- Need custom SQL features
-
-### Use SQLAlchemy (create_tables.py) when:
-- Rapid development
-- Local development/testing
-- Schema matches models exactly
-- Don't need migration history
-
-## Best Practices
-
-1. **Always backup** before running destructive operations
-2. **Use migrations** for production deployments
-3. **Test scripts** on development database first
-4. **Version control** all migration files
-5. **Document changes** in migration comments
-6. **Use transactions** to ensure atomicity
-
-## Examples
-
-### Complete Fresh Setup
-
-```bash
-# 1. Drop everything (if exists)
-python scripts/drop_tables.py
-
-# 2. Create tables
-python scripts/init_db.py
-
-# 3. Seed sample data
-python scripts/seed_data.py
-```
-
-### Production Deployment
-
-```bash
-# Use SQL migrations for production
-python scripts/run_migrations.py
-```
-
-### Development Reset
-
-```bash
-# Quick reset with sample data
-python scripts/init_db.py --drop --seed
-```
+1. Check the script's help: `python scripts/script_name.py --help`
+2. Run with `--dry-run` to see what would happen
+3. Check the application logs
+4. Verify environment configuration in `.env` file
+5. Ensure all required services are running

@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
 from typing import Optional
 from app.core.config import settings
+import certifi
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,17 +22,18 @@ class MongoDBadmin:
     def connect(self):
         """Establish MongoDB connection"""
         try:
+            # tlsCAFile implicitly enables TLS in pymongo/motor — only pass it
+            # for Atlas-style URLs; the local docker mongodb is plain TCP and
+            # the handshake fails otherwise, leaving this client unusable.
+            conn_kwargs = {"serverSelectionTimeoutMS": 5000}
+            if settings.MONGODB_URL.startswith("mongodb+srv://"):
+                conn_kwargs["tlsCAFile"] = certifi.where()
+
             # Async client for async operations
-            self.client = AsyncIOMotorClient(
-                settings.MONGODB_URL,
-                serverSelectionTimeoutMS=5000
-            )
-            
+            self.client = AsyncIOMotorClient(settings.MONGODB_URL, **conn_kwargs)
+
             # Sync client for sync operations
-            self.sync_client = MongoClient(
-                settings.MONGODB_URL,
-                serverSelectionTimeoutMS=5000
-            )
+            self.sync_client = MongoClient(settings.MONGODB_URL, **conn_kwargs)
             
             # Get database
             self.db = self.client[settings.MONGODB_DB_NAME]
@@ -48,7 +50,7 @@ class MongoDBadmin:
     
     def get_database(self):
         """Get the MongoDB database instance"""
-        if not self.db:
+        if self.db is None:
             self.connect()
         return self.db
     

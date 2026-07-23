@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app.infrastructure.database.session import get_db
 from app.applications.models.application import Application
 from app.modules.models.module import Module
+from app.user_setup.models.user_setup import UserSetupBasic, UserSetupRolesEntity
+from app.user_role.models.user_role import UserRoleBasic
 from .menu_details_mongodb import BaseMongoService
 
 class MenuDetailsService(BaseMongoService):
@@ -144,6 +146,75 @@ class MenuDetailsService(BaseMongoService):
             print(f"Error fetching access data from PostgreSQL: {e}")
         
         return result
+    
+    def populate_profile_section_with_user_data(
+        self, 
+        profile_section: Dict[str, Any], 
+        user: UserSetupBasic,
+        db: Session
+    ) -> Dict[str, Any]:
+        """
+        Populate profileSection userData with the logged-in user's information.
+        
+        Args:
+            profile_section: The profileSection dict from MongoDB
+            user: The UserSetupBasic model instance for the logged-in user
+            db: SQLAlchemy database session
+            
+        Returns:
+            Updated profileSection dict with user's name, email, role, and status
+        """
+        try:
+            # Get user's full name
+            full_name = f"{user.firstname} {user.lastname}".strip()
+            
+            # Get user's email
+            email = user.email or ""
+            
+            # Get user's role (first assigned role name, or "User" as default)
+            role = "User"
+            try:
+                # Get the user's role entities
+                roles_entity = db.query(UserSetupRolesEntity).filter(
+                    UserSetupRolesEntity.usersetup_basic_id == user.id
+                ).first()
+                
+                if roles_entity and roles_entity.assigned_roles:
+                    # Get the first role's name (assigned_roles holds user_role.id)
+                    first_role = db.query(UserRoleBasic).filter(
+                        UserRoleBasic.user_role_id == roles_entity.assigned_roles[0],
+                        UserRoleBasic.active == True
+                    ).first()
+                    
+                    if first_role:
+                        role = first_role.role_name
+            except Exception as e:
+                print(f"[Profile Section] ⚠️ Error fetching user role: {e}")
+            
+            # Get user's status (online/offline based on status field)
+            status = "online" if user.status and user.status.lower() == "active" else "offline"
+            
+            # Get user's avatar (default to a placeholder if not available)
+            avatar = "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=32&h=32&fit=crop"
+            
+            # Update the userData in profileSection
+            if "userData" not in profile_section:
+                profile_section["userData"] = {}
+            
+            profile_section["userData"]["name"] = full_name
+            profile_section["userData"]["email"] = email
+            profile_section["userData"]["role"] = role
+            profile_section["userData"]["status"] = status
+            profile_section["userData"]["avatar"] = profile_section["userData"].get("avatar", avatar)
+            
+            print(f"[Profile Section] ✅ Populated userData: name={full_name}, email={email}, role={role}, status={status}")
+            
+        except Exception as e:
+            print(f"[Profile Section] ❌ Error populating profile section: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return profile_section
     
     async def update_menu_details(self, menu_id: str, update_data: Dict[str, Any]) -> bool:
         """Update menu details in MongoDB by menu_id reference"""

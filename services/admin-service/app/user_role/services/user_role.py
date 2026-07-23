@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.menus.models.menu import Menu
 from app.forms.models.forms import Form
 from app.user_role.schemas.user_role import (
@@ -44,18 +45,23 @@ class UserRoleService:
             db.add(db_role)
             db.commit()
             db.refresh(db_role)
+            fire_audit_log(
+                action="CREATE", object_type="UserRole",
+                object_id=str(db_role.id),
+                new_values={"role_name": db_role.role_name, "role_code": db_role.role_code},
+            )
             return db_role
         except IntegrityError as e:
             db.rollback()
             if "role_name" in str(e.orig):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Role name '{role_data.role_name}' already exists"
+                    detail=f"Role name '{role_data.role_name}' already exists for this client"
                 )
             elif "role_code" in str(e.orig):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Role code '{role_data.role_code}' already exists"
+                    detail=f"Role code '{role_data.role_code}' already exists for this client"
                 )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -93,14 +99,18 @@ class UserRoleService:
         db: Session,
         skip: int = 0,
         limit: int = 100,
-        active_only: bool = False
+        active_only: bool = False,
+        tenant_id: Optional[UUID] = None
     ) -> List[UserRoleBasic]:
-        """Get all user roles with optional filtering"""
+        """Get all user roles, filtered by tenant when provided"""
         query = db.query(UserRoleBasic)
-        
+
+        if tenant_id:
+            query = query.filter(UserRoleBasic.tenant_id == tenant_id)
+
         if active_only:
             query = query.filter(UserRoleBasic.active == True)
-        
+
         return query.offset(skip).limit(limit).all()
 
     @staticmethod
@@ -122,6 +132,11 @@ class UserRoleService:
             
             db.commit()
             db.refresh(db_role)
+            fire_audit_log(
+                action="UPDATE", object_type="UserRole",
+                object_id=str(role_id),
+                new_values=update_data,
+            )
             return db_role
         except IntegrityError as e:
             db.rollback()
@@ -147,6 +162,10 @@ class UserRoleService:
         
         db.delete(db_role_main)
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="UserRole",
+            object_id=str(role_id),
+        )
         return True
 
     # ============================================================================

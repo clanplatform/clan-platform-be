@@ -3,10 +3,10 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 from typing import List, Optional
 from uuid import UUID
-import asyncio
 import logging
 
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
+from app.user_role.models.user_role import UserRoleBasic
 from app.user_setup.schemas.user_setup import (
     UserSetupBasicCreate,
     UserSetupBasicUpdate,
@@ -21,7 +21,7 @@ from app.user_setup.schemas.user_setup import (
 )
 from app.core.security import get_password_hash
 from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
-from app.user_setup.services.identity_db_sync import IdentityDbSync, IdentityDbSyncError
+from app.infrastructure.audit_tenant import fire_audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,49 @@ logger = logging.getLogger(__name__)
 class UserSetupService:
     """Service class for managing user setup operations"""
 
+    @staticmethod
+    def _validate_roles_tenant_match(
+        db: Session,
+        role_ids: list,
+        user_tenant_id,
+        field_name: str = "assigned_roles",
+    ) -> None:
+        """Raise HTTP 400 unless every ID is a user_role.id in the user's tenant.
+
+        role_ids holds user_role.id values, so each is resolved through
+        userrole_basic.user_role_id to reach the tenant. A userrole_basic.id will
+        not resolve here, which is what rejects the pre-013 style of ID.
+        """
+        if not role_ids:
+            return
+        mismatched = []
+        for role_id in role_ids:
+            role = db.query(UserRoleBasic).filter(UserRoleBasic.user_role_id == role_id).first()
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"{field_name}: no role found with user_role ID {role_id}. "
+                        "Expected a user_role.id (the parent role PK), not a userrole_basic.id."
+                    )
+                )
+            if str(role.tenant_id) != str(user_tenant_id):
+                mismatched.append(str(role_id))
+        if mismatched:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"{field_name}: role(s) {mismatched} belong to a different tenant than the user. "
+                    "The role assigned tenant_id and user setup tenant_id must be the same."
+                )
+            )
+
     # ============================================================================
     # UserSetupBasic Operations
     # ============================================================================
 
     @staticmethod
-    def create_user_setup(db: Session, user_data: UserSetupBasicCreate) -> UserSetupBasic:
+    async def create_user_setup(db: Session, user_data: UserSetupBasicCreate) -> UserSetupBasic:
         """Create a new user setup with parent UserSetup record"""
         try:
             # Validate reporting_to if provided
@@ -45,6 +82,13 @@ class UserSetupService:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Manager with ID {user_data.reporting_to} not found. Please create the manager user first or leave reporting_to empty."
                     )
+
+            UserSetupService._validate_roles_tenant_match(
+                db,
+                user_data.manage_roles,
+                user_data.tenant_id,
+                field_name="manage_roles",
+            )
 
             # Create parent UserSetup record first
             db_user_setup = UserSetup()
@@ -57,14 +101,48 @@ class UserSetupService:
             password_hash = get_password_hash(password)  # Hash the password
 
             # Create UserSetupBasic record with reference to parent
+            # can_change_password=True → forced password change on first login
+            # (is_password_change=False); False → user logs straight in and is
+            # redirected to the tenant's application.
             db_user_basic = UserSetupBasic(
                 user_setup_id=db_user_setup.id,
                 password_hash=password_hash,  # Store hashed password
+                is_password_change=not user_dict.get('can_change_password', False),
                 **user_dict
             )
             db.add(db_user_basic)
             db.commit()
             db.refresh(db_user_basic)
+            
+            # Sync user to identity-domain auth-service
+            if AuthServiceSync.sync_enabled():
+                try:
+                    sync_result = await AuthServiceSync.create_auth_user(
+                        user_id=db_user_basic.id,
+                        user_setup_id=db_user_basic.user_setup_id,  # Pass parent ID
+                        username=db_user_basic.username,
+                        email=db_user_basic.email,
+                        password_hash=db_user_basic.password_hash,
+                        firstname=db_user_basic.firstname,
+                        lastname=db_user_basic.lastname,
+                        phone_number=db_user_basic.phone_number,
+                        is_active=(db_user_basic.status == 'active'),
+                        employee_id=db_user_basic.employee_id,
+                        is_password_change=db_user_basic.is_password_change,
+                        tenant_id=db_user_basic.tenant_id,
+                        can_change_password=db_user_basic.can_change_password
+                    )
+                    logger.info(f"User {db_user_basic.username} synced to identity-domain auth-service")
+                except AuthServiceSyncError as e:
+                    logger.error(f"Failed to sync user to auth-service: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during auth-service sync: {str(e)}")
+
+            fire_audit_log(
+                action="CREATE", object_type="UserSetup",
+                object_id=str(db_user_basic.id),
+                new_values={"username": db_user_basic.username, "email": db_user_basic.email},
+            )
             return db_user_basic
         except IntegrityError as e:
             db.rollback()
@@ -150,7 +228,7 @@ class UserSetupService:
         )
 
     @staticmethod
-    def update_user_setup(db: Session, user_id: UUID, user_data: UserSetupBasicUpdate) -> UserSetupBasic:
+    async def update_user_setup(db: Session, user_id: UUID, user_data: UserSetupBasicUpdate) -> UserSetupBasic:
         """Update user setup"""
         db_user = UserSetupService.get_user_setup(db, user_id)
 
@@ -173,6 +251,15 @@ class UserSetupService:
                         detail=f"Manager with ID {update_data['reporting_to']} not found"
                     )
 
+            # Validate manage_roles against the tenant the user will end up in
+            if update_data.get("manage_roles"):
+                UserSetupService._validate_roles_tenant_match(
+                    db,
+                    update_data["manage_roles"],
+                    update_data.get("tenant_id", db_user.tenant_id),
+                    field_name="manage_roles",
+                )
+
             # Hash password if being updated
             if "password" in update_data:
                 password = update_data.pop('password')
@@ -183,6 +270,43 @@ class UserSetupService:
 
             db.commit()
             db.refresh(db_user)
+            
+            # Sync updates to identity-domain auth-service
+            if AuthServiceSync.sync_enabled():
+                try:
+                    # Prepare sync data - only send fields that were updated
+                    sync_data = {}
+                    if "username" in update_data:
+                        sync_data["username"] = update_data["username"]
+                    if "email" in update_data:
+                        sync_data["email"] = update_data["email"]
+                    if "password_hash" in update_data:
+                        sync_data["password_hash"] = update_data["password_hash"]
+                    if "firstname" in update_data:
+                        sync_data["firstname"] = update_data["firstname"]
+                    if "lastname" in update_data:
+                        sync_data["lastname"] = update_data["lastname"]
+                    if "phone_number" in update_data:
+                        sync_data["phone_number"] = update_data["phone_number"]
+                    if "status" in update_data:
+                        sync_data["is_active"] = (update_data["status"] == "active")
+                    
+                    if sync_data:
+                        sync_result = await AuthServiceSync.update_auth_user(
+                            user_id=user_id,
+                            **sync_data
+                        )
+                        logger.info(f"User {user_id} updates synced to identity-domain auth-service")
+                except AuthServiceSyncError as e:
+                    logger.error(f"Failed to sync user updates to auth-service: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during auth-service sync: {str(e)}")
+
+            fire_audit_log(
+                action="UPDATE", object_type="UserSetup",
+                object_id=str(user_id),
+                new_values={k: v for k, v in update_data.items() if k != "password_hash"},
+            )
             return db_user
         except IntegrityError as e:
             db.rollback()
@@ -208,12 +332,27 @@ class UserSetupService:
                 )
 
     @staticmethod
-    def delete_user_setup(db: Session, user_id: UUID) -> dict:
+    async def delete_user_setup(db: Session, user_id: UUID) -> dict:
         """Delete user setup (cascades to roles_entities and preferences)"""
         db_user = UserSetupService.get_user_setup(db, user_id)
         
         db.delete(db_user)
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="UserSetup",
+            object_id=str(user_id),
+        )
+
+        # Sync deletion to identity-domain auth-service
+        if AuthServiceSync.sync_enabled():
+            try:
+                sync_result = await AuthServiceSync.delete_auth_user(user_id)
+                logger.info(f"User {user_id} deletion synced to identity-domain auth-service")
+            except AuthServiceSyncError as e:
+                logger.error(f"Failed to sync user deletion to auth-service: {str(e)}")
+            except Exception as e:
+                logger.error(f"Unexpected error during auth-service sync: {str(e)}")
+        
         return {"message": f"User setup {user_id} deleted successfully"}
 
     # ============================================================================
@@ -230,6 +369,18 @@ class UserSetupService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"User setup with ID {roles_entity_data.user_setup_id} not found"
             )
+
+        # Validate role tenant_id matches user tenant_id
+        if roles_entity_data.assigned_roles:
+            db_user_basic = db.query(UserSetupBasic).filter(
+                UserSetupBasic.user_setup_id == roles_entity_data.user_setup_id
+            ).first()
+            if db_user_basic:
+                UserSetupService._validate_roles_tenant_match(
+                    db,
+                    roles_entity_data.assigned_roles,
+                    db_user_basic.tenant_id
+                )
 
         try:
             db_roles_entity = UserSetupRolesEntity(**roles_entity_data.model_dump())
@@ -260,7 +411,19 @@ class UserSetupService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Roles/entities assignment with ID {roles_entity_id} not found"
             )
-        
+
+        # Validate role tenant_id matches user tenant_id when roles are being updated
+        if roles_entity_data.assigned_roles:
+            db_user_basic = db.query(UserSetupBasic).filter(
+                UserSetupBasic.user_setup_id == db_roles_entity.user_setup_id
+            ).first()
+            if db_user_basic:
+                UserSetupService._validate_roles_tenant_match(
+                    db,
+                    roles_entity_data.assigned_roles,
+                    db_user_basic.tenant_id
+                )
+
         try:
             update_data = roles_entity_data.model_dump(exclude_unset=True)
             for field, value in update_data.items():
@@ -369,11 +532,8 @@ class UserSetupService:
     # ============================================================================
 
     @staticmethod
-    def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
+    async def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
         """Create a user setup with roles, entities, and preferences in one transaction"""
-        print("="*80)
-        print(f"METHOD CALLED: create_user_setup_with_details for user: {user_data.basic.username}")
-        print("="*80)
         try:
             # Validate reporting_to if provided
             if user_data.basic.reporting_to:
@@ -383,6 +543,21 @@ class UserSetupService:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Manager with ID {user_data.basic.reporting_to} not found. Please create the manager user first or leave reporting_to empty."
                     )
+
+            # Both role arrays must hold user_role.id — validate before any writes
+            UserSetupService._validate_roles_tenant_match(
+                db,
+                user_data.basic.manage_roles,
+                user_data.basic.tenant_id,
+                field_name="manage_roles",
+            )
+            if user_data.roles_entities:
+                UserSetupService._validate_roles_tenant_match(
+                    db,
+                    user_data.roles_entities.assigned_roles,
+                    user_data.basic.tenant_id,
+                    field_name="assigned_roles",
+                )
 
             # Create parent UserSetup record first
             db_user_setup = UserSetup()
@@ -395,15 +570,19 @@ class UserSetupService:
             password_hash = get_password_hash(password)  # Hash the password
 
             # Create basic user setup with reference to parent
+            # can_change_password=True → forced password change on first login
+            # (is_password_change=False); False → user logs straight in and is
+            # redirected to the tenant's application.
             db_user_basic = UserSetupBasic(
                 user_setup_id=db_user_setup.id,
                 password_hash=password_hash,  # Store hashed password
+                is_password_change=not user_dict.get('can_change_password', False),
                 **user_dict
             )
             db.add(db_user_basic)
             db.flush()  # Get the ID without committing
 
-            # Create roles and entities assignment if provided
+            # Create roles and entities assignment if provided (already validated above)
             if user_data.roles_entities:
                 db_roles_entity = UserSetupRolesEntity(
                     user_setup_id=db_user_setup.id,
@@ -438,74 +617,40 @@ class UserSetupService:
                 db.add(db_preference)
 
             # Commit the transaction to admin-service database
-            print(f"BEFORE COMMIT: About to commit user {user_data.basic.username}")
             db.commit()
             db.refresh(db_user_basic)
-            print(f"AFTER COMMIT: User {db_user_basic.username} committed, ID: {db_user_basic.id}")
+            logger.info("User created successfully in admin-service database")
             
-            # DEBUG: Log before sync check
-            print("=" * 80)
-            print("SYNC DEBUG: Starting identity database sync check")
-            print(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
-            logger.info("=" * 80)
-            logger.info("SYNC DEBUG: Starting identity database sync check")
-            logger.info(f"SYNC DEBUG: User created in admin DB - ID: {db_user_basic.id}, Username: {db_user_basic.username}")
-            
-            # Sync with identity database (direct database connection)
-            sync_enabled = IdentityDbSync.sync_enabled()
-            print(f"SYNC DEBUG: sync_enabled() returned: {sync_enabled}")
-            logger.info(f"SYNC DEBUG: sync_enabled() returned: {sync_enabled}")
-            
-            if sync_enabled:
+            # Sync user to identity-domain auth-service
+            if AuthServiceSync.sync_enabled():
                 try:
-                    print("SYNC DEBUG: Attempting to sync user to identity database...")
-                    logger.info("SYNC DEBUG: Attempting to sync user to identity database...")
-                    # Direct database sync to clan-identity-postgres
-                    sync_result = IdentityDbSync.create_auth_user(
+                    logger.info(f"SYNC: Attempting to sync user {db_user_basic.username} to auth-service")
+                    sync_result = await AuthServiceSync.create_auth_user(
                         user_id=db_user_basic.id,
+                        user_setup_id=db_user_basic.user_setup_id,  # Pass parent ID
                         username=db_user_basic.username,
                         email=db_user_basic.email,
-                        password_hash=password_hash,
+                        password_hash=db_user_basic.password_hash,
                         firstname=db_user_basic.firstname,
                         lastname=db_user_basic.lastname,
-                        employee_id=db_user_basic.employee_id,
                         phone_number=db_user_basic.phone_number,
-                        status=db_user_basic.status,
-                        start_date=db_user_basic.start_date,
-                        end_date=db_user_basic.end_date,
-                        tem_employee=db_user_basic.tem_employee,
-                        department=db_user_basic.department,
-                        division=db_user_basic.division,
-                        job_code=db_user_basic.job_code,
-                        manage_roles=db_user_basic.manage_roles,
-                        default_dept=db_user_basic.default_dept,
-                        reporting_to=db_user_basic.reporting_to,
-                        entities=db_user_basic.entities,
-                        default_entity=db_user_basic.default_entity,
-                        view=db_user_basic.view,
-                        dashboard_view=db_user_basic.dashboard_view
+                        is_active=(db_user_basic.status == 'active'),
+                        employee_id=db_user_basic.employee_id,
+                        is_password_change=db_user_basic.is_password_change,
+                        tenant_id=db_user_basic.tenant_id,
+                        can_change_password=db_user_basic.can_change_password
                     )
-                    logger.info("=" * 80)
-                    logger.info(f"SYNC DEBUG: Sync completed successfully!")
-                    logger.info(f"SYNC DEBUG: Result: {sync_result}")
-                    logger.info("=" * 80)
-                except IdentityDbSyncError as e:
-                    # Log the error but don't fail the user creation
-                    logger.error("=" * 80)
-                    logger.error(f"SYNC DEBUG: Sync failed with IdentityDbSyncError!")
-                    logger.error(f"SYNC DEBUG: Error: {str(e)}")
-                    logger.error("=" * 80)
-                    logger.warning("User created in admin-service but not synced to identity database. Manual sync may be required.")
+                    logger.info(f"SYNC SUCCESS: User synced to auth-service - {sync_result}")
+                    logger.info(f"User {db_user_basic.username} synced to identity-domain auth-service")
+                except AuthServiceSyncError as e:
+                    # Log the error but don't rollback the admin-service transaction
+                    logger.error(f"SYNC ERROR - Failed to sync user to auth-service: {str(e)}")
+                    # Optionally, you can raise an exception or return a warning
+                    # For now, we'll continue and let the user be created in admin-service only
                 except Exception as e:
-                    logger.error("=" * 80)
-                    logger.error(f"SYNC DEBUG: Sync failed with unexpected exception!")
-                    logger.error(f"SYNC DEBUG: Exception type: {type(e).__name__}")
-                    logger.error(f"SYNC DEBUG: Error: {str(e)}")
-                    logger.error("=" * 80)
+                    logger.error(f"SYNC UNEXPECTED ERROR during auth-service sync: {str(e)}")
             else:
-                logger.warning("=" * 80)
-                logger.warning("SYNC DEBUG: Identity database sync is disabled (IDENTITY_DATABASE_URL not configured)")
-                logger.warning("=" * 80)
+                logger.warning("SYNC DISABLED - Auth service sync is disabled (IDENTITY_SERVICE_URL not configured)")
             
             return UserSetupService.get_user_setup_with_details(db, db_user_basic.id)
         except IntegrityError as e:

@@ -8,6 +8,7 @@ from app.applications.models.application import Application
 from app.modules.models.module import Module
 from app.menus.models.menu import Menu
 from app.menu_language.schemas.menu_language import MenuLanguageCreate, MenuLanguageUpdate
+from app.infrastructure.audit_tenant import fire_audit_log
 
 
 class MenuLanguageService:
@@ -29,6 +30,11 @@ class MenuLanguageService:
         db.add(db_menu_language)
         db.commit()
         db.refresh(db_menu_language)
+        fire_audit_log(
+            action="CREATE", object_type="MenuLanguage",
+            object_id=str(db_menu_language.id),
+            new_values={"lang_code": db_menu_language.lang_code, "entity_id": str(db_menu_language.app_menu_entity_id)},
+        )
         return db_menu_language
 
     def get_menu_language_by_id(

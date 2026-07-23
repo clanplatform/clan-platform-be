@@ -1,11 +1,11 @@
 from typing import Dict, List, Optional, Any
 from motor.motor_asyncio import AsyncIOMotorCollection
-from app.infrastructure.mongodb.mongodb_admin import MongoDBadmin
+from app.core.mongodb import mongodb
 from bson import ObjectId
 from datetime import datetime
 
 class BaseMongoService:
-    """Base service class for MongoDB operations"""
+    """Base service class for MongoDB operation's"""
     
     def __init__(self, collection_name: str):
         self.collection_name = collection_name

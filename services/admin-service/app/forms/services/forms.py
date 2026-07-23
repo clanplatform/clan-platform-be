@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc, func
 from app.forms.models.forms import Form
 from app.forms.schemas.forms import FormCreate, FormUpdate, FormImport
+from app.infrastructure.audit_tenant import fire_audit_log
 from datetime import datetime
 
 class FormsService:
@@ -19,6 +20,12 @@ class FormsService:
         db.add(db_form)
         db.commit()
         db.refresh(db_form)
+        fire_audit_log(
+            action="CREATE", object_type="Form",
+            object_id=str(db_form.id),
+            user_id=created_by,
+            new_values={"name": db_form.name, "menu_id": str(db_form.menu_id) if db_form.menu_id else None},
+        )
         return db_form
 
     @staticmethod
@@ -159,6 +166,12 @@ class FormsService:
         
         db.commit()
         db.refresh(db_form)
+        fire_audit_log(
+            action="UPDATE", object_type="Form",
+            object_id=str(form_id),
+            user_id=updated_by,
+            new_values=update_data,
+        )
         return db_form
 
     @staticmethod
@@ -172,8 +185,14 @@ class FormsService:
         db_form.is_active = False
         if deleted_by:
             db_form.updated_by = deleted_by
-        
+
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="Form",
+            object_id=str(form_id),
+            user_id=deleted_by,
+            old_values={"is_deleted": False}, new_values={"is_deleted": True},
+        )
         return True
 
     @staticmethod

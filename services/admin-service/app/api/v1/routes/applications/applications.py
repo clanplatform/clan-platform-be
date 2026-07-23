@@ -1,15 +1,19 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.applications.models.application import Application
 from app.menus.models.menu import Menu
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse
+from app.applications.exceptions import ApplicationNotFoundError, DuplicateApplicationNameError
+from app.core.access import is_active_from_access
 from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.mongodb.mongodb_admin import get_mongodb
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_tenant import fire_audit_log
 from bson import ObjectId
 import uuid
 
@@ -17,6 +21,7 @@ router = APIRouter()
 
 @router.get("/", response_model=List[ApplicationResponse])
 def get_applications(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     domain_id: Optional[uuid.UUID] = None,
@@ -38,7 +43,7 @@ def get_applications(
 
         # Query database if not in cache
         query = db.query(Application).filter(Application.is_active == True)
-        
+
         # Check if is_deleted column exists before filtering
         try:
             query = query.filter(Application.is_deleted == False)
@@ -90,6 +95,21 @@ def get_applications(
         except Exception as cache_error:
             print(f"Redis cache set error (continuing without cache): {str(cache_error)}")
 
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Application",
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return applications
         
     except Exception as e:
@@ -110,10 +130,7 @@ def get_applications(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
     return application
 
 @router.get("/{application_id}/menus")
@@ -149,10 +166,7 @@ async def get_menus_by_application(
     ).first()
     
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application with id {application_id} not found"
-        )
+        raise ApplicationNotFoundError(str(application_id))
     
     # Create cache key
     cache_key = f"menus:application:{application_id}:navigation:skip={skip}:limit={limit}:children={include_children}"
@@ -314,6 +328,28 @@ async def get_menus_by_application(
     profile_section = master_doc.get("profileSection", {})
     config = master_doc.get("config", {})
     
+    # Populate profileSection with logged-in user's data dynamically
+    try:
+        from app.menu_details.services.menu_details import menu_details_service
+        from app.user_setup.models.user_setup import UserSetupBasic
+        from uuid import UUID
+        
+        # Get the user from database
+        user_id = current_user.get("user_id") or current_user.get("id")
+        if user_id:
+            try:
+                user_uuid = UUID(user_id)
+                user = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_uuid).first()
+                
+                if user:
+                    profile_section = menu_details_service.populate_profile_section_with_user_data(
+                        profile_section, user, db
+                    )
+            except Exception as e:
+                print(f"[Get Application Menus] ⚠️ Error fetching user: {str(e)}")
+    except Exception as e:
+        print(f"[Get Application Menus] ⚠️ Error populating profile section: {str(e)}")
+    
     # Clean userData fields (ensure simple strings, not {value, color} objects)
     if profile_section and "userData" in profile_section:
         user_data = profile_section["userData"]
@@ -347,6 +383,7 @@ async def get_menus_by_application(
 
 @router.get("/domain/{domain_id}", response_model=List[ApplicationResponse])
 def get_applications_by_domain(
+    request: Request,
     domain_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
@@ -419,11 +456,28 @@ def get_applications_by_domain(
     
     # Cache the result for 30 minutes
     redis_cache.set(cache_key, apps_list, ttl=settings.CACHE_DEFAULT_TTL)
-    
+
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Application",
+            object_id=str(domain_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return applications
 
 @router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
 def create_application(
+    request: Request,
     application_data: ApplicationCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -436,10 +490,7 @@ def create_application(
             Application.domain_id == application_data.domain_id
         ).first()
         if existing_application:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Application with this name already exists in the domain"
-            )
+            raise DuplicateApplicationNameError()
 
         # Create application using dict() method
         application_dict = application_data.dict()
@@ -475,6 +526,30 @@ def create_application(
         # Invalidate applications list cache
         redis_cache.delete_pattern("applications:list:*")
 
+        # Audit log: application created
+        try:
+            tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Application",
+                object_id=str(application.id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id,
+                entity_id=entity_id,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={
+                    "name": application.name,
+                    "domain_id": str(application.domain_id),
+                    "status": application.status,
+                    "is_active": application.is_active,
+                },
+            )
+        except Exception:
+            pass
+
         return application
         
     except HTTPException:
@@ -496,6 +571,7 @@ def create_application(
 
 @router.put("/{application_id}", response_model=ApplicationResponse)
 async def update_application(
+    request: Request,
     application_id: uuid.UUID,
     application_data: ApplicationUpdate,
     nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
@@ -518,25 +594,42 @@ async def update_application(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
 
-    # Check if new name conflicts with existing application in the same domain
-    if application_data.name and application_data.name != application.name:
+    # Check if new name conflicts with existing application in the target domain
+    target_domain_id = application_data.domain_id or application.domain_id
+    if application_data.name and application_data.name != application.name or (
+        application_data.domain_id and application_data.domain_id != application.domain_id
+    ):
         existing_application = db.query(Application).filter(
-            Application.name == application_data.name,
-            Application.domain_id == application.domain_id
+            Application.name == (application_data.name or application.name),
+            Application.domain_id == target_domain_id,
+            Application.id != application.id
         ).first()
         if existing_application:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Application with this name already exists in the domain"
-            )
+            raise DuplicateApplicationNameError()
+
+    # Capture old values before update for audit
+    old_values = {
+        "name": application.name,
+        "domain_id": str(application.domain_id),
+        "status": application.status,
+        "is_active": application.is_active,
+    }
 
     # Update PostgreSQL
     update_data = application_data.dict(exclude_unset=True)
+
+    # Keep is_active in sync when access changes: "disable" forces it off,
+    # "write"/"read" keep it on (access wins over any is_active in the payload).
+    # Without this, an app left is_active=False stays that way even after the
+    # access change, and the MongoDB sync below silently no-ops since it
+    # requires is_active=True - modules then appear to "disappear".
+    if "access" in update_data:
+        derived_active = is_active_from_access(update_data.get("access"))
+        if derived_active is not None:
+            update_data["is_active"] = derived_active
+
     for field, value in update_data.items():
         setattr(application, field, value)
 
@@ -545,62 +638,37 @@ async def update_application(
 
     print(f"[Application Update] ✅ PostgreSQL updated")
 
-    # Sync to MongoDB navigation structure
+    # Audit log: application updated
     try:
-        db_mongo = await get_mongodb()
-        if db_mongo is not None:
-            print(f"[Application Update] Syncing to MongoDB...")
+        tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="UPDATE",
+            object_type="Application",
+            object_id=str(application.id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            old_values=old_values,
+            new_values=update_data,
+        )
+    except Exception:
+        pass
 
-            # Convert nav_doc_id to ObjectId
-            try:
-                doc_id = ObjectId(nav_doc_id)
-            except Exception:
-                print(f"[Application Update] ⚠️ Invalid nav_doc_id: {nav_doc_id}")
-                doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-
-            # Fetch the navigation document
-            nav_doc = await db_mongo.menu_details.find_one({"_id": doc_id})
-
-            if nav_doc:
-                main_navigation = nav_doc.get("mainNavigation", [])
-
-                # Find and update the application in mainNavigation
-                updated = False
-                for app_item in main_navigation:
-                    if app_item.get("application_id") == str(application_id):
-                        # Update application fields in MongoDB
-                        if "key" in update_data:
-                            app_item["key"] = update_data["key"]
-                        if "label" in update_data:
-                            app_item["label"] = update_data["label"]
-                        if "route" in update_data:
-                            app_item["route"] = update_data["route"]
-                        if "icon" in update_data:
-                            app_item["icon"] = update_data["icon"]
-                        if "badge" in update_data:
-                            app_item["badge"] = update_data["badge"]
-                        if "section_title" in update_data:
-                            app_item["sectionTitle"] = update_data["section_title"]
-                        if "name" in update_data:
-                            app_item["application_name"] = update_data["name"]
-
-                        updated = True
-                        print(f"[Application Update] ✅ Found and updated application in MongoDB")
-                        break
-
-                if updated:
-                    # Save the updated document back to MongoDB
-                    result = await db_mongo.menu_details.replace_one(
-                        {"_id": doc_id},
-                        nav_doc
-                    )
-                    print(f"[Application Update] ✅ MongoDB updated (modified={result.modified_count})")
-                else:
-                    print(f"[Application Update] ⚠️ Application not found in mainNavigation")
-            else:
-                print(f"[Application Update] ⚠️ Navigation document not found")
+    # Sync to MongoDB: full rebuild of this application's navigation document.
+    # mainNavigation holds ObjectId references to per-application documents, so
+    # the app doc itself must be updated - the shared sync refreshes its
+    # application-level fields (key, label, icon, route, ...) from PostgreSQL.
+    try:
+        from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+        synced = await sync_application_menus_to_mongodb(db, application.id)
+        if synced:
+            print(f"[Application Update] ✅ MongoDB navigation synced")
         else:
-            print(f"[Application Update] ⚠️ MongoDB not available, skipping sync")
+            print(f"[Application Update] ⚠️ MongoDB sync skipped (not available)")
     except Exception as e:
         print(f"[Application Update] ⚠️ MongoDB sync failed: {e}")
         import traceback
@@ -616,7 +684,8 @@ async def update_application(
     return application
 
 @router.delete("/{application_id}", status_code=status.HTTP_200_OK)
-def delete_application(
+async def delete_application(
+    request: Request,
     application_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -628,21 +697,54 @@ def delete_application(
         Application.is_deleted == False
     ).first()
     if not application:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found"
-        )
+        raise ApplicationNotFoundError()
     
     try:
         # Import datetime for soft delete
         from datetime import datetime
-        
+
+        # Snapshot name before soft delete for audit
+        old_name = application.name
+
         # Soft delete - set flags and timestamp
         application.is_active = False
         application.is_deleted = True
         application.deleted_at = datetime.utcnow()
-        
+
         db.commit()
+
+        # Audit log: application deleted
+        try:
+            tenant_id, entity_id = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="DELETE",
+                object_type="Application",
+                object_id=str(application_id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id,
+                entity_id=entity_id,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["DELETE"],
+                old_values={"name": old_name, "id": str(application_id)},
+            )
+        except Exception:
+            pass
+
+        # Remove the application's navigation document(s) from MongoDB and the
+        # master mainNavigation reference (non-fatal: PostgreSQL delete stands)
+        try:
+            from app.menus.services.menu_sync import remove_application_from_mongodb
+            await remove_application_from_mongodb(application_id)
+        except Exception as mongo_error:
+            print(f"[Application Delete] ⚠️ MongoDB cleanup failed: {mongo_error}")
+
+        # Invalidate caches
+        redis_cache.delete(f"application:{application_id}")
+        redis_cache.delete_pattern("applications:list:*")
+        redis_cache.delete_pattern("menus:*")
+
         return {"message": "Application deleted successfully", "application_id": str(application_id)}
     except Exception as e:
         db.rollback()

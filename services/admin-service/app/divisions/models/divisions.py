@@ -10,8 +10,8 @@ class Division(Base):
     __tablename__ = "divisions"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id"), nullable=False)
-    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=False)
+    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=False)
     division_name = Column(String(100), nullable=False)
     division_code = Column(String(20), nullable=False)
     department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
@@ -25,7 +25,7 @@ class Division(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    client = relationship("Client")
+    tenant = relationship("Tenant")
     entity = relationship("Entity", back_populates="divisions")
     department = relationship("Department", back_populates="divisions")
     parent_division = relationship("Division", remote_side=[id], back_populates="child_divisions")

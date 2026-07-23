@@ -1,10 +1,12 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Sequence
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
 from app.infrastructure.database.base import Base
+
+_sino_seq = Sequence('role_form_permission_sino_seq')
 
 
 class RoleFormPermission(Base):
@@ -16,15 +18,15 @@ class RoleFormPermission(Base):
 
     # Primary key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    
-    # Serial number for ordering/display - auto-incremented by database sequence
+
+    # Serial number — sequence is declared here so create_all() emits CREATE SEQUENCE first
     sino = Column(
-        Integer, 
-        nullable=False, 
-        unique=True, 
+        Integer,
+        _sino_seq,
+        server_default=_sino_seq.next_value(),
+        nullable=False,
+        unique=True,
         index=True,
-        server_default=text("nextval('role_form_permission_sino_seq'::regclass)"),
-        comment="Serial number for ordering"
     )
     
     # Foreign keys to user role tables

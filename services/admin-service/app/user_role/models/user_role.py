@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey, Integer, Time
+from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey, Integer, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import relationship
@@ -36,12 +36,17 @@ class UserRoleBasic(Base):
     References user_role.id as foreign key.
     """
     __tablename__ = "userrole_basic"
+    __table_args__ = (
+        UniqueConstraint('tenant_id', 'role_name', name='uq_userrole_basic_tenant_role_name'),
+        UniqueConstraint('tenant_id', 'role_code', name='uq_userrole_basic_tenant_role_code'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_role_id = Column(UUID(as_uuid=True), ForeignKey("user_role.id", ondelete="CASCADE"), nullable=False, unique=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=True, index=True)
 
-    role_name = Column(String(100), nullable=False, unique=True)
-    role_code = Column(String(50), nullable=False, unique=True)
+    role_name = Column(String(100), nullable=False)
+    role_code = Column(String(50), nullable=False)
     description = Column(Text, nullable=True)
     role_level = Column(Integer, nullable=False, default=1)
     system_role = Column(Boolean, default=False, nullable=False)

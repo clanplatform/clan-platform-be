@@ -47,6 +47,9 @@ class UserSetupBasic(Base):
     password_hash = Column(String(255), nullable=False)  # Hashed password
     password_changed = Column(DateTime(timezone=True), nullable=True)  # Last password change timestamp
     is_password_change = Column(Boolean, default=False, nullable=False)  # Flag to indicate if user needs to change password
+    # True → first-login password-change flow applies; False → user logs
+    # straight in and is redirected to the tenant's application.
+    can_change_password = Column(Boolean, default=True, server_default='true', nullable=False)
 
     # Employment Status
     status = Column(String(50), nullable=False, default='active')  # active, inactive, suspended, etc.
@@ -60,7 +63,7 @@ class UserSetupBasic(Base):
     job_code = Column(UUID(as_uuid=True), ForeignKey("job_codes.id"), nullable=True)
 
     # Role Management
-    manage_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of role IDs user can manage
+    manage_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of user_role.id the user can manage
 
     # Default Settings
     default_dept = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
@@ -69,6 +72,14 @@ class UserSetupBasic(Base):
     # Entity Access (dropdown selection)
     entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of entity IDs
     default_entity = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
+
+    # Tenant
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=True, index=True)
+
+    # Allowed origins for master-DB users (tenant_id NULL) — tenant users get
+    # theirs from tenants.allowed_origins; this is the per-user equivalent
+    # (e.g. post-login redirect target for platform users).
+    allowed_origins = Column(ARRAY(Text()), nullable=True)
 
     # View Preferences
     view = Column(String(50), nullable=True)  # e.g., 'grid', 'list', 'card'
@@ -79,6 +90,7 @@ class UserSetupBasic(Base):
 
     # Relationships
     user_setup = relationship("UserSetup", back_populates="basic")
+    tenant = relationship("Tenant", foreign_keys=[tenant_id])
     department_rel = relationship("Department", foreign_keys=[department])
     default_dept_rel = relationship("Department", foreign_keys=[default_dept])
     division_rel = relationship("Division", foreign_keys=[division])
@@ -96,38 +108,29 @@ class UserSetupBasic(Base):
         # Check if email contains 'admin' (for development/testing)
         if self.email and 'admin' in self.email.lower():
             return True
-        
+
         # Check if user has admin roles assigned
         if hasattr(self, 'roles_entities') and self.roles_entities:
-            from app.models.user_role import UserRoleBasic
-            from app.db.database import SessionLocal
-            
+            from app.user_role.models.user_role import UserRoleBasic
+            from app.infrastructure.database.session import SessionLocal
+
             db = SessionLocal()
             try:
                 for role_entity in self.roles_entities:
                     if role_entity.assigned_roles:
-                        # Query the roles to check if any are admin roles
+                        # assigned_roles holds user_role.id, so resolve via user_role_id
                         admin_roles = db.query(UserRoleBasic).filter(
-                            UserRoleBasic.id.in_(role_entity.assigned_roles),
+                            UserRoleBasic.user_role_id.in_(role_entity.assigned_roles),
                             UserRoleBasic.is_admin == True,
                             UserRoleBasic.active == True
                         ).first()
-                        
+
                         if admin_roles:
                             return True
             finally:
                 db.close()
-        
-        return False
 
-    @property
-    def client_id(self):
-        """Get client_id from roles_entities relationship"""
-        if hasattr(self, 'roles_entities') and self.roles_entities:
-            for role_entity in self.roles_entities:
-                if role_entity.assigned_client_id:
-                    return role_entity.assigned_client_id
-        return None
+        return False
 
 
 class UserSetupRolesEntity(Base):
@@ -142,14 +145,14 @@ class UserSetupRolesEntity(Base):
     user_setup_id = Column(UUID(as_uuid=True), ForeignKey("user_setup.id", ondelete="CASCADE"), nullable=False)
     usersetup_basic_id = Column(UUID(as_uuid=True), ForeignKey("usersetup_basic.id", ondelete="CASCADE"), nullable=False)
 
-    # Assigned Roles - Array of role IDs from userrole_basic table
+    # Assigned Roles - Array of user_role.id (the parent role PK, not userrole_basic.id)
     assigned_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
 
     # Assigned Entities - Array of entity IDs
     assigned_entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
 
-    # Assigned Client - Foreign key to clients table
-    assigned_client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="SET NULL"), nullable=True)
+    # Assigned Tenant - Foreign key to tenants table
+    assigned_tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="SET NULL"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -157,10 +160,10 @@ class UserSetupRolesEntity(Base):
     # Relationships
     user_setup = relationship("UserSetup", back_populates="roles_entities")
     usersetup_basic = relationship("UserSetupBasic", backref="roles_entities")
-    assigned_client = relationship("Client", foreign_keys=[assigned_client_id])
+    assigned_tenant = relationship("Tenant", foreign_keys=[assigned_tenant_id])
 
     def __repr__(self):
-        return f"<UserSetupRolesEntity(id={self.id}, user_setup_id={self.user_setup_id}, usersetup_basic_id={self.usersetup_basic_id}, assigned_roles={self.assigned_roles}, assigned_client_id={self.assigned_client_id})>"
+        return f"<UserSetupRolesEntity(id={self.id}, user_setup_id={self.user_setup_id}, usersetup_basic_id={self.usersetup_basic_id}, assigned_roles={self.assigned_roles}, assigned_tenant_id={self.assigned_tenant_id})>"
 
 
 class UserSetupPreference(Base):
@@ -180,6 +183,8 @@ class UserSetupPreference(Base):
     language = Column(String(10), nullable=False, default='en')  # e.g., 'en', 'es', 'fr'
     timezone = Column(String(50), nullable=False, default='UTC')  # e.g., 'America/New_York', 'UTC'
     theme = Column(String(20), nullable=False, default='light')  # e.g., 'light', 'dark', 'auto'
+    accent_color = Column(String(50), nullable=False, default='blue', server_default='blue')  # e.g., 'blue'
+    density = Column(String(20), nullable=False, default='comfortable', server_default='comfortable')  # compact | comfortable | spacious
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

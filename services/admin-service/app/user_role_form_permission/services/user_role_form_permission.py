@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from math import ceil
 
 from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 from app.forms.models.forms import Form
 from app.user_role_form_permission.schemas.user_role_form_permission import (
@@ -85,6 +86,11 @@ class RoleFormPermissionService:
             db.add(db_permission)
             db.commit()
             db.refresh(db_permission)
+            fire_audit_log(
+                action="CREATE", object_type="RoleFormPermission",
+                object_id=str(db_permission.id),
+                new_values={"user_role_id": str(db_permission.user_role_id), "form_access": db_permission.form_access},
+            )
             return db_permission
 
         except IntegrityError as e:
@@ -220,6 +226,10 @@ class RoleFormPermissionService:
 
             db.commit()
             db.refresh(db_permission)
+            fire_audit_log(
+                action="UPDATE", object_type="RoleFormPermission",
+                object_id=str(permission_id),
+            )
             return db_permission
 
         except IntegrityError as e:
@@ -244,6 +254,10 @@ class RoleFormPermissionService:
 
         db.delete(db_permission)
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="RoleFormPermission",
+            object_id=str(permission_id),
+        )
         return True
 
     @staticmethod

@@ -1,0 +1,57 @@
+# ================================================
+# .dockerignore — project root
+# Used when building from root context (e.g. CI/CD pipelines)
+# ================================================
+
+# ==================== ENV FILES (NEVER BAKE INTO IMAGE) ====================
+.env
+.env.*
+*.env
+config/environments/.env.local
+config/environments/.env.dev
+config/environments/.env.uat
+config/environments/.env.prod
+
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+wheels/
+venv/
+env/
+ENV/
+.venv/
+
+# ==================== Testing ====================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# ==================== IDE ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==================== Git ====================
+.git/
+.gitignore
+
+# ==================== Logs ====================
+*.log
+
+# ==================== Database ====================
+*.db
+*.sqlite

@@ -8,7 +8,6 @@ from fastapi import HTTPException, status
 from typing import List, Dict, Optional
 from uuid import UUID
 import logging
-from datetime import datetime
 
 from app.menus.models.menu import Menu
 from app.menu_reorder.schemas.menu_reorder import (
@@ -19,7 +18,6 @@ from app.menu_reorder.schemas.menu_reorder import (
     MenuBatchUpdateRequest,
     MenuBatchUpdateResponse
 )
-from app.infrastructure.mongodb.mongodb_admin import get_mongodb
 
 logger = logging.getLogger(__name__)
 
@@ -30,347 +28,33 @@ class MenuReorderService:
     @staticmethod
     async def sync_to_mongodb(db: Session, application_id: UUID, affected_module_ids: set = None):
         """
-        Sync menu order changes to MongoDB for a specific application document
-        Updates ONLY the application's own document, not the master navigation
-        This ensures menus stay within their application boundaries
-        
-        Builds proper hierarchy: Application → Modules → Menus → Children
-        Only includes modules that have menus being reordered (if affected_module_ids provided)
-        
-        Args:
-            db: Database session
-            application_id: Application ID to sync
-            affected_module_ids: Set of module IDs that have menus being reordered (optional)
+        Sync menu order changes to MongoDB for a specific application document.
+        Thin wrapper - the actual implementation lives in
+        app.menus.services.menu_sync (shared with the menu create routes).
+
+        affected_module_ids is accepted for backward compatibility; the shared
+        sync always rebuilds the full application document so no module can
+        disappear from the navigation.
         """
- 
-        try:
-            # Get MongoDB connection
-            db_mongo = await get_mongodb()
-            if db_mongo is None:
-                logger.warning("MongoDB not connected, skipping sync")
-                return False
-            
-            # Test MongoDB connection - use the client from the mongodb instance
-            from app.core.mongodb import mongodb
-            if mongodb.client:
-                # Skip ping test for now to isolate the issue
-                logger.info("MongoDB connection verified (ping skipped)")
-            else:
-                logger.warning("MongoDB client not available, skipping sync")
-                return False
-            
-            # ✅ Get ALL modules for this application (always include all modules in MongoDB)
-            from app.modules.models.module import Module as ModuleModel
-            
-            # Always get all modules to prevent other modules from disappearing
-            modules = db.query(ModuleModel).filter(
-                ModuleModel.application_id == application_id,
-                ModuleModel.is_deleted == False
-            ).order_by(ModuleModel.order_index).all()
-            
-            if affected_module_ids:
-                logger.info(f"[MongoDB Sync] Syncing all {len(modules)} modules (affected: {affected_module_ids})")
-            else:
-                logger.info(f"[MongoDB Sync] Syncing all {len(modules)} modules")
-            
-            # ✅ Get all menus for this application ordered by level and order_index
-            menus = db.query(Menu).filter(
-                Menu.application_id == application_id,
-                Menu.deleted_at.is_(None)
-            ).order_by(Menu.level, Menu.order_index).all()
-            
-            if not modules and not menus:
-                logger.warning(f"No modules or menus found for application {application_id}")
-                return False
-            
-            logger.info(f"[MongoDB Sync] Found {len(modules)} modules and {len(menus)} menus for application {application_id}")
-            
-            # Build hierarchical structure: Application → Modules → Menus → Children
-            menu_dict = {menu.id: menu for menu in menus}
-            
-            def build_menu_tree(parent_menu, depth=0):
-                """Recursively build menu tree with all menu fields including order_index
-                
-                Args:
-                    parent_menu: The parent menu object
-                    depth: Current recursion depth for logging (0 = root)
-                
-                Returns:
-                    dict: Menu data with nested children
-                """
-                indent = "  " * depth
-                
-                # Find all direct children of this parent menu
-                children = [
-                    menu for menu in menus 
-                    if menu.parent_menu_id == parent_menu.id
-                ]
-                
-                logger.info(f"[MongoDB Sync]{indent} Building menu '{parent_menu.label}' (level {parent_menu.level}, depth {depth}): found {len(children)} direct children")
-                
-                menu_data = {
-                    "key": parent_menu.key or parent_menu.name or str(parent_menu.id),
-                    "name": parent_menu.name,
-                    "label": parent_menu.label,
-                    "route": parent_menu.route,
-                    "icon": parent_menu.icon,
-                    "component": parent_menu.component,
-                    "menu_id": str(parent_menu.id),  # PostgreSQL UUID
-                    "application_id": str(parent_menu.application_id),
-                    "module_id": str(parent_menu.module_id) if parent_menu.module_id else None,  # ✅ Include module_id
-                    "order_index": parent_menu.order_index,  # ✅ Include order_index
-                    "level": parent_menu.level,  # ✅ Include level
-                    "is_visible": parent_menu.is_visible,
-                    "is_active": parent_menu.is_active,
-                    "showtopbar": parent_menu.showtopbar,
-                    "showsidebar": parent_menu.showsidebar
-                }
-                
-                # Add optional fields if they exist
-                if hasattr(parent_menu, 'badge') and parent_menu.badge:
-                    menu_data["badge"] = parent_menu.badge
-                if hasattr(parent_menu, 'section_title') and parent_menu.section_title:
-                    menu_data["sectionTitle"] = parent_menu.section_title  # ✅ Use camelCase for MongoDB
-                if hasattr(parent_menu, 'menus_description') and parent_menu.menus_description:
-                    menu_data["description"] = parent_menu.menus_description
-                if hasattr(parent_menu, 'mongo_id') and parent_menu.mongo_id:
-                    menu_data["menu_object_id"] = parent_menu.mongo_id
-                if hasattr(parent_menu, 'access') and parent_menu.access:
-                    menu_data["access"] = parent_menu.access
-                if hasattr(parent_menu, 'menu_metadata') and parent_menu.menu_metadata:
-                    menu_data["menu_metadata"] = parent_menu.menu_metadata
-                
-                # ✅ ALWAYS initialize children array (even if empty)
-                menu_data["children"] = []
-                
-                if children:
-                    # Sort children by order_index first
-                    sorted_children = sorted(children, key=lambda x: x.order_index)
-                    
-                    logger.info(f"[MongoDB Sync]{indent} ===== Processing {len(sorted_children)} children for '{parent_menu.label}' (level {parent_menu.level}) =====")
-                    
-                    # ✅ Build children array directly in order (no dict, no gaps)
-                    for idx, child in enumerate(sorted_children):
-                        logger.info(f"[MongoDB Sync]{indent}   [{idx}] Processing child '{child.label}' (level {child.level}, order_index={child.order_index})")
-                        
-                        # ✅ CRITICAL: Recursively build child tree with incremented depth
-                        # This ensures ALL levels of nesting are properly handled (level 3, 4, 5, etc.)
-                        child_tree = build_menu_tree(child, depth + 1)
-                        
-                        # Verify the child was built correctly
-                        child_has_children = len(child_tree.get('children', []))
-                        logger.info(f"[MongoDB Sync]{indent}   [{idx}] Built child '{child.label}' (level {child.level}) with {child_has_children} nested children")
-                        
-                        # Append to children array in order
-                        menu_data["children"].append(child_tree)
-                        
-                        logger.info(f"[MongoDB Sync]{indent}   [{idx}] ✅ Added '{child.label}' to parent's children array at position {idx}")
-                    
-                    logger.info(f"[MongoDB Sync]{indent} ===== Final: '{parent_menu.label}' has {len(menu_data['children'])} children in array =====")
-                else:
-                    logger.info(f"[MongoDB Sync]{indent} No children found for '{parent_menu.label}' (level {parent_menu.level})")
-                
-                return menu_data
-            
-            # ✅ Build navigation structure: Application → Modules → Menus → Children
-            # Place modules at exact indices based on order_index
-            navigation_dict = {}
-            max_module_index = -1
-            
-            logger.info(f"[MongoDB Sync] ========== Building navigation with {len(modules)} modules ==========")
-            
-            for module in modules:
-                # Build module structure
-                module_data = {
-                    "key": module.key or module.name or str(module.id),
-                    "name": module.name,
-                    "label": module.label or module.name,
-                    "route": module.route,
-                    "icon": module.icon,
-                    "module_id": str(module.id),  # Module UUID
-                    "application_id": str(module.application_id),
-                    "order_index": module.order_index,
-                    "level": 2,  # Modules are always level 2
-                    "is_visible": module.is_active,
-                    "is_active": module.is_active,
-                    "children": []
-                }
-                
-                # Add optional module fields
-                if hasattr(module, 'badge') and module.badge:
-                    module_data["badge"] = module.badge
-                if hasattr(module, 'section_title') and module.section_title:
-                    module_data["sectionTitle"] = module.section_title
-                if hasattr(module, 'description') and module.description:
-                    module_data["description"] = module.description
-                
-                # ✅ Get menus that belong to this module (level 3)
-                module_menus = [menu for menu in menus if menu.module_id == module.id and menu.parent_menu_id is None]
-                
-                logger.info(f"[MongoDB Sync] Module '{module.label}': found {len(module_menus)} root menus")
-                
-                # Build menus for this module
-                module_children = []
-                for menu in sorted(module_menus, key=lambda x: x.order_index):
-                    logger.info(f"[MongoDB Sync] Building tree for root menu '{menu.label}' (level {menu.level}) in module '{module.label}'")
-                    menu_tree = build_menu_tree(menu, depth=0)
-                    module_children.append(menu_tree)
-                    
-                    # ✅ Verify nested structure depth
-                    def count_max_depth(node, current_depth=0):
-                        """Count maximum depth of nested children"""
-                        if not node.get('children'):
-                            return current_depth
-                        max_child_depth = current_depth
-                        for child in node['children']:
-                            child_depth = count_max_depth(child, current_depth + 1)
-                            max_child_depth = max(max_child_depth, child_depth)
-                        return max_child_depth
-                    
-                    max_depth = count_max_depth(menu_tree)
-                    logger.info(f"[MongoDB Sync]   ✅ Added menu '{menu.label}' to module '{module.label}' (max nesting depth: {max_depth})")
-                
-                module_data["children"] = module_children
-                
-                # Calculate exact MongoDB index: 1000→0, 2000→1, 3000→2, 4000→3
-                target_index = (module.order_index // 1000) - 1
-                navigation_dict[target_index] = module_data
-                max_module_index = max(max_module_index, target_index)
-                
-                logger.info(f"[MongoDB Sync] ✅ Module '{module.label}': order_index={module.order_index} → target_index={target_index}")
-            
-            # Build continuous array from dict (skip gaps if any)
-            navigation_structure = []
-            for i in range(max_module_index + 1):
-                if i in navigation_dict:
-                    navigation_structure.append(navigation_dict[i])
-                    module_label = navigation_dict[i].get('label', 'Unknown')
-                    module_order = navigation_dict[i].get('order_index', 'N/A')
-                    actual_array_index = len(navigation_structure) - 1
-                    logger.info(f"[MongoDB Sync] ✅ Placed module '{module_label}' (order_index={module_order}) at array[{actual_array_index}]")
-                else:
-                    logger.info(f"[MongoDB Sync] ⏭️  Skipped index {i} (no module with order_index={(i+1)*1000})")
-            
-            logger.info(f"[MongoDB Sync] ========== Final navigation has {len(navigation_structure)} modules ==========")
-            
-            # ✅ VERIFICATION: Log the complete structure to verify level 4 menus are included
-            def verify_structure(items, level_name="root", indent=""):
-                """Recursively verify and log the structure"""
-                for idx, item in enumerate(items):
-                    item_label = item.get('label', 'Unknown')
-                    item_level = item.get('level', 'N/A')
-                    children_count = len(item.get('children', []))
-                    logger.info(f"[MongoDB Sync]{indent} [{idx}] {level_name}: '{item_label}' (level {item_level}, {children_count} children)")
-                    
-                    if children_count > 0:
-                        verify_structure(item['children'], f"{level_name}→child", indent + "  ")
-            
-            logger.info(f"[MongoDB Sync] ========== Verifying complete structure ==========")
-            verify_structure(navigation_structure, "Module")
-            logger.info(f"[MongoDB Sync] ========== Verification complete ==========")
-            
-            # ✅ CHUNKED SEPARATION: Update the specific application document, NOT master navigation
-            from bson import ObjectId
-            collection = db_mongo["menu_details"]
-            
-            # Find the application document by application_id
-            app_doc = await collection.find_one({
-                "application_id": str(application_id),
-                "_id": {"$ne": ObjectId("69074724f217ab8fcb2e3b24")}  # Exclude master document
-            })
-            
-            if not app_doc:
-                logger.info(f"Application document not found for application_id: {application_id}")
-                logger.info(f"Creating new application document in MongoDB...")
-                
-                # Get application details from PostgreSQL
-                from app.applications.models.application import Application
-                pg_app = db.query(Application).filter(
-                    Application.id == application_id,
-                    Application.is_active == True,
-                    Application.is_deleted == False
-                ).first()
-                
-                if not pg_app:
-                    logger.error(f"Application not found in PostgreSQL: {application_id}")
-                    return False
-                
-                # Create new application document
-                new_app_doc = {
-                    "application_id": str(application_id),
-                    "key": pg_app.key or pg_app.name,
-                    "label": pg_app.label or pg_app.name,
-                    "name": pg_app.name,
-                    "icon": pg_app.icon,
-                    "description": pg_app.description,
-                    "route": pg_app.route,
-                    "level": 1,  # Applications are level 1
-                    "order_index": 1000,  # Default order index for applications
-                    "is_visible": pg_app.is_active,
-                    "is_active": pg_app.is_active,
-                    "access": pg_app.access or [],
-                    "children": navigation_structure,
-                    "created_at": datetime.utcnow().isoformat(),
-                    "updated_at": datetime.utcnow().isoformat()
-                }
-                
-                # Insert the new application document
-                insert_result = await collection.insert_one(new_app_doc)
-                app_doc_id = insert_result.inserted_id
-                
-                logger.info(f"✅ Created new application document with ID: {app_doc_id}")
-                
-                # Also add this application to the mainNavigation array in the master document
-                master_doc_id = ObjectId("69074724f217ab8fcb2e3b24")
-                await collection.update_one(
-                    {"_id": master_doc_id},
-                    {
-                        "$addToSet": {"mainNavigation": app_doc_id},
-                        "$set": {"updated_at": datetime.utcnow().isoformat()}
-                    }
-                )
-                
-                logger.info(f"✅ Added application to mainNavigation array")
-                
-            else:
-                app_doc_id = app_doc["_id"]
-                
-                # Update ONLY the children array in the existing application document
-                result = await collection.update_one(
-                    {"_id": app_doc_id},
-                    {
-                        "$set": {
-                            "children": navigation_structure,
-                            "updated_at": datetime.utcnow().isoformat()
-                        }
-                    }
-                )
-                
-                if result.modified_count == 0:
-                    logger.warning(f"⚠️  Application document matched but not modified (no changes detected)")
-            
-            # Commit any pending PostgreSQL changes
-            db.commit()
-            logger.info(f"[MongoDB Sync] ✅ Committed PostgreSQL changes")
-            
-            # Log success
-            if affected_module_ids:
-                logger.info(f"✅ Synced navigation structure to MongoDB for application {application_id}")
-                logger.info(f"   - Updated {len(modules)} affected modules with {len(menus)} total menus")
-                logger.info(f"   - Affected modules: {affected_module_ids}")
-            else:
-                logger.info(f"✅ Synced navigation structure to MongoDB for application {application_id}")
-                logger.info(f"   - Updated {len(modules)} modules with {len(menus)} total menus")
-            logger.info(f"   - Application Document ID: {app_doc_id}")
-            logger.info(f"   - Proper hierarchy: Application → Modules → Menus → Children")
-            return True
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to sync to MongoDB: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            # Don't fail the request if MongoDB sync fails
-            return False
+        if affected_module_ids:
+            logger.info(f"[MongoDB Sync] Affected modules: {affected_module_ids}")
+        from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+        return await sync_application_menus_to_mongodb(db, application_id)
+
+    @staticmethod
+    def _cascade_to_descendants(db: Session, parent: Menu):
+        """
+        Keep descendants consistent with a moved menu: children always live in
+        their parent's module and sit one level below it.
+        """
+        children = db.query(Menu).filter(
+            Menu.parent_menu_id == parent.id,
+            Menu.deleted_at.is_(None)
+        ).all()
+        for child in children:
+            child.module_id = parent.module_id
+            child.level = parent.level + 1
+            MenuReorderService._cascade_to_descendants(db, child)
 
     @staticmethod
     async def reorder_menus(db: Session, reorder_data: MenuReorderRequest) -> MenuReorderResponse:
@@ -448,8 +132,10 @@ class MenuReorderService:
                     
                     # Remove the dragged module from list
                     modules_list = [m for m in all_modules if m.id != module.id]
-                    
+
                     # Insert the dragged module at the new position
+                    # Clamp so non-1000-based order_index values can't land at a negative index
+                    new_index = max(0, min(new_index, len(modules_list)))
                     modules_list.insert(new_index, module)
                     
                     # Reassign order_index to all modules sequentially
@@ -676,27 +362,40 @@ class MenuReorderService:
                     
                     # Step 2: Update the dragged menu's parent, module, and level
                     menu.parent_menu_id = item.parent_menu_id
-                    
-                    # ✅ Update module_id if provided (allows moving between modules)
-                    if item.module_id is not None:
-                        old_module_id = menu.module_id
+
+                    # ✅ Destination module: a menu always lives in its parent's module.
+                    # Moving under a parent menu inherits that parent's module;
+                    # only root-level moves use the client-supplied module_id.
+                    new_parent = None
+                    if item.parent_menu_id is not None:
+                        new_parent = db.query(Menu).filter(Menu.id == item.parent_menu_id).first()
+                        if new_parent and new_parent.module_id != menu.module_id:
+                            if item.module_id is not None and item.module_id != new_parent.module_id:
+                                logger.warning(
+                                    f"[Reorder] Ignoring module_id {item.module_id}: "
+                                    f"parent '{new_parent.label}' belongs to module {new_parent.module_id}"
+                                )
+                            logger.info(f"[Reorder] Moving from module {menu.module_id} to parent's module {new_parent.module_id}")
+                            menu.module_id = new_parent.module_id
+                    elif item.module_id is not None and item.module_id != menu.module_id:
+                        logger.info(f"[Reorder] Moving from module {menu.module_id} to module {item.module_id}")
                         menu.module_id = item.module_id
-                        logger.info(f"[Reorder] Moving from module {old_module_id} to module {item.module_id}")
-                    
+
                     # Auto-calculate level based on new parent
                     if item.level is not None:
                         menu.level = item.level
                         logger.info(f"[Reorder] Using provided level: {item.level}")
                     elif item.parent_menu_id is None:
-                        # Root level menus (directly under application) are level 2
-                        menu.level = 2
-                        logger.info(f"[Reorder] Moving to root level: 2 (under application)")
+                        # Root menus: level 3 under a module, level 2 directly under application
+                        menu.level = 3 if menu.module_id else 2
+                        logger.info(f"[Reorder] Moving to root level: {menu.level} (module: {menu.module_id})")
                     else:
-                        # Get new parent's level
-                        new_parent = db.query(Menu).filter(Menu.id == item.parent_menu_id).first()
                         if new_parent:
                             menu.level = new_parent.level + 1
                             logger.info(f"[Reorder] Auto-calculated level: {menu.level} (parent level: {new_parent.level})")
+
+                    # ✅ Descendants follow the moved menu: same module, levels shifted
+                    MenuReorderService._cascade_to_descendants(db, menu)
                     
                     # Step 3: Get all siblings in new parent (including the dragged menu)
                     # ✅ Filter by module_id to ensure reordering within the correct module
@@ -712,8 +411,10 @@ class MenuReorderService:
                     
                     # Calculate new position
                     new_index = (item.order_index // 1000) - 1
+                    # Clamp so non-1000-based order_index values can't land at a negative index
+                    new_index = max(0, min(new_index, len(new_siblings)))
                     logger.info(f"[Reorder] Inserting at index {new_index} in new parent")
-                    
+
                     # Insert the dragged menu at the new position
                     new_siblings.insert(new_index, menu)
                     
@@ -743,18 +444,26 @@ class MenuReorderService:
                     # Same parent - just reorder within siblings
                     logger.info(f"[Reorder] Reordering within same parent")
                     
-                    # ✅ Update module_id if provided (allows moving between modules within same parent)
+                    # ✅ Module changes only apply to root menus: a nested menu always
+                    # lives in its parent's module, so a different module_id with an
+                    # unchanged parent would corrupt the hierarchy
                     if item.module_id is not None and item.module_id != menu.module_id:
-                        old_module_id = menu.module_id
-                        menu.module_id = item.module_id
-                        logger.info(f"[Reorder] Moving from module {old_module_id} to module {item.module_id}")
+                        if item.parent_menu_id is None:
+                            old_module_id = menu.module_id
+                            menu.module_id = item.module_id
+                            logger.info(f"[Reorder] Moving from module {old_module_id} to module {item.module_id}")
+                        else:
+                            logger.warning(
+                                f"[Reorder] Ignoring module_id {item.module_id} for '{menu.label}': "
+                                f"nested menus inherit their parent's module"
+                            )
                     
                     # ✅ ALWAYS auto-calculate level based on parent, even if parent doesn't change
                     # This ensures level is always correct based on hierarchy
                     if item.parent_menu_id is None:
-                        # Root level menus (directly under application) are level 2
-                        menu.level = 2
-                        logger.info(f"[Reorder] Auto-calculated level: 2 (root level under application)")
+                        # Root menus: level 3 under a module, level 2 directly under application
+                        menu.level = 3 if menu.module_id else 2
+                        logger.info(f"[Reorder] Auto-calculated level: {menu.level} (module: {menu.module_id})")
                     else:
                         # Get parent's level to calculate child level
                         parent = db.query(Menu).filter(Menu.id == item.parent_menu_id).first()
@@ -765,7 +474,10 @@ class MenuReorderService:
                             # Fallback to provided level if parent not found
                             menu.level = item.level
                             logger.info(f"[Reorder] Using provided level: {item.level}")
-                    
+
+                    # ✅ Descendants follow the menu: same module, levels shifted
+                    MenuReorderService._cascade_to_descendants(db, menu)
+
                     # Get all sibling menus (same parent, same module, same application)
                     # ✅ Include module_id in sibling filtering
                     siblings = db.query(Menu).filter(
@@ -785,8 +497,10 @@ class MenuReorderService:
                     
                     # Remove the dragged menu from siblings list
                     siblings = [s for s in siblings if s.id != menu.id]
-                    
+
                     # Insert the dragged menu at the new position
+                    # Clamp so non-1000-based order_index values can't land at a negative index
+                    new_index = max(0, min(new_index, len(siblings)))
                     siblings.insert(new_index, menu)
                     
                     # Reassign order_index to all siblings sequentially
@@ -877,13 +591,29 @@ class MenuReorderService:
                     # Update parent if changed
                     if menu.parent_menu_id != item.parent_menu_id:
                         menu.parent_menu_id = item.parent_menu_id
-                    
+
+                        # Auto-calculate level when the client didn't send one
+                        if item.level is None:
+                            if item.parent_menu_id is None:
+                                # Root menus: level 3 under a module, level 2 directly under application
+                                effective_module_id = item.module_id if item.module_id is not None else menu.module_id
+                                menu.level = 3 if effective_module_id else 2
+                            else:
+                                parent = menu_map.get(item.parent_menu_id) or db.query(Menu).filter(
+                                    Menu.id == item.parent_menu_id
+                                ).first()
+                                if parent:
+                                    menu.level = parent.level + 1
+
                     # ✅ Update module_id if provided (allows moving between modules)
                     if item.module_id is not None and menu.module_id != item.module_id:
                         old_module_id = menu.module_id
                         menu.module_id = item.module_id
                         logger.info(f"[Reorder] Menu '{menu.label}': moved from module {old_module_id} to module {item.module_id}")
-                    
+
+                    # ✅ Descendants follow the menu: same module, levels shifted
+                    MenuReorderService._cascade_to_descendants(db, menu)
+
                     updated_count += 1
                     logger.info(f"[Reorder] '{menu.label}': {old_order} → {item.order_index} (module: {menu.module_id})")
                 
@@ -975,11 +705,11 @@ class MenuReorderService:
                         detail=f"Child menu {child_id} not found under parent {parent_menu_id}"
                     )
             
-            # Update order_index for each child
+            # Update order_index for each child (1000-based, matching the reorder convention)
             updated_count = 0
             for index, child_id in enumerate(children_order):
                 child = children_map[child_id]
-                child.order_index = index
+                child.order_index = (index + 1) * 1000
                 updated_count += 1
             
             db.commit()
@@ -1004,7 +734,7 @@ class MenuReorderService:
             items = [
                 MenuReorderItem(
                     menu_id=child_id,
-                    order_index=index,
+                    order_index=(index + 1) * 1000,
                     parent_menu_id=parent_menu_id,
                     module_id=children_map[child_id].module_id
                 )
@@ -1123,7 +853,9 @@ class MenuReorderService:
                     # Handle parent_menu_id change - update level
                     if field == 'parent_menu_id' and value != menu.parent_menu_id:
                         if value is None:
-                            menu.level = 1  # Root level
+                            # Root menus: level 3 under a module, level 2 directly under application
+                            effective_module_id = update_dict.get('module_id', menu.module_id)
+                            menu.level = 3 if effective_module_id else 2
                         else:
                             parent_menu = menu_map.get(value)
                             if parent_menu:
@@ -1148,7 +880,11 @@ class MenuReorderService:
                         setattr(menu, field, value)
                     else:
                         logger.warning(f"Menu model has no attribute '{field}', skipping")
-                
+
+                # ✅ Descendants follow when the menu's module or parent changed
+                if menu.module_id != original_module_ids[item.menu_id] or 'parent_menu_id' in update_dict:
+                    MenuReorderService._cascade_to_descendants(db, menu)
+
                 updated_count += 1
             
             # Commit PostgreSQL changes

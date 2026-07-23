@@ -1,11 +1,101 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
-from typing import List, Optional
+from sqlalchemy import func as sa_func
+from typing import Dict, List, Optional
 from uuid import UUID
+from datetime import datetime
+import logging
 
 from app.entities.models.entity import Entity
 from app.entities.schemas.entity import EntityCreate, EntityUpdate
+from app.entities.exceptions import (
+    EntityNotFoundError,
+    DuplicateEntityCodeError,
+    EntityTenantNotFoundError,
+)
 from app.core.hybrid_encryption import hybrid_encryption
+
+logger = logging.getLogger(__name__)
+
+
+def _utc_offset_for_zone(tz_name: str) -> Optional[str]:
+    """Current UTC offset for an IANA zone as '+05:30' / '-04:00' (DST-aware)."""
+    try:
+        from zoneinfo import ZoneInfo
+        offset = datetime.now(ZoneInfo(tz_name)).utcoffset()
+        if offset is None:
+            return None
+        total_minutes = int(offset.total_seconds() // 60)
+        sign = "+" if total_minutes >= 0 else "-"
+        hours, minutes = divmod(abs(total_minutes), 60)
+        return f"{sign}{hours:02d}:{minutes:02d}"
+    except Exception:
+        return None
+
+
+def _derive_locale_fields(country_code: Optional[str]) -> Dict[str, Optional[str]]:
+    """
+    Autogenerate the entity locale fields from the given country. These are
+    never taken from the request or the server's local system.
+
+    - time_zone               <- master_countries.timezone (IANA, e.g. Asia/Kolkata)
+    - time_zone_offset        <- computed from that IANA zone (DST-aware)
+    - date_format/time_format <- the country's master_locales row (default preferred)
+    - date_time_format        <- "<date_format> <time_format>"
+
+    Master data lives in the MASTER database; entities may be written to a
+    tenant DB, so this opens its own master session. Best-effort: anything that
+    cannot be resolved (unknown country, empty master data) stays None and the
+    entity write proceeds.
+    """
+    derived: Dict[str, Optional[str]] = {
+        "time_zone": None,
+        "time_zone_offset": None,
+        "date_format": None,
+        "time_format": None,
+        "date_time_format": None,
+    }
+    if not country_code or not country_code.strip():
+        return derived
+
+    from app.infrastructure.database.session import SessionLocal
+    from app.master_datas.models.master_countries import MasterCountry
+    from app.master_datas.models.master_locales import MasterLocale
+
+    master_db = SessionLocal()
+    try:
+        code = country_code.strip().upper()
+        country = master_db.query(MasterCountry).filter(
+            sa_func.upper(MasterCountry.iso2_code) == code
+        ).first() or master_db.query(MasterCountry).filter(
+            sa_func.upper(MasterCountry.iso3_code) == code
+        ).first()
+        if not country:
+            logger.info("[ENTITY_LOCALE] No master country for code=%s; locale fields left empty", code)
+            return derived
+
+        if country.timezone:
+            derived["time_zone"] = country.timezone
+            derived["time_zone_offset"] = _utc_offset_for_zone(country.timezone)
+
+        locale = master_db.query(MasterLocale).filter(
+            MasterLocale.country_id == country.id,
+            MasterLocale.is_active == True,
+        ).order_by(MasterLocale.is_default.desc()).first()
+        if locale:
+            derived["date_format"] = locale.date_format
+            derived["time_format"] = locale.time_format
+            if locale.date_format and locale.time_format:
+                derived["date_time_format"] = f"{locale.date_format} {locale.time_format}"
+
+        # Clamp to the entities column widths (master data columns are wider)
+        _limits = {"time_zone": 50, "time_zone_offset": 10, "date_format": 20,
+                   "time_format": 20, "date_time_format": 40}
+        return {k: (v[:_limits[k]] if isinstance(v, str) else v) for k, v in derived.items()}
+    except Exception as exc:
+        logger.warning("[ENTITY_LOCALE] Derivation failed for country=%s: %s", country_code, exc)
+        return derived
+    finally:
+        master_db.close()
 
 def get_entity(db: Session, entity_id: int) -> Optional[Entity]:
     """Get an entity by ID"""
@@ -26,10 +116,10 @@ def get_entity_by_code(db: Session, entity_code: str) -> Optional[Entity]:
         _decrypt_entity_fields(entity)
     return entity
 
-def get_entities_by_client(db: Session, client_id: UUID, skip: int = 0, limit: int = 100) -> List[Entity]:
-    """Get all entities for a specific client"""
+def get_entities_by_tenant(db: Session, tenant_id: UUID, skip: int = 0, limit: int = 100) -> List[Entity]:
+    """Get all entities for a specific tenant"""
     entities = db.query(Entity).filter(
-        Entity.client_id == client_id,
+        Entity.tenant_id == tenant_id,
         Entity.deleted == False
     ).offset(skip).limit(limit).all()
     
@@ -44,21 +134,26 @@ def get_entities(db: Session, skip: int = 0, limit: int = 100) -> List[Entity]:
         _decrypt_entity_fields(entity)
     return entities
 
-def create_entity(db: Session, entity: EntityCreate) -> Entity:
+def create_entity(db: Session, entity: EntityCreate, user_id: Optional[UUID] = None) -> Entity:
     """Create a new entity"""
     # Check if entity code already exists
     db_entity = get_entity_by_code(db, entity_code=entity.entity_code)
     if db_entity:
-        raise HTTPException(status_code=400, detail="Entity code already registered")
+        raise DuplicateEntityCodeError(entity.entity_code)
 
-    # Verify client exists
-    from app.clients.services.clients import get_client
-    client = get_client(db, entity.client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    # Verify tenant exists
+    from app.tenants.services.tenants import get_tenant
+    tenant = get_tenant(db, entity.tenant_id)
+    if not tenant:
+        raise EntityTenantNotFoundError(str(entity.tenant_id))
 
     # Create new entity
     entity_data = entity.model_dump()
+
+    # Locale fields are autogenerated from the country's master data —
+    # they are not accepted from the request.
+    locale_fields = _derive_locale_fields(entity_data.get('country_code'))
+
     # Create entity without updated_at to avoid constraint issues
     db_entity = Entity(
         entity_name=entity_data['entity_name'],
@@ -66,35 +161,36 @@ def create_entity(db: Session, entity: EntityCreate) -> Entity:
         description=entity_data.get('description'),
         contact=entity_data.get('contact'),
         email=entity_data.get('email'),
-        client_id=entity_data['client_id'],
+        tenant_id=entity_data['tenant_id'],
         address_1=entity_data.get('address_1'),
         address_2=entity_data.get('address_2'),
         city_code=entity_data.get('city_code'),
         state_code=entity_data.get('state_code'),
         country_code=entity_data.get('country_code'),
-        time_zone=entity_data.get('time_zone'),
-        time_zone_offset=entity_data.get('time_zone_offset'),
-        date_format=entity_data.get('date_format'),
-        time_format=entity_data.get('time_format'),
-        date_time_format=entity_data.get('date_time_format')
+        time_zone=locale_fields['time_zone'],
+        time_zone_offset=locale_fields['time_zone_offset'],
+        date_format=locale_fields['date_format'],
+        time_format=locale_fields['time_format'],
+        date_time_format=locale_fields['date_time_format']
     )
     db.add(db_entity)
     db.commit()
     db.refresh(db_entity)
+    # Audit logging happens in the route layer (richer request context).
     return db_entity
 
-def update_entity(db: Session, entity_id: int, entity: EntityUpdate) -> Optional[Entity]:
+def update_entity(db: Session, entity_id: int, entity: EntityUpdate, user_id: Optional[UUID] = None) -> Optional[Entity]:
     """Update an entity"""
     db_entity = get_entity(db, entity_id=entity_id)
     if not db_entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+        raise EntityNotFoundError()
 
     update_data = entity.model_dump(exclude_unset=True)
 
     # Check code uniqueness if being updated
     if "entity_code" in update_data and update_data["entity_code"] != db_entity.entity_code:
         if get_entity_by_code(db, entity_code=update_data["entity_code"]):
-            raise HTTPException(status_code=400, detail="Entity code already registered")
+            raise DuplicateEntityCodeError(update_data["entity_code"])
 
     for key, value in update_data.items():
         setattr(db_entity, key, value)
@@ -102,9 +198,10 @@ def update_entity(db: Session, entity_id: int, entity: EntityUpdate) -> Optional
     db.add(db_entity)
     db.commit()
     db.refresh(db_entity)
+    # Audit logging happens in the route layer (richer request context).
     return db_entity
 
-def delete_entity(db: Session, entity_id: int) -> bool:
+def delete_entity(db: Session, entity_id: int, user_id: Optional[UUID] = None) -> bool:
     """Soft delete an entity"""
     db_entity = get_entity(db, entity_id=entity_id)
     if not db_entity:
@@ -114,12 +211,13 @@ def delete_entity(db: Session, entity_id: int) -> bool:
     db_entity.active = False
     db.add(db_entity)
     db.commit()
+    # Audit logging happens in the route layer (richer request context).
     return True
 
-def get_entities_count_by_client(db: Session, client_id: int) -> int:
-    """Get count of entities for a client"""
+def get_entities_count_by_tenant(db: Session, tenant_id: UUID) -> int:
+    """Get count of entities for a tenant"""
     return db.query(Entity).filter(
-        Entity.client_id == client_id,
+        Entity.tenant_id == tenant_id,
         Entity.deleted == False
     ).count()
 

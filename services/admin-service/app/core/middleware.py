@@ -87,13 +87,20 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 def setup_middleware(app: FastAPI):
-    """
-    Setup all middleware for the application.
-    
-    Args:
-        app: FastAPI application instance
-    """
-    # Add request context middleware
+    """Setup all middleware for the application."""
     app.add_middleware(RequestContextMiddleware)
-    
+
+    # Dynamic CORS — origins loaded from the DB (tenants.allowed_origins for
+    # tenant apps, usersetup_basic.allowed_origins for master users), cached
+    # in Redis, with CORS_ORIGINS env var as a static fallback.
+    from app.infrastructure.cors import DynamicCORSMiddleware
+    from app.infrastructure.database.session import SessionLocal
+    from app.infrastructure.redis_cache.redis_cache import redis_cache
+
+    app.add_middleware(
+        DynamicCORSMiddleware,
+        session_factory=SessionLocal,
+        redis_client=redis_cache.redis_client,
+    )
+
     logger.info("Middleware configured successfully")

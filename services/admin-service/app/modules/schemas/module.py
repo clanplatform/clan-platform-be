@@ -1,7 +1,9 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 import uuid
+
+from app.core.access import normalize_access as _normalize_access
 
 class ModuleBase(BaseModel):
     application_id: uuid.UUID = Field(..., description="Application ID this module belongs to")
@@ -21,7 +23,10 @@ class ModuleBase(BaseModel):
     access: Optional[List[str]] = Field(default_factory=list, description="Array of access permissions")
 
 class ModuleCreate(ModuleBase):
-    pass
+    @field_validator("access")
+    @classmethod
+    def validate_access(cls, v):
+        return _normalize_access(v)
 
 class ModuleUpdate(BaseModel):
     application_id: Optional[uuid.UUID] = Field(None, description="Application ID this module belongs to")
@@ -40,6 +45,11 @@ class ModuleUpdate(BaseModel):
     is_public: Optional[bool] = Field(None, description="Whether the module is public")
     access: Optional[List[str]] = Field(None, description="Array of access permissions")
     updated_by: Optional[int] = Field(None, description="User ID who updated the module")
+
+    @field_validator("access")
+    @classmethod
+    def validate_access(cls, v):
+        return _normalize_access(v)
 
 class ModuleResponse(ModuleBase):
     id: uuid.UUID

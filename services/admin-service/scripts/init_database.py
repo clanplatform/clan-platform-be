@@ -22,10 +22,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Set environment variables before importing app modules
-os.environ.setdefault('DATABASE_URL', 'postgresql://postgres:root@localhost:5432/admin_service')
+os.environ.setdefault('DATABASE_URL', 'postgresql://postgres:root@localhost:5432/clan_platform')
 os.environ.setdefault('REDIS_URL', 'redis://localhost:6379/0')
 os.environ.setdefault('MONGODB_URL', 'mongodb://admin:admin_pass@localhost:27017')
-os.environ.setdefault('MONGODB_DB_NAME', 'admin_service')
+os.environ.setdefault('MONGODB_DB_NAME', 'clan_platform')
 os.environ.setdefault('SECRET_KEY', 'local-dev-secret-key-for-script-execution-only')
 os.environ.setdefault('ENVIRONMENT', 'local')
 
@@ -34,10 +34,10 @@ from app.infrastructure.database.base import Base
 from sqlalchemy import inspect, text
 
 # Import all models
-from app.clients.models.clients import Client
+from app.tenants.models.tenants import Tenant
 from app.domains.models.domain import Domain
 from app.entities.models.entity import Entity
-from app.departments.models.departments import Department, AuditLog
+from app.departments.models.departments import Department
 from app.divisions.models.divisions import Division
 from app.applications.models.application import Application
 from app.modules.models.module import Module

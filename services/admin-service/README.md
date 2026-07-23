@@ -91,10 +91,10 @@ Platform Admin Service for managing domains and applications with PostgreSQL, Mo
 
 Copy the appropriate environment file:
 
-- **Local Development**: `config/environments/.env.local.example`
-- **Development**: `config/environments/.env.dev.example`
-- **UAT/Staging**: `config/environments/.env.uat.example`
-- **Production**: `config/environments/.env.prod.example`
+- **Local Development**: `config/environments/.env.local`
+- **Development**: `config/environments/.env.dev`
+- **UAT/Staging**: `config/environments/.env.uat`
+- **Production**: `config/environments/.env.prod`
 
 ### Required Environment Variables
 

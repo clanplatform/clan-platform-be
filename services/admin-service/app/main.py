@@ -6,7 +6,6 @@ from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
-import sys
 
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -14,7 +13,6 @@ from app.core.middleware import setup_middleware
 from app.infrastructure.database.session import check_db_connection, create_tables
 from app.infrastructure.redis_cache.redis_cache import redis_cache
 from app.infrastructure.mongodb.mongodb_admin import mongodb_client
-from app.infrastructure.database.identity_db import get_identity_db
 from app.api.v1.router import api_v1_router
 
 # Setup logging
@@ -55,36 +53,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Redis initialization error: {e} - continuing without cache")
     
-    # Initialize MongoDB connection
+    # Initialize MongoDB connection (non-fatal — service runs without it)
     try:
         logger.info("Initializing MongoDB connection...")
         mongodb_client.connect()
         if mongodb_client.db is None:
-            startup_errors.append("MongoDB connection failed")
-            logger.error("MongoDB connection failed")
+            logger.warning("MongoDB connection failed - continuing without MongoDB")
         else:
             logger.info("MongoDB connection established successfully")
     except Exception as e:
-        startup_errors.append(f"MongoDB initialization error: {e}")
-        logger.error(f"MongoDB initialization error: {e}", exc_info=True)
+        logger.warning(f"MongoDB initialization error: {e} - continuing without MongoDB")
     
-    # Initialize Identity Database connection (for user sync)
-    try:
-        logger.info("Initializing Identity Database connection...")
-        identity_db = get_identity_db()
-        if identity_db.initialize():
-            logger.info("Identity Database connection established successfully")
-        else:
-            logger.warning("Identity Database connection not configured - user sync disabled")
-    except Exception as e:
-        logger.warning(f"Identity Database initialization error: {e} - user sync disabled")
-    
-    # Check if any critical connections failed
+    # Log critical connection failures but keep the service running so Render can bind the port.
+    # Requests that require DB will return 503 until the database is reachable.
     if startup_errors:
-        logger.error(f"Startup failed with {len(startup_errors)} error(s): {', '.join(startup_errors)}")
-        sys.exit(1)
-    
-    logger.info("Admin Service started successfully")
+        logger.error(f"Service started with {len(startup_errors)} degraded connection(s): {', '.join(startup_errors)}")
+    else:
+        logger.info("Admin Service started successfully")
     
     yield
     
@@ -140,6 +125,53 @@ async def health_check():
             "version": settings.APP_VERSION
         }
     )
+
+
+@app.get("/health/cors", tags=["health"])
+async def cors_debug():
+    """
+    CORS diagnostics — shows exactly which origins THIS deployment can see.
+    - build_marker proves which code version is live
+    - db origins are loaded live from this service's DATABASE_URL
+    Remove or protect this endpoint once CORS is verified in production.
+    """
+    from app.infrastructure.cors.dynamic_cors import _static_origins
+    from app.infrastructure.database.session import SessionLocal
+    from sqlalchemy import text as _text
+
+    result = {
+        "build_marker": "cors-union-2026-07-11",
+        "env_CORS_ORIGINS": sorted(_static_origins()),
+        "tenant_origins": None,
+        "master_user_origins": None,
+        "db_error": None,
+    }
+    try:
+        db = SessionLocal()
+        try:
+            rows = db.execute(_text(
+                "SELECT unnest(allowed_origins) FROM tenants "
+                "WHERE is_active = TRUE AND deleted_at IS NULL "
+                "AND allowed_origins IS NOT NULL"
+            )).fetchall()
+            result["tenant_origins"] = sorted({r[0] for r in rows if r[0]})
+        except Exception as exc:
+            result["db_error"] = f"tenants query: {exc}"
+            db.rollback()
+        try:
+            rows = db.execute(_text(
+                "SELECT unnest(allowed_origins) FROM usersetup_basic "
+                "WHERE tenant_id IS NULL AND status = 'active' "
+                "AND allowed_origins IS NOT NULL"
+            )).fetchall()
+            result["master_user_origins"] = sorted({r[0] for r in rows if r[0]})
+        except Exception as exc:
+            result["db_error"] = (result["db_error"] or "") + f" | usersetup_basic query: {exc}"
+            db.rollback()
+        db.close()
+    except Exception as exc:
+        result["db_error"] = f"connection: {exc}"
+    return result
 
 
 @app.get("/", tags=["root"])

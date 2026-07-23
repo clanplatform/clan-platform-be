@@ -1,12 +1,26 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.domains.models.domain import Domain
 from app.domains.schemas.domain import DomainCreate, DomainUpdate, DomainResponse
+from app.domains.exceptions import (
+    DomainNotFoundError,
+    DuplicateDomainNameError,
+    DuplicateDomainCodeError,
+)
 from app.core.config import settings
 from app.infrastructure.redis_cache.redis_cache import redis_cache
+from app.core.security import get_current_user
+from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.audit_helpers import (
+    RISK_SCORE as _RISK_SCORE,
+    get_client_ip as _client_ip,
+    get_audit_org_context as _get_audit_org_context,
+    get_user_id as _get_user_id,
+    get_session_id as _get_session_id,
+)
 
 # Disable internal trailing-slash redirects for this router
 router = APIRouter(redirect_slashes=False)
@@ -14,11 +28,13 @@ router = APIRouter(redirect_slashes=False)
 # List domains without trailing slash to avoid redirects
 @router.get("", response_model=List[DomainResponse])
 async def get_domains(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Get all domains with pagination, sorted by newest first (FILO)"""
     # Create cache key based on query parameters
@@ -63,12 +79,29 @@ async def get_domains(
     # Cache the result for 30 minutes
     redis_cache.set(cache_key, domains_list, ttl=settings.CACHE_DEFAULT_TTL)
 
+    try:
+        tenant_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Domain",
+            user_id=_get_user_id(current_user),
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            session_id=_get_session_id(current_user),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return domains
 
 @router.get("/{domain_id}", response_model=DomainResponse)
 async def get_domain(
+    request: Request,
     domain_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Get a specific domain by ID"""
     # Try to get from cache
@@ -79,10 +112,7 @@ async def get_domain(
     # Query database if not in cache
     domain = db.query(Domain).filter(Domain.id == domain_id, Domain.is_deleted == False).first()
     if not domain:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found"
-        )
+        raise DomainNotFoundError()
 
     # Cache the domain
     domain_dict = {
@@ -99,12 +129,30 @@ async def get_domain(
     }
     redis_cache.cache_domain(str(domain_id), domain_dict, ttl=settings.CACHE_DEFAULT_TTL)
 
+    try:
+        tenant_id, entity_id = _get_audit_org_context(db, _get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Domain",
+            object_id=str(domain_id),
+            user_id=_get_user_id(current_user),
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            session_id=_get_session_id(current_user),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return domain
 
 @router.post("", response_model=DomainResponse)
 async def create_domain(
+    request: Request,
     domain: DomainCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Create a new domain"""
     # Check if domain name already exists
@@ -114,10 +162,7 @@ async def create_domain(
     ).first()
 
     if existing_domain:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Domain with this name already exists"
-        )
+        raise DuplicateDomainNameError(domain.name)
 
     # Check if domain code already exists
     existing_code = db.query(Domain).filter(
@@ -126,16 +171,33 @@ async def create_domain(
     ).first()
 
     if existing_code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Domain with this code already exists"
-        )
+        raise DuplicateDomainCodeError(domain.code)
 
     # Create new domain
-    db_domain = Domain(**domain.dict())
+    db_domain = Domain(**domain.model_dump())
     db.add(db_domain)
     db.commit()
     db.refresh(db_domain)
+
+    tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+    fire_audit_log(
+        action="CREATE",
+        object_type="Domain",
+        object_id=str(db_domain.id),
+        user_id=current_user.get("id"),
+        tenant_id=tenant_id,
+        entity_id=entity_id,
+        session_id=current_user.get("session_id"),
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        risk_score=_RISK_SCORE["CREATE"],
+        new_values={
+            "name": db_domain.name,
+            "code": db_domain.code,
+            "description": db_domain.description,
+            "is_active": db_domain.is_active,
+        },
+    )
 
     # Cache the created domain in Redis
     domain_dict = {
@@ -159,9 +221,11 @@ async def create_domain(
 
 @router.put("/{domain_id}", response_model=DomainResponse)
 async def update_domain(
+    request: Request,
     domain_id: UUID,
     domain: DomainUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Update a domain"""
     # Get existing domain
@@ -171,10 +235,7 @@ async def update_domain(
     ).first()
     
     if not db_domain:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found"
-        )
+        raise DomainNotFoundError()
     
     # Check if new name already exists (if name is being updated)
     if domain.name and domain.name != db_domain.name:
@@ -185,10 +246,7 @@ async def update_domain(
         ).first()
         
         if existing_domain:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Domain with this name already exists"
-            )
+            raise DuplicateDomainNameError(domain.name)
     
     # Check if new code already exists (if code is being updated)
     if domain.code and domain.code != db_domain.code:
@@ -199,18 +257,33 @@ async def update_domain(
         ).first()
         
         if existing_code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Domain with this code already exists"
-            )
+            raise DuplicateDomainCodeError(domain.code)
     
-    # Update domain fields
-    update_data = domain.dict(exclude_unset=True)
+    # Snapshot old values before applying changes
+    update_data = domain.model_dump(exclude_unset=True)
+    old_values = {field: getattr(db_domain, field, None) for field in update_data}
+
     for field, value in update_data.items():
         setattr(db_domain, field, value)
 
     db.commit()
     db.refresh(db_domain)
+
+    tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+    fire_audit_log(
+        action="UPDATE",
+        object_type="Domain",
+        object_id=str(domain_id),
+        user_id=current_user.get("id"),
+        tenant_id=tenant_id,
+        entity_id=entity_id,
+        session_id=current_user.get("session_id"),
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        risk_score=_RISK_SCORE["UPDATE"],
+        old_values={k: str(v) if v is not None else None for k, v in old_values.items()},
+        new_values={k: str(v) if v is not None else None for k, v in update_data.items()},
+    )
 
     # Invalidate cache for this domain
     redis_cache.delete(f"domain:{domain_id}")
@@ -222,53 +295,62 @@ async def update_domain(
 
 @router.delete("/{domain_id}")
 async def delete_domain(
+    request: Request,
     domain_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """Soft delete a domain and all related applications"""
     domain = db.query(Domain).filter(Domain.id == domain_id, Domain.is_deleted == False).first()
     if not domain:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found"
-        )
+        raise DomainNotFoundError()
     
     try:
-        # Import Application model and datetime for soft delete
         from app.applications.models.application import Application
-        from datetime import datetime
-        
-        # First, soft delete all applications that reference this domain
+        from datetime import datetime, timezone
+
         applications = db.query(Application).filter(
             Application.domain_id == domain_id,
             Application.is_deleted == False
         ).all()
-        
-        deletion_time = datetime.utcnow()
-        
+
+        deletion_time = datetime.now(timezone.utc)
+
         for application in applications:
             application.is_active = False
             application.is_deleted = True
             application.deleted_at = deletion_time
-        
-        # Then soft delete the domain itself
+
+        domain_snapshot = {"name": domain.name, "code": domain.code}
         domain.is_active = False
         domain.is_deleted = True
         domain.deleted_at = deletion_time
 
         db.commit()
 
-        # Invalidate cache for this domain
+        tenant_id, entity_id = _get_audit_org_context(db, current_user.get("id"))
+        fire_audit_log(
+            action="DELETE",
+            object_type="Domain",
+            object_id=str(domain_id),
+            user_id=current_user.get("id"),
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            session_id=current_user.get("session_id"),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=_RISK_SCORE["DELETE"],
+            old_values=domain_snapshot,
+        )
+
         redis_cache.delete(f"domain:{domain_id}")
-
-        # Invalidate domains list cache
         redis_cache.delete_pattern("domains:list:*")
-
-        # Invalidate domain applications cache
         redis_cache.delete(f"domain:{domain_id}:applications")
 
         return {"message": f"Domain and {len(applications)} related applications deleted successfully"}
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(

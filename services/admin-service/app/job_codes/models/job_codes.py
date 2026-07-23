@@ -40,7 +40,16 @@ class JobCode(Base):
                       comment="Job title/position name")
     active_status = Column(Boolean, default=True, nullable=False,
                           comment="Whether the job code is currently active")
-    
+
+    # Client reference
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+                      nullable=False, index=True, comment="Foreign key to tenants table")
+
+    # Soft delete: set on DELETE (with active_status=False); rows are
+    # permanently purged after the retention period (30 days).
+    deleted_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True,
+                       comment="Soft-delete timestamp; permanently purged after retention")
+
     # Audit fields with PostgreSQL timezone support
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False,
                        comment="Record creation timestamp")
@@ -55,10 +64,13 @@ class JobCode(Base):
     skills = relationship("JobCodeSkills", back_populates="job_code", 
                          uselist=False, cascade="all, delete-orphan",
                          lazy="select")
-    benefits = relationship("JobCodeBenefits", back_populates="job_code", 
+    benefits = relationship("JobCodeBenefits", back_populates="job_code",
                            uselist=False, cascade="all, delete-orphan",
                            lazy="select")
-    
+
+    # Relationship to owning tenant
+    tenant = relationship("Tenant", foreign_keys=[tenant_id])
+
     # Table indexes for performance
     __table_args__ = (
         Index('ix_job_codes_active_status', 'active_status'),
@@ -95,8 +107,8 @@ class JobCodeBasicInfo(Base):
     description = Column(Text, comment="Job description")
     
     # Client and entity references with proper UUID foreign keys
-    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.client_id", ondelete="CASCADE"), 
-                      nullable=False, index=True, comment="Foreign key to clients table")
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+                      nullable=False, index=True, comment="Foreign key to tenants table")
     entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id", ondelete="CASCADE"), 
                       nullable=False, index=True, comment="Foreign key to entities table")
     department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id", ondelete="CASCADE"), 
@@ -129,7 +141,7 @@ class JobCodeBasicInfo(Base):
     job_code = relationship("JobCode", back_populates="basic_info")
     
     # Relationships to organizational entities
-    client = relationship("Client", foreign_keys=[client_id])
+    tenant = relationship("Tenant", foreign_keys=[tenant_id])
     entity = relationship("Entity", foreign_keys=[entity_id])
     department = relationship("Department", foreign_keys=[department_id])
     division = relationship("Division", foreign_keys=[division_id])

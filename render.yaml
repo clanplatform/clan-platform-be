@@ -1,0 +1,192 @@
+# ================================================
+# Render Blueprint — clan-clan-platform-be
+# Defines two admin-service deployment:
+#   1. admin-service-dev  → development  (encryption OFF)
+#   2. admin-service-prod → production   (encryption ON)
+# ================================================
+# Deploy: Connect this repo in Render → New → Blueprint
+# Docs  : https://render.com/docs/blueprint-spec
+
+services:
+
+  # ──────────────────────────────────────────────
+  # SERVICE 1: Development / Stagings
+  # Encryption : DISABLED (no ENCRYPTION_KEY)
+  # ──────────────────────────────────────────────
+  - type: web
+    name: admin-service-dev
+    env: python
+    region: oregon
+    plan: starter
+    rootDir: services/admin-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+    healthCheckPath: /health
+
+    envVars:
+      # Application
+      - key: APP_NAME
+        value: Admin Service
+      - key: APP_VERSION
+        value: 1.0.0
+      - key: DEBUG
+        value: "true"
+      - key: ENVIRONMENT
+        value: development
+
+      # PostgreSQL — paste Internal URL from Render Postgres dashboard
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "10"
+      - key: DB_MAX_OVERFLOW
+        value: "20"
+      - key: DB_POOL_PRE_PING
+        value: "true"
+
+      # Redis — paste Internal URL from Render Redis dashboard
+      - key: REDIS_URL
+        sync: false
+      - key: CACHE_DEFAULT_TTL
+        value: "1800"
+
+      # MongoDB Atlas
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: clan_platform_dev
+
+      # Security
+      - key: SECRET_KEY
+        generateValue: true          # Render auto-generates a secure value
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+
+      # Encryption — DISABLED (key absent = plaintext passthrough)
+      # Do NOT add ENCRYPTION_KEY here for dev
+
+      # Services
+      - key: AUDIT_SERVICE_URL
+        value: https://audit-service-dev.onrender.com   # update after deploying audit-service
+      - key: IDENTITY_SERVICE_URL
+        sync: false
+
+      # CORS
+      - key: CORS_ORIGINS
+        value: '["https://dev.example.com","http://localhost:3000"]'
+
+      # Logging
+      - key: LOG_LEVEL
+        value: DEBUG
+      - key: LOG_FORMAT
+        value: json
+
+      # Workers
+      - key: UVICORN_WORKERS
+        value: "2"
+
+      # Feature flags
+      - key: FEATURE_AUDIT_LOG
+        value: "true"
+      - key: FEATURE_EVENT_PUBLISHING
+        value: "false"
+      - key: FEATURE_RATE_LIMITING
+        value: "false"
+
+
+  # ──────────────────────────────────────────────
+  # SERVICE 2: Production
+  # Encryption : ENABLED (ENCRYPTION_KEY must be set)
+  # ──────────────────────────────────────────────
+  - type: web
+    name: admin-service-prod
+    env: python
+    region: oregon
+    plan: standard
+    rootDir: services/admin-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 4
+    healthCheckPath: /health
+
+    envVars:
+      # Application
+      - key: APP_NAME
+        value: Admin Service
+      - key: APP_VERSION
+        value: 1.0.0
+      - key: DEBUG
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+
+      # PostgreSQL — paste Internal URL from Render Postgres dashboard
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "20"
+      - key: DB_MAX_OVERFLOW
+        value: "40"
+      - key: DB_POOL_PRE_PING
+        value: "true"
+
+      # Redis — paste Internal URL from Render Redis dashboard
+      - key: REDIS_URL
+        sync: false
+      - key: CACHE_DEFAULT_TTL
+        value: "1800"
+
+      # MongoDB Atlas
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: clan_platform_prod
+
+      # Security
+      - key: SECRET_KEY
+        sync: false                  # Set manually in Render dashboard (min 64 chars)
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "15"
+
+      # Encryption — ENABLED
+      # Generate: python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+      # Paste the generated value in Render dashboard → Environment → ENCRYPTION_KEY
+      - key: ENCRYPTION_KEY
+        sync: false                  # Secret — set manually in Render dashboard
+
+      # Services
+      - key: AUDIT_SERVICE_URL
+        value: https://audit-service-prod.onrender.com  # update after deploying audit-service
+      - key: IDENTITY_SERVICE_URL
+        sync: false
+
+      # CORS
+      - key: CORS_ORIGINS
+        sync: false                  # Set your actual frontend domain(s)
+
+      # Logging
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FORMAT
+        value: json
+
+      # Workers
+      - key: UVICORN_WORKERS
+        value: "4"
+
+      # Feature flags
+      - key: FEATURE_AUDIT_LOG
+        value: "true"
+      - key: FEATURE_EVENT_PUBLISHING
+        value: "true"
+      - key: FEATURE_RATE_LIMITING
+        value: "true"
+
+      # Rate limiting
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "100"
+      - key: RATE_LIMIT_BURST
+        value: "20"

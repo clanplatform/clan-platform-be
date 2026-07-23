@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 from math import ceil
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
+from app.core.security import get_current_user
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.user_role_form_permission.schemas.user_role_form_permission import (
     RoleFormPermissionCreate,
     RoleFormPermissionUpdate,
@@ -24,8 +27,10 @@ router = APIRouter()
     description="Create form permissions based on selected menus from userrole_permission table"
 )
 async def create_role_form_permission(
+    request: Request,
     permission_data: RoleFormPermissionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Create a new role form permission based on selected menus.
@@ -49,6 +54,26 @@ async def create_role_form_permission(
             db,
             permission_data
         )
+
+        # Audit log: role form permission created
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="RoleFormPermission",
+                object_id=str(created_permission.id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"id": str(created_permission.id)},
+            )
+        except Exception:
+            pass
+
         return created_permission
     except HTTPException:
         raise
@@ -66,24 +91,42 @@ async def create_role_form_permission(
     description="Retrieve a specific role form permission by its ID"
 )
 async def get_role_form_permission(
+    request: Request,
     permission_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get a role form permission by ID.
-    
+
     - **permission_id**: UUID of the role form permission
-    
+
     Returns the role form permission record.
     """
     permission = RoleFormPermissionService.get_role_form_permission(db, permission_id)
-    
+
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Role form permission with ID {permission_id} not found"
         )
-    
+
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="RoleFormPermission",
+            object_id=str(permission_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return permission
 
 
@@ -96,6 +139,7 @@ async def get_role_form_permission(
     description="Retrieve all role form permissions with optional filtering"
 )
 async def get_all_role_form_permissions(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(100, ge=1, le=1000, description="Page size"),
     user_role_id: Optional[UUID] = Query(None, description="Filter by user role ID"),
@@ -103,7 +147,8 @@ async def get_all_role_form_permissions(
     form_access: Optional[str] = Query(None, description="Filter by form access level (read, write, disable)"),
     sort_by: str = Query("created_at", description="Sort by field"),
     sort_order: str = Query("desc", description="Sort order (asc, desc)"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get all role form permissions with optional filtering and pagination.
@@ -131,14 +176,30 @@ async def get_all_role_form_permissions(
     )
     
     total_pages = ceil(total / size) if size > 0 else 0
-    
-    return RoleFormPermissionListResponse(
+
+    result = RoleFormPermissionListResponse(
         items=permissions,
         total=total,
         page=page,
         size=size,
         total_pages=total_pages
     )
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="RoleFormPermission",
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+    return result
 
 
 @router.put(
@@ -148,9 +209,11 @@ async def get_all_role_form_permissions(
     description="Update form permissions (must reference selected menus from userrole_permission)"
 )
 async def update_role_form_permission(
+    request: Request,
     permission_id: UUID,
     permission_data: RoleFormPermissionUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Update a role form permission.
@@ -167,13 +230,32 @@ async def update_role_form_permission(
             permission_id,
             permission_data
         )
-        
+
         if not updated_permission:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role form permission with ID {permission_id} not found"
             )
-        
+
+        # Audit log: role form permission updated
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="UPDATE",
+                object_type="RoleFormPermission",
+                object_id=str(permission_id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["UPDATE"],
+                new_values={"id": str(permission_id)},
+            )
+        except Exception:
+            pass
+
         return updated_permission
     except HTTPException:
         raise
@@ -191,21 +273,42 @@ async def update_role_form_permission(
     description="Delete a specific role form permission"
 )
 async def delete_role_form_permission(
+    request: Request,
     permission_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Delete a role form permission.
-    
+
     - **permission_id**: UUID of the role form permission to delete
     """
     deleted = RoleFormPermissionService.delete_role_form_permission(db, permission_id)
-    
+
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Role form permission with ID {permission_id} not found"
         )
-    
+
+    # Audit log: role form permission deleted
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="RoleFormPermission",
+            object_id=str(permission_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={},
+        )
+    except Exception:
+        pass
+
     return None
 

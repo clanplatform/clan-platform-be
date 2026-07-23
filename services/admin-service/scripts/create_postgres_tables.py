@@ -12,10 +12,10 @@ Environment Variables Required:
     DATABASE_URL - PostgreSQL connection string
     
 Example:
-    DATABASE_URL=postgresql://postgres:root@localhost:5432/admin_service
+    DATABASE_URL=postgresql://postgres:root@localhost:5432/clan_platform
 
 Tables Created (in dependency order):
-    1. clients
+    1. tenants
     2. domains
     3. entities
     4. departments
@@ -24,11 +24,14 @@ Tables Created (in dependency order):
     7. modules
     8. menus
     9. forms
-    10. job_codes
-    11. jobcode_basicinfo
-    12. jobcode_skills
-    13. jobcode_benefits
-    14. audit_logs
+    10. buttons
+    11. job_codes
+    12. jobcode_basicinfo
+    13. jobcode_skills
+    14. jobcode_benefits
+    15. tenant_modules
+    16. tenant_applications
+    17. audit_logs
 """
 
 import sys
@@ -45,10 +48,10 @@ from app.core.config import settings
 from app.infrastructure.database.base import Base
 
 # Import all models to register them with Base.metadata
-from app.clients.models.clients import Client
+from app.tenants.models.tenants import Tenant
 from app.domains.models.domain import Domain
 from app.entities.models.entity import Entity
-from app.departments.models.departments import Department, AuditLog
+from app.departments.models.departments import Department
 from app.divisions.models.divisions import Division
 from app.applications.models.application import Application
 from app.modules.models.module import Module
@@ -60,6 +63,8 @@ from app.job_codes.models.job_codes import (
     JobCodeSkills,
     JobCodeBenefits
 )
+from app.tenant_modules.models.tenant_module import TenantModule
+from app.tenant_applications.models.tenant_application import TenantApplication
 
 
 def print_header(text):
@@ -114,20 +119,23 @@ def get_table_dependency_order():
     Tables with no dependencies come first.
     """
     return [
-        'clients',            # No dependencies
-        'domains',            # No dependencies
-        'entities',           # Depends on: clients
-        'departments',        # Depends on: clients, entities, (self-referencing)
-        'divisions',          # Depends on: clients, entities, departments, (self-referencing)
-        'applications',       # Depends on: domains
-        'modules',            # Depends on: applications
-        'menus',              # Depends on: applications, modules, (self-referencing)
-        'forms',              # Depends on: menus
-        'job_codes',          # No dependencies
-        'jobcode_basicinfo',  # Depends on: job_codes, clients, entities, departments, divisions
-        'jobcode_skills',     # Depends on: job_codes
-        'jobcode_benefits',   # Depends on: job_codes
-        'audit_logs',         # Depends on: clients, entities (users not in scope)
+        'tenants',              # No dependencies
+        'domains',              # No dependencies
+        'entities',             # Depends on: tenants
+        'departments',          # Depends on: tenants, entities, (self-referencing)
+        'divisions',            # Depends on: tenants, entities, departments, (self-referencing)
+        'applications',         # Depends on: domains
+        'modules',              # Depends on: applications
+        'menus',                # Depends on: applications, modules, (self-referencing)
+        'forms',                # Depends on: menus
+        'buttons',              # Depends on: menus
+        'job_codes',            # No dependencies
+        'jobcode_basicinfo',    # Depends on: job_codes, tenants, entities, departments, divisions
+        'jobcode_skills',       # Depends on: job_codes
+        'jobcode_benefits',     # Depends on: job_codes
+        'tenant_modules',       # Depends on: tenants, modules
+        'tenant_applications',  # Depends on: tenants, applications
+        'audit_logs',           # Depends on: tenants, entities (users not in scope)
     ]
 
 
@@ -288,7 +296,7 @@ def main():
     print("\n📖 Connection Info:")
     print("   Host: localhost")
     print("   Port: 5432")
-    print("   Database: admin_service")
+    print("   Database: clan_platform")
     print("   Username: postgres")
     print("   Password: root")
     

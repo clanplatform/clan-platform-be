@@ -12,7 +12,7 @@ CONNECTION CREDENTIALS
 
 Username: postgres
 Password: root
-Database: admin_service
+Database: clan_platform
 Host: localhost (from outside Docker)
 Port: 5432
 
@@ -24,17 +24,17 @@ For pgAdmin/DBeaver/DataGrip:
 -----------------------------
 Host: localhost
 Port: 5432
-Database: admin_service
+Database: clan_platform
 Username: postgres
 Password: root
 
 For Application Code (Python/SQLAlchemy):
 ----------------------------------------
-postgresql://postgres:root@localhost:5432/admin_service
+postgresql://postgres:root@localhost:5432/clan_platform
 
 For Docker Container to Container:
 ----------------------------------
-postgresql://postgres:root@postgres:5432/admin_service
+postgresql://postgres:root@postgres:5432/clan_platform
 
 ================================================================
 DOCKER COMMANDS
@@ -50,7 +50,7 @@ View PostgreSQL logs:
   docker logs admin-service-postgres
 
 Connect via psql:
-  docker exec -it admin-service-postgres psql -U postgres -d admin_service
+  docker exec -it admin-service-postgres psql -U postgres -d clan_platform
 
 List databases:
   docker exec -it admin-service-postgres psql -U postgres -c "\l"
@@ -62,12 +62,12 @@ ENVIRONMENT FILES UPDATED
 All environment example files have been standardized with:
 - Username: postgres
 - Password: root (dev/uat) or CHANGE_ME_STRONG_PASSWORD (prod)
-- Database: admin_service
+- Database: clan_platform
 
 Files updated:
-- config/environments/.env.local.example
-- config/environments/.env.dev.example
-- config/environments/.env.uat.example
-- config/environments/.env.prod.example
+- config/environments/.env.local
+- config/environments/.env.dev
+- config/environments/.env.uat
+- config/environments/.env.prod
 
 ================================================================

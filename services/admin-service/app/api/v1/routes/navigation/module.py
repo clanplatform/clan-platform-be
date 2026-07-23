@@ -1,8 +1,11 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
+# Modules, tenant_modules live only in the master DB; tenant scoping is done by
+# filtering tenant_modules.tenant_id, not by switching databases.
 from app.infrastructure.database.session import get_db
+from app.core.security import get_current_user
 from app.modules.services.module import ModuleService
 from app.modules.schemas.module import (
     ModuleCreate,
@@ -10,6 +13,8 @@ from app.modules.schemas.module import (
     ModuleResponse,
     ModuleListResponse
 )
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_tenant import fire_audit_log
 import math
 
 router = APIRouter()
@@ -23,8 +28,10 @@ router = APIRouter()
     description="Create a new module with the provided details"
 )
 async def create_module(
+    request: Request,
     module_data: ModuleCreate,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     created_by: Optional[int] = Query(None, description="User ID who is creating the module")
 ):
     """
@@ -66,6 +73,33 @@ async def create_module(
     
     try:
         module = ModuleService.create_module(db, module_data, created_by)
+
+        # Sync so the new (possibly empty) module appears in the MongoDB navigation
+        try:
+            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+            await sync_application_menus_to_mongodb(db, module.application_id)
+        except Exception as sync_error:
+            print(f"[Module Create] ⚠️ MongoDB sync failed: {sync_error}")
+
+        # Audit log: module created
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Module",
+                object_id=str(module.id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"name": module.name},
+            )
+        except Exception:
+            pass
+
         return module
     except Exception as e:
         raise HTTPException(
@@ -80,7 +114,9 @@ async def create_module(
     description="Retrieve modules with optional filtering, searching, and pagination"
 )
 async def get_modules(
+    request: Request,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     application_id: Optional[str] = Query(None, description="Filter by application ID"),
@@ -104,7 +140,11 @@ async def get_modules(
     """
     
     skip = (page - 1) * size
-    
+
+    # Resolve the requesting user's tenant_id for tenant isolation.
+    # Platform admins (no tenant_id in token) see all modules.
+    requester_tenant_id = current_user.get("tenant_id") if current_user else None
+
     try:
         modules, total = ModuleService.get_modules(
             db=db,
@@ -115,18 +155,35 @@ async def get_modules(
             is_public=is_public,
             search=search,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            tenant_id=requester_tenant_id,
         )
         
         total_pages = math.ceil(total / size) if total > 0 else 0
-        
-        return ModuleListResponse(
+
+        result = ModuleListResponse(
             modules=modules,
             total=total,
             page=page,
             size=size,
             total_pages=total_pages
         )
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Module",
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -140,19 +197,37 @@ async def get_modules(
     description="Retrieve all modules for a specific application"
 )
 async def get_modules_by_application(
+    request: Request,
     application_id: str,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     is_active: Optional[bool] = Query(None, description="Filter by active status")
 ):
     """
     Get all modules for a specific application.
-    
+
     - **application_id**: The UUID of the application
     - **is_active**: Filter by active status (optional)
     """
-    
+
     try:
         modules = ModuleService.get_modules_by_application(db, application_id, is_active)
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Module",
+                object_id=application_id,
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return modules
     except Exception as e:
         raise HTTPException(
@@ -168,9 +243,11 @@ async def get_modules_by_application(
     description="Update an existing module with the provided details"
 )
 async def update_module(
+    request: Request,
     module_id: str,
     module_data: ModuleUpdate,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     updated_by: Optional[int] = Query(None, description="User ID who is updating the module")
 ):
     """
@@ -208,6 +285,34 @@ async def update_module(
     
     try:
         updated_module = ModuleService.update_module(db, module_id, module_data, updated_by)
+
+        # Sync the application's navigation document so module changes
+        # (label, icon, order, ...) reach MongoDB
+        try:
+            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+            await sync_application_menus_to_mongodb(db, updated_module.application_id)
+        except Exception as sync_error:
+            print(f"[Module Update] ⚠️ MongoDB sync failed: {sync_error}")
+
+        # Audit log: module updated
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="UPDATE",
+                object_type="Module",
+                object_id=str(module_id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["UPDATE"],
+                new_values={"name": updated_module.name},
+            )
+        except Exception:
+            pass
+
         return updated_module
     except Exception as e:
         raise HTTPException(
@@ -222,19 +327,25 @@ async def update_module(
     description="Soft delete a module (marks as deleted but keeps in database)"
 )
 async def delete_module(
+    request: Request,
     module_id: str,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     deleted_by: Optional[int] = Query(None, description="User ID who is deleting the module")
 ):
     """
     Soft delete a module.
-    
+
     - **module_id**: The UUID of the module to delete
     - **deleted_by**: User ID who is performing the deletion
-    
+
     This performs a soft delete - the module is marked as deleted but remains in the database.
     """
-    
+
+    # Fetch module before delete for audit snapshot
+    existing_module = ModuleService.get_module(db, module_id)
+    old_module_name = existing_module.name if existing_module else None
+
     success = ModuleService.delete_module(db, module_id, deleted_by)
     if not success:
         raise HTTPException(
@@ -242,35 +353,31 @@ async def delete_module(
             detail=f"Module with ID {module_id} not found"
         )
 
+    # Sync so the deleted module disappears from the MongoDB navigation
+    if existing_module:
+        try:
+            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
+            await sync_application_menus_to_mongodb(db, existing_module.application_id)
+        except Exception as sync_error:
+            print(f"[Module Delete] ⚠️ MongoDB sync failed: {sync_error}")
 
-    """
-    Reorder modules within an application.
-    
-    - **application_id**: The UUID of the application
-    - **module_orders**: List of objects with module_id and order_index
-    - **updated_by**: User ID who is performing the reordering
-    
-    Example request body:
-    ```json
-    [
-        {"module_id": 1, "order_index": 0},
-        {"module_id": 2, "order_index": 1},
-        {"module_id": 3, "order_index": 2}
-    ]
-    ```
-    """
-    
+    # Audit log: module deleted
     try:
-        success = ModuleService.reorder_modules(db, application_id, module_orders, updated_by)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to reorder modules"
-            )
-        
-        return {"message": "Modules reordered successfully"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to reorder modules: {str(e)}"
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="Module",
+            object_id=str(module_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={"name": old_module_name, "id": str(module_id)},
         )
+    except Exception:
+        pass
+
+    # Soft delete succeeded — 204 No Content (no body).

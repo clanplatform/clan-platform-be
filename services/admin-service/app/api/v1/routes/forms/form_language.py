@@ -1,9 +1,9 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
 from app.form_language.schemas.form_language import (
     FormLanguageCreate,
     FormLanguageUpdate,
@@ -13,6 +13,8 @@ from app.form_language.schemas.form_language import (
 )
 from app.form_language.services.form_language import FormLanguageService
 from app.core.security import get_current_user
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_tenant import fire_audit_log
 
 router = APIRouter()
 
@@ -70,6 +72,7 @@ router = APIRouter()
     }
 )
 def create_form_language(
+    request: Request,
     form_language: FormLanguageCreate = Body(
         ...,
         example={
@@ -102,6 +105,30 @@ def create_form_language(
     """
     try:
         db_form_language = FormLanguageService.create(db, form_language)
+
+        # Audit log: form language created
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="FormLanguage",
+                object_id=str(db_form_language.id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={
+                    "lang_code": db_form_language.lang_code,
+                    "language": db_form_language.language,
+                    "translated_name": db_form_language.translated_name,
+                },
+            )
+        except Exception:
+            pass
+
         return db_form_language
     except Exception as e:
         raise HTTPException(
@@ -160,6 +187,7 @@ def create_form_language(
     }
 )
 def get_all_form_languages(
+    request: Request,
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return (max: 1000)"),
     lang_code: Optional[str] = Query(None, description="Filter by language code (e.g., 'en', 'fr', 'es')", example="fr"),
@@ -170,7 +198,7 @@ def get_all_form_languages(
 ):
     """
     Get all form language translations with optional filters.
-    
+
     - **skip**: Number of records to skip (pagination)
     - **limit**: Maximum number of records to return
     - **lang_code**: Filter by language code (e.g., 'en', 'fr')
@@ -185,6 +213,21 @@ def get_all_form_languages(
         entity_type=entity_type,
         entity_id=entity_id
     )
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="FormLanguage",
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return form_languages
 
 
@@ -215,6 +258,7 @@ def get_all_form_languages(
     }
 )
 def get_form_language(
+    request: Request,
     form_language_id: UUID = Path(..., description="UUID of the form language translation"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
@@ -228,6 +272,22 @@ def get_form_language(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Form language translation with ID {form_language_id} not found"
         )
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="FormLanguage",
+            object_id=str(form_language_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return db_form_language
 
 
@@ -240,16 +300,32 @@ def get_form_language(
     description="Get all translations for a specific language"
 )
 def get_form_languages_by_lang_code(
+    request: Request,
     lang_code: str,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
     Get all translations for a specific language.
-    
+
     - **lang_code**: Language code (e.g., 'en', 'fr', 'es')
     """
     form_languages = FormLanguageService.get_by_lang_code(db, lang_code)
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="FormLanguage",
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
     return form_languages
 
 
@@ -261,6 +337,7 @@ def get_form_languages_by_lang_code(
     description="Update an existing form language translation"
 )
 def update_form_language(
+    request: Request,
     form_language_id: UUID,
     form_language_update: FormLanguageUpdate,
     db: Session = Depends(get_db),
@@ -277,6 +354,26 @@ def update_form_language(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Form language translation with ID {form_language_id} not found"
         )
+
+    # Audit log: form language updated
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="UPDATE",
+            object_type="FormLanguage",
+            object_id=str(form_language_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["UPDATE"],
+            new_values={"id": str(form_language_id)},
+        )
+    except Exception:
+        pass
+
     return db_form_language
 
 
@@ -287,13 +384,14 @@ def update_form_language(
     description="Soft delete a form language translation"
 )
 def delete_form_language(
+    request: Request,
     form_language_id: UUID,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
     Soft delete a form language translation.
-    
+
     The record will be marked as deleted but not removed from the database.
     """
     success = FormLanguageService.delete(db, form_language_id)
@@ -302,5 +400,25 @@ def delete_form_language(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Form language translation with ID {form_language_id} not found"
         )
+
+    # Audit log: form language deleted
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="DELETE",
+            object_type="FormLanguage",
+            object_id=str(form_language_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score=RISK_SCORE["DELETE"],
+            old_values={"id": str(form_language_id)},
+        )
+    except Exception:
+        pass
+
     return None
 

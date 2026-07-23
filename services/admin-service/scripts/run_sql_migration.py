@@ -16,7 +16,7 @@ from pathlib import Path
 DB_CONFIG = {
     'host': 'localhost',
     'port': 5432,
-    'database': 'admin_service',
+    'database': 'clan_platform',
     'user': 'postgres',
     'password': 'root'
 }

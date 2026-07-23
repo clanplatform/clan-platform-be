@@ -38,7 +38,7 @@ class JobCodeBasicInfoBase(BaseModel):
     level: Optional[str] = Field(None, max_length=50)
     description: Optional[str] = None
     # Required organizational hierarchy fields with proper UUID types
-    client_id: UUID = Field(..., description="Client UUID - required for organizational hierarchy")
+    tenant_id: UUID = Field(..., description="Tenant UUID - required for organizational hierarchy")
     entity_id: UUID = Field(..., description="Entity UUID - required for organizational hierarchy")
     department_id: UUID = Field(..., description="Department UUID - required for organizational hierarchy")
     division_id: UUID = Field(..., description="Division UUID - required for organizational hierarchy")
@@ -83,7 +83,9 @@ class JobCodeBenefitsCreate(JobCodeBenefitsBase):
 
 class JobCodeCreate(JobCodeBase):
     """Main create schema with nested relationships"""
-    basic_info: Optional[JobCodeBasicInfoCreate] = None
+    # Required: job_codes.tenant_id is backfilled from here, so basic_info
+    # (and its tenant_id) must be present on every create.
+    basic_info: JobCodeBasicInfoCreate
     skills: Optional[JobCodeSkillsCreate] = None
     benefits: Optional[JobCodeBenefitsCreate] = None
 
@@ -98,7 +100,7 @@ class JobCodeCreate(JobCodeBase):
                     "category": "Engineering",
                     "level": "Senior",
                     "description": "Responsible for backend architecture and APIs.",
-                    "client_id": "d697b099-e6d0-4bdb-9cbe-c3495474e0a7",
+                    "tenant_id": "d697b099-e6d0-4bdb-9cbe-c3495474e0a7",
                     "entity_id": "bf5b788b-2e9e-407b-9c68-7c8dded6b2d9",
                     "department_id": "7ca82431-ca5f-4234-9cb3-e5564c08b00e",
                     "division_id": "b4bbb063-6158-4e29-aed9-e678581bf1f1",
@@ -185,6 +187,7 @@ class JobCodeBenefitsRead(JobCodeBenefitsBase):
 
 class JobCodeRead(JobCodeBase):
     id: UUID
+    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
     basic_info: Optional[JobCodeBasicInfoRead] = None
@@ -196,6 +199,7 @@ class JobCodeRead(JobCodeBase):
 
 class JobCodeReadSimple(JobCodeBase):
     id: UUID
+    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
 

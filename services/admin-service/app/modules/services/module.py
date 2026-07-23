@@ -1,9 +1,33 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc
 from app.modules.models.module import Module
+from app.tenant_modules.models.tenant_module import TenantModule
 from app.modules.schemas.module import ModuleCreate, ModuleUpdate
+from app.applications.services.application import ensure_application_writable
+from app.core.access import is_active_from_access, is_write_locked
+from app.infrastructure.audit_tenant import fire_audit_log
 from datetime import datetime
+
+
+def ensure_module_writable(db: Session, module_id, resource: str = "this resource") -> None:
+    """
+    Raise 403 when the given module is read-only (access has no "write").
+
+    No-op when module_id is None (e.g. a menu not attached to a module) or the
+    module does not exist. Used to gate writes to a module's child resources
+    (menus).
+    """
+    if not module_id:
+        return
+    module = db.query(Module).filter(Module.id == module_id).first()
+    if module and is_write_locked(module.access):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Module is read-only; cannot create, modify, or delete {resource}.",
+        )
+
 
 class ModuleService:
     """Service for managing modules"""
@@ -11,13 +35,25 @@ class ModuleService:
     @staticmethod
     def create_module(db: Session, module_data: ModuleCreate, created_by: Optional[int] = None) -> Module:
         """Create a new module"""
+        # Block writes when the parent application is read-only
+        ensure_application_writable(db, module_data.application_id, "modules")
+        data = module_data.model_dump()
+        # Access drives the active state: "disable" -> False, "write"/"read" -> True
+        derived_active = is_active_from_access(data.get("access"))
+        if derived_active is not None:
+            data["is_active"] = derived_active
         db_module = Module(
-            **module_data.model_dump(),
+            **data,
             created_by=created_by
         )
         db.add(db_module)
         db.commit()
         db.refresh(db_module)
+        fire_audit_log(
+            action="CREATE", object_type="Module",
+            object_id=str(db_module.id),
+            new_values={"name": db_module.name, "code": db_module.code},
+        )
         return db_module
 
     @staticmethod
@@ -60,12 +96,25 @@ class ModuleService:
         is_public: Optional[bool] = None,
         search: Optional[str] = None,
         sort_by: str = "created_at",
-        sort_order: str = "desc"
+        sort_order: str = "desc",
+        tenant_id: Optional[str] = None,
     ) -> tuple[List[Module], int]:
-        """Get modules with filtering and pagination"""
-        
+        """Get modules with filtering and pagination.
+        When tenant_id is provided, only returns modules licensed to that tenant."""
+
         query = db.query(Module).filter(Module.is_deleted == False)
-        
+
+        # Tenant isolation: restrict to modules the tenant has licensed
+        if tenant_id:
+            query = query.join(
+                TenantModule,
+                and_(
+                    TenantModule.module_id == Module.id,
+                    TenantModule.tenant_id == tenant_id,
+                    TenantModule.is_active == True,
+                )
+            )
+
         # Apply filters
         if application_id:
             query = query.filter(Module.application_id == application_id)
@@ -131,16 +180,38 @@ class ModuleService:
         db_module = ModuleService.get_module(db, module_id)
         if not db_module:
             return None
-        
+
+        # Block writes when the parent application is read-only
+        ensure_application_writable(db, db_module.application_id, "modules")
+
         update_data = module_data.model_dump(exclude_unset=True)
         if updated_by:
             update_data["updated_by"] = updated_by
+
+        # Self read-only lock: a write-locked module can only be edited by a
+        # payload that changes "access" itself (the way to unlock it).
+        if is_write_locked(db_module.access) and "access" not in update_data:
+            raise HTTPException(
+                status_code=403,
+                detail="Module is read-only; include an 'access' change to modify it.",
+            )
+
+        # Keep is_active in sync when access changes (disable -> False, write/read -> True)
+        if "access" in update_data:
+            derived_active = is_active_from_access(update_data.get("access"))
+            if derived_active is not None:
+                update_data["is_active"] = derived_active
         
         for field, value in update_data.items():
             setattr(db_module, field, value)
         
         db.commit()
         db.refresh(db_module)
+        fire_audit_log(
+            action="UPDATE", object_type="Module",
+            object_id=str(module_id),
+            new_values=update_data,
+        )
         return db_module
 
     @staticmethod
@@ -149,13 +220,21 @@ class ModuleService:
         db_module = ModuleService.get_module(db, module_id)
         if not db_module:
             return False
-        
+
+        # Block writes when the parent application is read-only
+        ensure_application_writable(db, db_module.application_id, "modules")
+
         db_module.is_deleted = True
         db_module.is_active = False
         if deleted_by:
             db_module.updated_by = deleted_by
-        
+
         db.commit()
+        fire_audit_log(
+            action="DELETE", object_type="Module",
+            object_id=str(module_id),
+            old_values={"is_deleted": False}, new_values={"is_deleted": True},
+        )
         return True
 
     @staticmethod
@@ -187,36 +266,3 @@ class ModuleService:
         db.commit()
         db.refresh(db_module)
         return db_module
-
-    @staticmethod
-    def reorder_modules(
-        db: Session,
-        application_id: str,
-        module_orders: List[Dict[str, Any]],
-        updated_by: Optional[int] = None
-    ) -> bool:
-        """Reorder modules within an application"""
-        try:
-            for order_data in module_orders:
-                module_id = order_data.get("module_id")
-                new_order = order_data.get("order_index")
-                
-                if module_id and new_order is not None:
-                    db_module = db.query(Module).filter(
-                        and_(
-                            Module.id == module_id,
-                            Module.application_id == application_id,
-                            Module.is_deleted == False
-                        )
-                    ).first()
-                    
-                    if db_module:
-                        db_module.order_index = new_order
-                        if updated_by:
-                            db_module.updated_by = updated_by
-            
-            db.commit()
-            return True
-        except Exception:
-            db.rollback()
-            return False

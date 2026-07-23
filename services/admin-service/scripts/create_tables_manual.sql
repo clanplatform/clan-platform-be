@@ -6,15 +6,15 @@
 -- This script creates all tables for the Admin Service.
 -- Execute this script in your PostgreSQL database.
 --
--- Database: admin_service
+-- Database: clan_platform
 -- User: postgres
 -- Password: root
 --
 -- Usage:
---   psql -h localhost -U postgres -d admin_service -f create_tables_manual.sql
+--   psql -h localhost -U postgres -d clan_platform -f create_tables_manual.sql
 --
 -- Or from Docker:
---   docker exec -i admin-service-postgres psql -U postgres -d admin_service < create_tables_manual.sql
+--   docker exec -i admin-service-postgres psql -U postgres -d clan_platform < create_tables_manual.sql
 -- ================================================================
 
 -- Enable UUID extension

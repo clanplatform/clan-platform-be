@@ -1,10 +1,13 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
 import math
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_tenant_db as get_db
+from app.core.security import get_current_user
 from app.forms.services.forms import FormsService
+from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
+from app.infrastructure.audit_tenant import fire_audit_log
 from app.forms_details.services.forms_details import forms_details_service
 from app.forms.schemas.forms import (
     FormCreate,
@@ -29,8 +32,10 @@ router = APIRouter()
     description="Create a new form from frontend payload structure"
 )
 async def create_form(
+    request: Request,
     form_data: FormCreateFromFrontend,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Create a new form from frontend payload.
@@ -127,7 +132,26 @@ async def create_form(
             import traceback
             traceback.print_exc()
             # Continue without MongoDB - form is still created in PostgreSQL
-        
+
+        # Audit log: form created
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Form",
+                object_id=str(form.id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"name": form.name, "menu_id": str(form.menu_id)},
+            )
+        except Exception:
+            pass
+
         return form
     except Exception as e:
         db.rollback()
@@ -144,9 +168,11 @@ async def create_form(
     description="Import a form from the provided JSON structure"
 )
 async def import_form(
+    request: Request,
     menu_id: str,
     import_data: FormImport,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     created_by: Optional[str] = Query(None, description="User who is importing the form")
 ):
     """
@@ -168,30 +194,52 @@ async def import_form(
         # Create form from import data
         form = FormsService.create_form_from_import(db, menu_id, import_data, created_by)
         
-        # Create form details in MongoDB
-        mongo_id = await forms_details_service.create_form_details(
-            form_id=str(form.id),
-            menu_id=str(form.menu_id),
-            name=form.name,
-            version=form.version,
-            trigger_when=form.trigger_when,
-            forms=form.forms,
-            actions=form.actions,
-            modal_type=form.modal_type,
-            tooltip_type=form.tooltip_type,
-            error_type=form.error_type,
-            localization=form.localization,
-            languages=form.languages,
-            default_language=form.default_language,
-            is_active=form.is_active,
-            created_by=created_by
-        )
-        
-        # Update PostgreSQL with MongoDB ID
-        form.mongo_id = mongo_id
-        db.commit()
-        db.refresh(form)
-        
+        # Create form details in MongoDB (non-fatal: form is already in PostgreSQL)
+        try:
+            mongo_id = await forms_details_service.create_form_details(
+                form_id=str(form.id),
+                menu_id=str(form.menu_id),
+                name=form.name,
+                version=form.version,
+                trigger_when=form.trigger_when,
+                forms=form.forms,
+                actions=form.actions,
+                modal_type=form.modal_type,
+                tooltip_type=form.tooltip_type,
+                error_type=form.error_type,
+                localization=form.localization,
+                languages=form.languages,
+                default_language=form.default_language,
+                is_active=form.is_active,
+                created_by=created_by
+            )
+
+            # Update PostgreSQL with MongoDB ID
+            form.mongo_id = mongo_id
+            db.commit()
+            db.refresh(form)
+        except Exception as mongo_error:
+            print(f"[Forms Import] ⚠️ MongoDB sync failed (form imported in PostgreSQL): {mongo_error}")
+
+        # Audit log: form imported (CREATE action)
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="CREATE",
+                object_type="Form",
+                object_id=str(form.id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["CREATE"],
+                new_values={"name": form.name, "menu_id": str(form.menu_id)},
+            )
+        except Exception:
+            pass
+
         return form
     except Exception as e:
         raise HTTPException(
@@ -205,7 +253,9 @@ async def import_form(
     description="Retrieve forms grouped by menu from MongoDB in the new structure"
 )
 async def get_forms(
+    request: Request,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     menu_id: Optional[str] = Query(None, description="Filter by menu ID"),
@@ -279,15 +329,30 @@ async def get_forms(
         
         total_pages = math.ceil(total / size) if total > 0 else 0
         
-        # Return the exact MongoDB structure
-        return {
+        result = {
             "forms": forms_data,
             "total": total,
             "page": page,
             "size": size,
             "total_pages": total_pages
         }
-        
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Form",
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
+        return result
+
     except Exception as e:
         print(f"ERROR: Failed to retrieve forms from MongoDB: {str(e)}")
         import traceback
@@ -305,8 +370,10 @@ async def get_forms(
     description="Retrieve forms collection for a specific menu from MongoDB"
 )
 async def get_forms_by_menu(
+    request: Request,
     menu_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get forms collection for a specific menu from MongoDB.
@@ -359,7 +426,22 @@ async def get_forms_by_menu(
             "access": forms_collection.get("access", []),
             "forms": forms_collection.get("forms", [])
         }
-        
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="READ",
+                object_type="Form",
+                object_id=menu_id,
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score="LOW",
+            )
+        except Exception:
+            pass
         return response
         
     except HTTPException:
@@ -380,9 +462,11 @@ async def get_forms_by_menu(
     description="Update an existing form with the provided details"
 )
 async def update_form(
+    request: Request,
     form_id: str,
     form_data: FormUpdateSimple,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Update an existing form.
@@ -436,46 +520,80 @@ async def update_form(
         # Update form in PostgreSQL
         updated_form = FormsService.update_form(db, form_id, update_data, None)
         
-        # Update form details in MongoDB - update only the specific form
+        # Update form details in MongoDB - update only the specific form.
+        # Non-fatal: PostgreSQL is already updated; a Mongo outage must not 500.
         if form_data.forms:
-            collection = await forms_details_service.get_collection()
-            
-            # Find the collection containing this form_id
-            existing_doc = await collection.find_one({
-                "menu_id": str(form_data.menu_id),
-                "forms.form_id": form_id
-            })
-            
-            if not existing_doc:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Form with ID {form_id} not found in menu {form_data.menu_id}"
-                )
-            
-            # Convert the updated form data to dict format
-            updated_form_data = form_data.forms[0]  # Get the first (and should be only) form from request
-            form_dict = updated_form_data.model_dump() if hasattr(updated_form_data, 'model_dump') else updated_form_data
-            
-            # Ensure form_id is preserved
-            form_dict['form_id'] = form_id
-            
-            # Update only the specific form in the forms array using positional operator
-            await collection.update_one(
-                {
+            try:
+                collection = await forms_details_service.get_collection()
+
+                # Convert the updated form data to dict format
+                updated_form_data = form_data.forms[0]  # Get the first (and should be only) form from request
+                form_dict = updated_form_data.model_dump() if hasattr(updated_form_data, 'model_dump') else updated_form_data
+
+                # Ensure form_id is preserved
+                form_dict['form_id'] = form_id
+
+                access_list = form_data.access if isinstance(form_data.access, list) else [form_data.access] if form_data.access else []
+
+                # Find the collection containing this form_id
+                existing_doc = await collection.find_one({
                     "menu_id": str(form_data.menu_id),
                     "forms.form_id": form_id
-                },
-                {
-                    "$set": {
-                        "forms.$": form_dict,  # Update only the matched form
-                        "access": form_data.access if isinstance(form_data.access, list) else [form_data.access] if form_data.access else [],
-                        "updated_at": datetime.utcnow(),
-                        "updated_by": None
-                    }
-                }
-            )
+                })
+
+                if existing_doc:
+                    # Update only the specific form in the forms array using positional operator
+                    await collection.update_one(
+                        {
+                            "menu_id": str(form_data.menu_id),
+                            "forms.form_id": form_id
+                        },
+                        {
+                            "$set": {
+                                "forms.$": form_dict,  # Update only the matched form
+                                "access": access_list,
+                                "updated_at": datetime.utcnow(),
+                                "updated_by": None
+                            }
+                        }
+                    )
+                else:
+                    # Self-heal: the form is missing from MongoDB (e.g., created
+                    # while Mongo was down) - add it instead of 404ing after the
+                    # PostgreSQL update already succeeded
+                    print(f"[Forms Update] ♻️ Form {form_id} missing in MongoDB - recreating entry")
+                    await forms_details_service.create_or_update_form_collection(
+                        menu_id=str(form_data.menu_id),
+                        collection_name="",
+                        access=access_list or ["read", "write"],
+                        form_item=form_dict,
+                        created_by=None
+                    )
+            except Exception as mongo_error:
+                print(f"[Forms Update] ⚠️ MongoDB sync failed (form updated in PostgreSQL): {mongo_error}")
         
+        # Audit log: form updated
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="UPDATE",
+                object_type="Form",
+                object_id=str(form_id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["UPDATE"],
+                new_values={"form_id": form_id, "menu_id": str(form_data.menu_id) if form_data.menu_id else None},
+            )
+        except Exception:
+            pass
+
         return {"message": "Form updated successfully", "form_id": form_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -488,8 +606,10 @@ async def update_form(
     description="Soft delete a form (marks as deleted but keeps in database)"
 )
 async def delete_form(
+    request: Request,
     form_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Soft delete a form.
@@ -500,25 +620,49 @@ async def delete_form(
     """
     
     try:
-        # Get form to find menu_id
-        db_form = FormsService.get_form(db, form_id)
+        # Idempotent delete: look up WITHOUT the is_deleted filter so retrying a
+        # half-failed delete (PostgreSQL soft-deleted but MongoDB pull failed)
+        # still prunes the MongoDB entry instead of 404ing.
+        from app.forms.models.forms import Form
+        db_form = db.query(Form).filter(Form.id == form_id).first()
         if not db_form:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Form with ID {form_id} not found"
             )
-        
-        # Delete from PostgreSQL (soft delete)
-        success = FormsService.delete_form(db, form_id, None)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Form with ID {form_id} not found"
+
+        if not db_form.is_deleted:
+            # Delete from PostgreSQL (soft delete)
+            FormsService.delete_form(db, form_id, None)
+        else:
+            print(f"[Forms Delete] ♻️ Form {form_id} already soft-deleted - re-running MongoDB cleanup")
+
+        # Delete from MongoDB (remove from collection). Non-fatal: retry the
+        # DELETE to prune leftovers if MongoDB is unavailable right now.
+        try:
+            await forms_details_service.delete_form_details(form_id, str(db_form.menu_id))
+        except Exception as mongo_error:
+            print(f"[Forms Delete] ⚠️ MongoDB cleanup failed (form stays soft-deleted in PostgreSQL, retry DELETE to prune): {mongo_error}")
+
+        # Audit log: form deleted
+        try:
+            tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+            fire_audit_log(
+                action="DELETE",
+                object_type="Form",
+                object_id=str(form_id),
+                user_id=get_user_id(current_user),
+                tenant_id=tenant_id_audit,
+                entity_id=entity_id_audit,
+                session_id=get_session_id(current_user),
+                ip_address=get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                risk_score=RISK_SCORE["DELETE"],
+                old_values={"id": str(form_id)},
             )
-        
-        # Delete from MongoDB (remove from collection)
-        await forms_details_service.delete_form_details(form_id, str(db_form.menu_id))
-        
+        except Exception:
+            pass
+
     except HTTPException:
         raise
     except Exception as e:

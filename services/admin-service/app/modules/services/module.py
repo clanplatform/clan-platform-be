@@ -93,7 +93,6 @@ class ModuleService:
         limit: int = 100,
         application_id: Optional[str] = None,
         is_active: Optional[bool] = None,
-        is_public: Optional[bool] = None,
         search: Optional[str] = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -121,10 +120,7 @@ class ModuleService:
         
         if is_active is not None:
             query = query.filter(Module.is_active == is_active)
-            
-        if is_public is not None:
-            query = query.filter(Module.is_public == is_public)
-        
+
         if search:
             search_filter = or_(
                 Module.name.ilike(f"%{search}%"),
@@ -174,7 +170,6 @@ class ModuleService:
         db: Session,
         module_id: str,
         module_data: ModuleUpdate,
-        updated_by: Optional[int] = None
     ) -> Optional[Module]:
         """Update a module"""
         db_module = ModuleService.get_module(db, module_id)
@@ -185,8 +180,6 @@ class ModuleService:
         ensure_application_writable(db, db_module.application_id, "modules")
 
         update_data = module_data.model_dump(exclude_unset=True)
-        if updated_by:
-            update_data["updated_by"] = updated_by
 
         # Self read-only lock: a write-locked module can only be edited by a
         # payload that changes "access" itself (the way to unlock it).
@@ -223,6 +216,14 @@ class ModuleService:
 
         # Block writes when the parent application is read-only
         ensure_application_writable(db, db_module.application_id, "modules")
+
+        # Self read-only lock: a write-locked module (access has no "write")
+        # cannot be deleted even when its parent application is writable.
+        if is_write_locked(db_module.access):
+            raise HTTPException(
+                status_code=403,
+                detail="Module is read-only and cannot be deleted.",
+            )
 
         db_module.is_deleted = True
         db_module.is_active = False

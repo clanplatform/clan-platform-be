@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey, Date
+from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -19,7 +19,6 @@ class UserSetup(Base):
 
     # Child relationships
     basic = relationship("UserSetupBasic", back_populates="user_setup", cascade="all, delete-orphan", uselist=False)
-    roles_entities = relationship("UserSetupRolesEntity", back_populates="user_setup", cascade="all, delete-orphan")
     preferences = relationship("UserSetupPreference", back_populates="user_setup", cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -53,27 +52,23 @@ class UserSetupBasic(Base):
 
     # Employment Status
     status = Column(String(50), nullable=False, default='active')  # active, inactive, suspended, etc.
-    start_date = Column(Date, nullable=True)
-    end_date = Column(Date, nullable=True)
-    tem_employee = Column(Boolean, default=False, nullable=False)  # Temporary employee flag
 
-    # Organizational Structure - Foreign Keys
-    department = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
-    division = Column(UUID(as_uuid=True), ForeignKey("divisions.id"), nullable=True)
-    job_code = Column(UUID(as_uuid=True), ForeignKey("job_codes.id"), nullable=True)
-
-    # Role Management
-    manage_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of user_role.id the user can manage
-
-    # Default Settings
-    default_dept = Column(UUID(as_uuid=True), ForeignKey("departments.department_id"), nullable=True)
-    reporting_to = Column(UUID(as_uuid=True), ForeignKey("usersetup_basic.id"), nullable=True)  # Self-referencing
-
-    # Entity Access (dropdown selection)
+    # Entity Access — entities is a backend fallback array read by audit context
+    # resolution (get_audit_org_context); default_entity ("Branch / location")
+    # is the single source of truth exposed via the schema.
     entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of entity IDs
     default_entity = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
 
-    # Tenant
+    # Role assignment — single role (user_role.id), the source of truth for
+    # this user's role. Replaces the old usersetup_roles_entity table.
+    role_id = Column(UUID(as_uuid=True), ForeignKey("user_role.id"), nullable=True)
+
+    # User group (bare reference — no user_groups table yet) + invite email flag
+    user_group_id = Column(UUID(as_uuid=True), nullable=True)
+    send_invite_email = Column(Boolean, nullable=False, server_default='false', default=False)
+
+    # Tenant — derived from the JWT server-side, never accepted/returned in the
+    # CRUD schema (NULL = master-DB user, a tenant UUID = tenant-DB user).
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=True, index=True)
 
     # Allowed origins for master-DB users (tenant_id NULL) — tenant users get
@@ -81,102 +76,52 @@ class UserSetupBasic(Base):
     # (e.g. post-login redirect target for platform users).
     allowed_origins = Column(ARRAY(Text()), nullable=True)
 
-    # View Preferences
-    view = Column(String(50), nullable=True)  # e.g., 'grid', 'list', 'card'
-    dashboard_view = Column(String(50), nullable=True)  # e.g., 'default', 'compact', 'detailed'
-
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
     user_setup = relationship("UserSetup", back_populates="basic")
     tenant = relationship("Tenant", foreign_keys=[tenant_id])
-    department_rel = relationship("Department", foreign_keys=[department])
-    default_dept_rel = relationship("Department", foreign_keys=[default_dept])
-    division_rel = relationship("Division", foreign_keys=[division])
-    job_code_rel = relationship("JobCode", foreign_keys=[job_code])
     default_entity_rel = relationship("Entity", foreign_keys=[default_entity])
-
-    # Self-referencing relationship for reporting_to
-    manager = relationship("UserSetupBasic", remote_side=[id], foreign_keys=[reporting_to])
+    role = relationship("UserRoleMain", foreign_keys=[role_id])
 
     def __repr__(self):
         return f"<UserSetupBasic(id={self.id}, user_setup_id={self.user_setup_id}, username={self.username}, email={self.email}, status={self.status})>"
 
     def is_admin(self) -> bool:
-        """Check if user is admin based on assigned roles"""
+        """Check if user is admin based on the assigned role"""
         # Check if email contains 'admin' (for development/testing)
         if self.email and 'admin' in self.email.lower():
             return True
 
-        # Check if user has admin roles assigned
-        if hasattr(self, 'roles_entities') and self.roles_entities:
-            from app.user_role.models.user_role import UserRoleBasic
-            from app.infrastructure.database.session import SessionLocal
+        if not self.role_id:
+            return False
 
-            db = SessionLocal()
-            try:
-                for role_entity in self.roles_entities:
-                    if role_entity.assigned_roles:
-                        # assigned_roles holds user_role.id, so resolve via user_role_id
-                        admin_roles = db.query(UserRoleBasic).filter(
-                            UserRoleBasic.user_role_id.in_(role_entity.assigned_roles),
-                            UserRoleBasic.is_admin == True,
-                            UserRoleBasic.active == True
-                        ).first()
+        from app.user_role.models.user_role import UserRoleBasic
+        from app.infrastructure.database.session import SessionLocal
 
-                        if admin_roles:
-                            return True
-            finally:
-                db.close()
-
-        return False
-
-
-class UserSetupRolesEntity(Base):
-    """
-    User setup roles and entity assignments table (child table 2).
-    Stores assigned roles and entities for each user.
-    References user_setup.id and usersetup_basic.id as foreign keys.
-    """
-    __tablename__ = "usersetup_roles_entity"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_setup_id = Column(UUID(as_uuid=True), ForeignKey("user_setup.id", ondelete="CASCADE"), nullable=False)
-    usersetup_basic_id = Column(UUID(as_uuid=True), ForeignKey("usersetup_basic.id", ondelete="CASCADE"), nullable=False)
-
-    # Assigned Roles - Array of user_role.id (the parent role PK, not userrole_basic.id)
-    assigned_roles = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
-
-    # Assigned Entities - Array of entity IDs
-    assigned_entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
-
-    # Assigned Tenant - Foreign key to tenants table
-    assigned_tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="SET NULL"), nullable=True)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    # Relationships
-    user_setup = relationship("UserSetup", back_populates="roles_entities")
-    usersetup_basic = relationship("UserSetupBasic", backref="roles_entities")
-    assigned_tenant = relationship("Tenant", foreign_keys=[assigned_tenant_id])
-
-    def __repr__(self):
-        return f"<UserSetupRolesEntity(id={self.id}, user_setup_id={self.user_setup_id}, usersetup_basic_id={self.usersetup_basic_id}, assigned_roles={self.assigned_roles}, assigned_tenant_id={self.assigned_tenant_id})>"
+        db = SessionLocal()
+        try:
+            admin_role = db.query(UserRoleBasic).filter(
+                UserRoleBasic.user_role_id == self.role_id,
+                UserRoleBasic.is_admin == True,
+                UserRoleBasic.active == True
+            ).first()
+            return admin_role is not None
+        finally:
+            db.close()
 
 
 class UserSetupPreference(Base):
     """
-    User setup preferences table (child table 3).
+    User setup preferences table (child table 2).
     Stores user preferences like language, timezone, and theme.
-    References user_setup.id, usersetup_roles_entity.id, and usersetup_basic.id as foreign keys.
+    References user_setup.id and usersetup_basic.id as foreign keys.
     """
     __tablename__ = "usersetup_preference"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_setup_id = Column(UUID(as_uuid=True), ForeignKey("user_setup.id", ondelete="CASCADE"), nullable=False)
-    usersetup_roles_entity_id = Column(UUID(as_uuid=True), ForeignKey("usersetup_roles_entity.id", ondelete="CASCADE"), nullable=False)
     usersetup_basic_id = Column(UUID(as_uuid=True), ForeignKey("usersetup_basic.id", ondelete="CASCADE"), nullable=False)
 
     # User Preferences
@@ -191,9 +136,8 @@ class UserSetupPreference(Base):
 
     # Relationships
     user_setup = relationship("UserSetup", back_populates="preferences")
-    usersetup_roles_entity = relationship("UserSetupRolesEntity", backref="preferences")
     usersetup_basic = relationship("UserSetupBasic", backref="preferences")
 
     def __repr__(self):
-        return f"<UserSetupPreference(id={self.id}, user_setup_id={self.user_setup_id}, usersetup_roles_entity_id={self.usersetup_roles_entity_id}, language={self.language}, timezone={self.timezone}, theme={self.theme})>"
+        return f"<UserSetupPreference(id={self.id}, user_setup_id={self.user_setup_id}, language={self.language}, timezone={self.timezone}, theme={self.theme})>"
 

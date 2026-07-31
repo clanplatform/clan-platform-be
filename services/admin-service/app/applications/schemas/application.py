@@ -11,7 +11,6 @@ class ApplicationBase(BaseModel):
     version: Optional[str] = Field(None, max_length=20, description="Application version")
     status: Optional[str] = Field("active", description="Application status")
     domain_id: uuid.UUID = Field(..., description="Domain ID this application belongs to")
-    config: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Application configuration")
     is_active: Optional[bool] = Field(True, description="Whether the application is active")
     access: Optional[List[str]] = Field(default_factory=list, description="Array of access permissions")
 
@@ -37,7 +36,6 @@ class ApplicationUpdate(BaseModel):
     version: Optional[str] = Field(None, max_length=20, description="Application version")
     status: Optional[str] = Field(None, description="Application status")
     domain_id: Optional[uuid.UUID] = Field(None, description="Domain ID this application belongs to")
-    config: Optional[Dict[str, Any]] = Field(None, description="Application configuration")
     is_active: Optional[bool] = Field(None, description="Whether the application is active")
     access: Optional[List[str]] = Field(None, description="Array of access permissions")
 
@@ -86,4 +84,3 @@ class ApplicationWithMenusResponse(BaseModel):
     # Parent menus with nested children
     menus: List[Dict[str, Any]] = Field(default_factory=list, description="Parent menus with nested children")
     
-    model_config = ConfigDict(from_attributes=True)

@@ -48,19 +48,6 @@ def get_audit_org_context(db: Session, user_id: Optional[str]) -> Tuple[Optional
         elif row.entities:
             entity_id = str(row.entities[0])
 
-        if entity_id is None:
-            # usersetup_roles_entity exists only in the master DB
-            try:
-                from app.user_setup.models.user_setup import UserSetupRolesEntity
-                re_row = db.query(UserSetupRolesEntity.assigned_entities).filter(
-                    UserSetupRolesEntity.usersetup_basic_id == user_id,
-                    UserSetupRolesEntity.assigned_entities.isnot(None),
-                ).first()
-                if re_row and re_row.assigned_entities:
-                    entity_id = str(re_row.assigned_entities[0])
-            except Exception:
-                db.rollback()
-
         return tenant_id, entity_id
     except Exception:
         db.rollback()

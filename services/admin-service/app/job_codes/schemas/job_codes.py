@@ -29,40 +29,40 @@ class JobCodeBase(BaseModel):
     """Core JobCode fields"""
     job_code: str = Field(..., max_length=50, description="Unique job code identifier")
     job_title: str = Field(..., max_length=150, description="Job title/position name")
-    active_status: bool = Field(default=True, description="Whether the job code is currently active")
+    # active_status is intentionally omitted from the schema: it is a backend-
+    # operational column (defaulted True on create, toggled by delete/restore),
+    # never sent in the request or returned in the response.
 
 
 class JobCodeBasicInfoBase(BaseModel):
     """Base for job basic information"""
-    category: Optional[str] = Field(None, max_length=100)
-    level: Optional[str] = Field(None, max_length=50)
-    description: Optional[str] = None
-    # Required organizational hierarchy fields with proper UUID types
-    tenant_id: UUID = Field(..., description="Tenant UUID - required for organizational hierarchy")
+    # category / level / description are backend columns retained on the table but
+    # omitted from the schema (not part of the job-code form).
+    # Required organizational hierarchy fields with proper UUID types.
+    # tenant_id is intentionally omitted: it is derived from the JWT server-side,
+    # never sent in the request or returned in the response.
     entity_id: UUID = Field(..., description="Entity UUID - required for organizational hierarchy")
     department_id: UUID = Field(..., description="Department UUID - required for organizational hierarchy")
     division_id: UUID = Field(..., description="Division UUID - required for organizational hierarchy")
     employment_type: Optional[str] = Field(None, max_length=50)
     work_mode: Optional[str] = Field(None, max_length=50)
+    grade_band: Optional[str] = Field(None, max_length=50, description="Grade / band (e.g. L4 / Band 3)")
     minimum_salary: Optional[int] = Field(None)
     maximum_salary: Optional[int] = Field(None)
+    salary_currency: Optional[str] = Field(None, max_length=10, description="Salary currency (e.g. USD)")
     experience_years: Optional[int] = Field(None)
     reports_to: Optional[str] = Field(None, max_length=100)
 
 
 class JobCodeSkillsBase(BaseModel):
-    """Base for job skills and qualifications"""
+    """Base for job skills and qualifications.
+
+    requirements / education_level / certifications / performance_metrics are
+    backend columns retained on the table but omitted from the schema (not part
+    of the job-code form).
+    """
     key_responsibilities: Optional[str] = None
-    requirements: Optional[str] = None
     required_skills: Optional[str] = None
-    education_level: Optional[str] = Field(None, max_length=100)
-    certifications: Optional[str] = None
-    performance_metrics: Optional[str] = None
-
-
-class JobCodeBenefitsBase(BaseModel):
-    """Base for job benefits"""
-    benefits_package: Optional[str] = None
 
 
 # ============================================================================
@@ -77,17 +77,13 @@ class JobCodeSkillsCreate(JobCodeSkillsBase):
     pass
 
 
-class JobCodeBenefitsCreate(JobCodeBenefitsBase):
-    pass
-
-
 class JobCodeCreate(JobCodeBase):
     """Main create schema with nested relationships"""
-    # Required: job_codes.tenant_id is backfilled from here, so basic_info
-    # (and its tenant_id) must be present on every create.
+    # basic_info is required (it carries entity/department/division). tenant_id
+    # is NOT part of it — the service fills both job_codes.tenant_id and
+    # jobcode_basicinfo.tenant_id from the caller's JWT.
     basic_info: JobCodeBasicInfoCreate
     skills: Optional[JobCodeSkillsCreate] = None
-    benefits: Optional[JobCodeBenefitsCreate] = None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -95,32 +91,22 @@ class JobCodeCreate(JobCodeBase):
             "example": {
                 "job_code": "ENG-SSE-001",
                 "job_title": "Senior Software Engineer",
-                "active_status": True,
                 "basic_info": {
-                    "category": "Engineering",
-                    "level": "Senior",
-                    "description": "Responsible for backend architecture and APIs.",
-                    "tenant_id": "d697b099-e6d0-4bdb-9cbe-c3495474e0a7",
                     "entity_id": "bf5b788b-2e9e-407b-9c68-7c8dded6b2d9",
                     "department_id": "7ca82431-ca5f-4234-9cb3-e5564c08b00e",
                     "division_id": "b4bbb063-6158-4e29-aed9-e678581bf1f1",
                     "employment_type": "Full-time",
                     "work_mode": "Hybrid",
+                    "grade_band": "L4 / Band 3",
                     "minimum_salary": 85000,
                     "maximum_salary": 120000,
+                    "salary_currency": "USD",
                     "experience_years": 5,
                     "reports_to": "Engineering Director"
                 },
                 "skills": {
                     "key_responsibilities": "Design and implement scalable APIs",
-                    "requirements": "Strong Python and FastAPI experience",
-                    "required_skills": "Python, FastAPI, SQLAlchemy, Docker",
-                    "education_level": "Bachelor’s Degree",
-                    "certifications": "AWS Developer Certification",
-                    "performance_metrics": "Code quality, delivery speed"
-                },
-                "benefits": {
-                    "benefits_package": "Health, Dental, 401k, Remote flexibility"
+                    "required_skills": "Python, FastAPI, SQLAlchemy, Docker"
                 }
             }
         }
@@ -139,17 +125,11 @@ class JobCodeSkillsUpdate(JobCodeSkillsBase):
     pass
 
 
-class JobCodeBenefitsUpdate(JobCodeBenefitsBase):
-    pass
-
-
 class JobCodeUpdate(BaseModel):
     job_code: Optional[str] = Field(None, max_length=50)
     job_title: Optional[str] = Field(None, max_length=150)
-    active_status: Optional[bool] = None
     basic_info: Optional[JobCodeBasicInfoUpdate] = None
     skills: Optional[JobCodeSkillsUpdate] = None
-    benefits: Optional[JobCodeBenefitsUpdate] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -176,30 +156,18 @@ class JobCodeSkillsRead(JobCodeSkillsBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class JobCodeBenefitsRead(JobCodeBenefitsBase):
-    id: UUID
-    job_code_id: UUID
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class JobCodeRead(JobCodeBase):
     id: UUID
-    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
     basic_info: Optional[JobCodeBasicInfoRead] = None
     skills: Optional[JobCodeSkillsRead] = None
-    benefits: Optional[JobCodeBenefitsRead] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class JobCodeReadSimple(JobCodeBase):
     id: UUID
-    tenant_id: UUID
     created_at: datetime
     updated_at: datetime
 

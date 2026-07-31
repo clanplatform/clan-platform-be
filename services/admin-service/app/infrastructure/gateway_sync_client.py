@@ -25,7 +25,6 @@ async def sync_tenant_to_gateway(
     tenant_id: str,
     tenant_name: str,
     tenant_code: Optional[str] = None,
-    subscription_plan: Optional[str] = None,
     is_active: bool = True,
 ) -> None:
     """
@@ -41,7 +40,6 @@ async def sync_tenant_to_gateway(
                     "tenant_id":         tenant_id,
                     "tenant_name":       tenant_name,
                     "tenant_code":       tenant_code,
-                    "subscription_plan": subscription_plan,
                     "is_active":         is_active,
                 },
             )

@@ -31,11 +31,14 @@ async def create_entity(
     current_user=Depends(get_current_user)
 ):
     """Create a new entity"""
+    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     try:
-        # Delegate to the service layer: duplicate entity_code check, tenant
-        # check, and autogeneration of the locale fields from country_code.
+        # Delegate to the service layer: duplicate entity_code check and
+        # autogeneration of the locale fields from country_code. tenant_id is
+        # supplied from the token, not the payload.
         db_entity = entity_service.create_entity(
-            db, entity, user_id=get_user_id(current_user)
+            db, entity, tenant_id=tenant_id, user_id=get_user_id(current_user)
         )
 
         try:
@@ -54,7 +57,7 @@ async def create_entity(
                 new_values={
                     "entity_name": db_entity.entity_name,
                     "entity_code": db_entity.entity_code,
-                    "tenant_id": str(db_entity.tenant_id),
+                    "tenant_id": str(db_entity.tenant_id) if db_entity.tenant_id else None,
                 },
             )
         except Exception:
@@ -75,15 +78,12 @@ async def list_entities(
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None),
-    tenant_id: Optional[UUID] = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user=Depends(get_current_user)
 ):
     """List all entities with pagination and filtering"""
     query = db.query(Entity).filter(Entity.active == True)
 
-    if tenant_id:
-        query = query.filter(Entity.tenant_id == tenant_id)
     if search:
         query = query.filter(Entity.entity_name.ilike(f"%{search}%"))
 

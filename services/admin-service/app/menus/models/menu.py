@@ -22,10 +22,8 @@ class Menu(Base):
     component = Column(String(100), nullable=True)
     order_index = Column(Integer, default=0)
     level = Column(Integer, default=3)  # Updated default: Level 3 for menus (1=App, 2=Module, 3=Menu, 4=Children)
-    is_visible = Column(Boolean, default=True)
     is_active = Column(Boolean, default=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
-    menu_metadata = Column(JSON, nullable=True, default=dict)
     showtopbar = Column(Boolean, default=True)
     showsidebar = Column(Boolean, default=True)
 

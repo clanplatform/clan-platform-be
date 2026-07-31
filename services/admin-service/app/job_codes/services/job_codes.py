@@ -166,18 +166,26 @@ def get_job_codes_paginated(
     return job_codes, total
 
 
-def create_job_code(db: Session, job_code_data: JobCodeCreate, user_id: Optional[UUID] = None) -> JobCode:
+def create_job_code(
+    db: Session,
+    job_code_data: JobCodeCreate,
+    tenant_id: Optional[UUID],
+    user_id: Optional[UUID] = None,
+) -> JobCode:
     """
     Create a new job code with optional nested relationships
-    
+
     Args:
         db: Database session
         job_code_data: Job code creation data
+        tenant_id: Owning tenant, derived from the caller's JWT (not the body).
+            Persisted onto both job_codes and jobcode_basicinfo. None for
+            master-DB users (token without a tenant_id).
         user_id: ID of user creating the record (for audit)
-    
+
     Returns:
         Created JobCode object with all relationships
-    
+
     Raises:
         HTTPException: If job_code already exists or creation fails
     """
@@ -187,38 +195,35 @@ def create_job_code(db: Session, job_code_data: JobCodeCreate, user_id: Optional
         raise DuplicateJobCodeError(job_code_data.job_code)
     
     try:
-        # Create main JobCode
+        # Create main JobCode. tenant_id comes from the token, not the payload.
+        # active_status is backend-operational (not in the schema) — always active
+        # on create; delete/restore toggle it later.
         job_code = JobCode(
             job_code=job_code_data.job_code,
             job_title=job_code_data.job_title,
-            active_status=job_code_data.active_status,
-            tenant_id=job_code_data.basic_info.tenant_id
+            active_status=True,
+            tenant_id=tenant_id
         )
 
         db.add(job_code)
         db.flush()  # Get the ID for nested relationships
 
-        # Create nested relationships
+        # Create nested relationships (tenant_id injected from the token, since
+        # it is no longer part of the basic_info payload)
         basic_info = JobCodeBasicInfo(
             job_code_id=job_code.id,
+            tenant_id=tenant_id,
             **job_code_data.basic_info.model_dump()
         )
         db.add(basic_info)
-        
+
         if job_code_data.skills:
             skills = JobCodeSkills(
                 job_code_id=job_code.id,
                 **job_code_data.skills.model_dump()
             )
             db.add(skills)
-        
-        if job_code_data.benefits:
-            benefits = JobCodeBenefits(
-                job_code_id=job_code.id,
-                **job_code_data.benefits.model_dump()
-            )
-            db.add(benefits)
-        
+
         db.commit()
         db.refresh(job_code)
 
@@ -292,15 +297,14 @@ def update_job_code(
                     setattr(basic_info, field, value)
                 basic_info.updated_at = datetime.utcnow()
             else:
-                # Create new
+                # Create new — tenant_id is immutable and inherited from the
+                # parent job code (set from the token at creation time).
                 basic_info = JobCodeBasicInfo(
                     job_code_id=job_code_id,
+                    tenant_id=job_code.tenant_id,
                     **job_code_data.basic_info.model_dump()
                 )
                 db.add(basic_info)
-
-            # Keep the parent job_codes.tenant_id in sync with basic_info.tenant_id
-            job_code.tenant_id = job_code_data.basic_info.tenant_id
 
         # Update or create skills
         if job_code_data.skills is not None:
@@ -321,26 +325,6 @@ def update_job_code(
                     **job_code_data.skills.model_dump()
                 )
                 db.add(skills)
-
-        # Update or create benefits
-        if job_code_data.benefits is not None:
-            benefits = db.query(JobCodeBenefits).filter(
-                JobCodeBenefits.job_code_id == job_code_id
-            ).first()
-            
-            if benefits:
-                # Update existing
-                benefits_data = job_code_data.benefits.model_dump(exclude_unset=True)
-                for field, value in benefits_data.items():
-                    setattr(benefits, field, value)
-                benefits.updated_at = datetime.utcnow()
-            else:
-                # Create new
-                benefits = JobCodeBenefits(
-                    job_code_id=job_code_id,
-                    **job_code_data.benefits.model_dump()
-                )
-                db.add(benefits)
 
         db.flush()
         db.commit()
@@ -474,16 +458,19 @@ def delete_job_code_by_code(db: Session, job_code_str: str, user_id: Optional[UU
 def bulk_create_job_codes(
     db: Session,
     job_codes_data: List[JobCodeCreate],
+    tenant_id: Optional[UUID],
     user_id: Optional[UUID] = None
 ) -> Tuple[List[JobCode], List[dict]]:
     """
     Bulk create multiple job codes
-    
+
     Args:
         db: Database session
         job_codes_data: List of job code creation data
+        tenant_id: Owning tenant, derived from the caller's JWT (not the body).
+            None for master-DB users (token without a tenant_id).
         user_id: ID of user creating the records (for audit)
-    
+
     Returns:
         Tuple of (created job codes list, failed items list)
     """
@@ -503,38 +490,34 @@ def bulk_create_job_codes(
                 })
                 continue
             
-            # Create main JobCode
+            # Create main JobCode. tenant_id comes from the token, not the payload.
+            # active_status is backend-operational (not in the schema) — always
+            # active on create.
             job_code = JobCode(
                 job_code=job_code_data.job_code,
                 job_title=job_code_data.job_title,
-                active_status=job_code_data.active_status,
-                tenant_id=job_code_data.basic_info.tenant_id
+                active_status=True,
+                tenant_id=tenant_id
             )
 
             db.add(job_code)
             db.flush()  # Get the ID
 
-            # Create nested relationships
+            # Create nested relationships (tenant_id injected from the token)
             basic_info = JobCodeBasicInfo(
                 job_code_id=job_code.id,
+                tenant_id=tenant_id,
                 **job_code_data.basic_info.model_dump()
             )
             db.add(basic_info)
-            
+
             if job_code_data.skills:
                 skills = JobCodeSkills(
                     job_code_id=job_code.id,
                     **job_code_data.skills.model_dump()
                 )
                 db.add(skills)
-            
-            if job_code_data.benefits:
-                benefits = JobCodeBenefits(
-                    job_code_id=job_code.id,
-                    **job_code_data.benefits.model_dump()
-                )
-                db.add(benefits)
-            
+
             db.commit()
             
             # Load with relationships

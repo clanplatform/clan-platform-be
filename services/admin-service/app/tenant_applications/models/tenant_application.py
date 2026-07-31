@@ -13,7 +13,7 @@ class TenantApplication(Base):
     Licensing tiers:
       - Tier 1: A tenant buys individual modules    → use tenant_modules
       - Tier 2: A tenant buys an entire application → use tenant_applications
-      - Tier 3: A tenant buys the full platform     → set subscription_plan='platform' on tenants
+      - Tier 3: A tenant buys the full platform     → grant every application via tenant_applications
 
     When a TenantApplication row exists (and is_active=True), the tenant has
     access to ALL modules under that application without needing individual

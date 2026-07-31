@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.database.session import get_db
 from app.applications.models.application import Application
 from app.modules.models.module import Module
-from app.user_setup.models.user_setup import UserSetupBasic, UserSetupRolesEntity
+from app.user_setup.models.user_setup import UserSetupBasic
 from app.user_role.models.user_role import UserRoleBasic
 from .menu_details_mongodb import BaseMongoService
 
@@ -171,23 +171,18 @@ class MenuDetailsService(BaseMongoService):
             # Get user's email
             email = user.email or ""
             
-            # Get user's role (first assigned role name, or "User" as default)
+            # Get user's role name, or "User" as default
             role = "User"
             try:
-                # Get the user's role entities
-                roles_entity = db.query(UserSetupRolesEntity).filter(
-                    UserSetupRolesEntity.usersetup_basic_id == user.id
-                ).first()
-                
-                if roles_entity and roles_entity.assigned_roles:
-                    # Get the first role's name (assigned_roles holds user_role.id)
-                    first_role = db.query(UserRoleBasic).filter(
-                        UserRoleBasic.user_role_id == roles_entity.assigned_roles[0],
+                if user.role_id:
+                    # role_id holds user_role.id
+                    db_role = db.query(UserRoleBasic).filter(
+                        UserRoleBasic.user_role_id == user.role_id,
                         UserRoleBasic.active == True
                     ).first()
-                    
-                    if first_role:
-                        role = first_role.role_name
+
+                    if db_role:
+                        role = db_role.role_name
             except Exception as e:
                 print(f"[Profile Section] ⚠️ Error fetching user role: {e}")
             

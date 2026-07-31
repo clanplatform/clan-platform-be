@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from app.infrastructure.database.session import get_db
 from app.core.security import get_current_user  # Uses optional auth support
 from app.core.config import settings
-from app.infrastructure.database.tenant_db_manager import tenant_db_manager, TenantDatabaseManager, _slugify
+from app.infrastructure.database.tenant_db_manager import tenant_db_manager
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
@@ -34,14 +34,23 @@ REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
 
 
 def _generate_temp_password(length: int = 12) -> str:
-    """Generate a cryptographically secure temporary password."""
-    alphabet = string.ascii_letters + string.digits + "!@#$%"
+    """Generate a cryptographically secure temporary password.
+
+    Ambiguous characters are excluded so the password survives being read out of
+    an email and re-typed: no l/I/1, no o/O/0, and no '!' (easily mistaken for
+    l/I/1 in most fonts).
+    """
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"   # no I, O
+    lower = "abcdefghijkmnpqrstuvwxyz"   # no l, o
+    digits = "23456789"                  # no 0, 1
+    special = "@#$%*"                     # no ! (reads like l / I / 1)
+    alphabet = upper + lower + digits + special
     # Guarantee at least one character from each required group
     parts = [
-        secrets.choice(string.ascii_uppercase),
-        secrets.choice(string.ascii_lowercase),
-        secrets.choice(string.digits),
-        secrets.choice("!@#$%"),
+        secrets.choice(upper),
+        secrets.choice(lower),
+        secrets.choice(digits),
+        secrets.choice(special),
     ]
     parts += [secrets.choice(alphabet) for _ in range(length - 4)]
     secrets.SystemRandom().shuffle(parts)
@@ -60,7 +69,7 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
 
     # 1. Seed the tenant row so FK on usersetup_basic.tenant_id is satisfied.
     # Copy every column so the tenant DB holds the full tenant profile
-    # (address, industry, subscription_plan, ...), not just the FK fields.
+    # (address, industry, ...), not just the FK fields.
     tenant_row = TenantModel(**{
         col.name: getattr(tenant, col.name)
         for col in TenantModel.__table__.columns
@@ -98,49 +107,6 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
     tenant_db.commit()
     logger.info("Seeded initial admin user '%s' in tenant DB: %s", username, tenant.tenant_db_name)
 
-def _verify_master_user(db: Session, email: str, password: str):
-    """
-    Verify that the given credentials belong to a master-DB user.
-
-    Tenant DBs may only be provisioned by a user that exists in the MASTER
-    database's usersetup_basic with tenant_id NULL (platform user). Tenant
-    users — seeded into their own tenant DB with tenant_id set — must not be
-    able to create tenants.
-
-    Returns the master UserSetupBasic row on success.
-    Raises 401 on unknown email / wrong password (same message for both, to
-    avoid user enumeration) and 403 for tenant or inactive users.
-    """
-    from app.user_setup.models.user_setup import UserSetupBasic
-    from app.core.security import verify_password
-
-    creator = db.query(UserSetupBasic).filter(
-        UserSetupBasic.email == email
-    ).first()
-
-    if not creator or not verify_password(password, creator.password_hash):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid master user credentials",
-        )
-
-    # Master users live in the master DB with tenant_id NULL. A row with a
-    # tenant_id here (or a user that only exists in a tenant DB — not found
-    # above) is a tenant user and may not provision tenant databases.
-    if creator.tenant_id is not None:
-        raise HTTPException(
-            status_code=403,
-            detail="Only master platform users can create tenants",
-        )
-
-    if (creator.status or "").lower() != "active":
-        raise HTTPException(
-            status_code=403,
-            detail="Master user account is not active",
-        )
-
-    return creator
-
 
 # Simple admin check for no-auth mode (User model not in scope)
 def require_admin_role(current_user=Depends(get_current_user)):
@@ -160,12 +126,11 @@ async def create_tenant(
     current_user=Depends(require_admin_role)
 ):
     """Create a new tenant (master platform users only)"""
-    # Tenant DBs may only be created by a master-DB user (usersetup_basic,
-    # tenant_id NULL) who re-authenticates with email + password. Tenant
-    # users are rejected before anything is written.
-    master_user = _verify_master_user(
-        db, tenant_data.created_by_email, tenant_data.created_by_password
-    )
+    # Tenant DBs may only be created by a master-DB user (JWT tenant_id NULL);
+    # tenant users are rejected before anything is written.
+    caller_tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    if caller_tenant_id is not None:
+        raise HTTPException(status_code=403, detail="Only master platform users can create tenants")
 
     # Check if tenant with same tenant_name already exists
     existing_tenant = db.query(Tenant).filter(Tenant.tenant_name == tenant_data.tenant_name).first()
@@ -177,22 +142,16 @@ async def create_tenant(
     if existing_email:
         raise HTTPException(status_code=400, detail="Tenant email already exists")
 
-    # Create new tenant (creator credentials are consumed above, never stored)
-    db_tenant = Tenant(**tenant_data.model_dump(
-        exclude={"created_by_email", "created_by_password"}
-    ))
-    db_tenant.created_by = master_user.id
+    # Create new tenant
+    db_tenant = Tenant(**tenant_data.model_dump())
+    _creator_id = get_user_id(current_user)
+    try:
+        db_tenant.created_by = UUID(str(_creator_id)) if _creator_id else None
+    except (ValueError, TypeError):
+        db_tenant.created_by = None
 
-    # Assign a dedicated database name before saving.
-    # Prefer the explicit tenant_db_name from the request; fall back to a name
-    # derived from tenant_code (or tenant_id). Always slugify — the name is
-    # embedded directly into CREATE DATABASE.
-    if db_tenant.tenant_db_name and db_tenant.tenant_db_name.strip():
-        db_tenant.tenant_db_name = _slugify(db_tenant.tenant_db_name.strip())
-    else:
-        tenant_code = (db_tenant.tenant_code or "").strip()
-        db_tenant.tenant_db_name = TenantDatabaseManager.make_db_name(tenant_code or str(db_tenant.tenant_id))
-
+    # tenant_db_name is a computed property derived from tenant_code — nothing to
+    # assign here.
     db.add(db_tenant)
     db.commit()
     db.refresh(db_tenant)
@@ -266,7 +225,6 @@ async def create_tenant(
         tenant_code=db_tenant.tenant_code,
         contact_email=db_tenant.contact_email,
         contact_phone=db_tenant.contact_phone,
-        subscription_plan=db_tenant.subscription_plan,
         is_active=bool(db_tenant.is_active),
     ))
     # Sync to API gateway so Envoy routing stays in sync (non-blocking)
@@ -274,7 +232,6 @@ async def create_tenant(
         tenant_id=str(db_tenant.tenant_id),
         tenant_name=db_tenant.tenant_name,
         tenant_code=db_tenant.tenant_code,
-        subscription_plan=db_tenant.subscription_plan,
         is_active=bool(db_tenant.is_active),
     ))
 
@@ -290,7 +247,6 @@ async def list_tenants(
     size: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None),
     industry: Optional[str] = Query(None),
-    subscription_plan: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     onboarding_status: Optional[str] = Query(None),
     _t: Optional[str] = Query(None),  # Cache-busting parameter (ignored)
@@ -396,7 +352,6 @@ async def update_tenant(
         tenant_code=tenant.tenant_code,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
-        subscription_plan=tenant.subscription_plan,
         is_active=bool(tenant.is_active),
     ))
     # Sync updated data to API gateway so Envoy routing stays in sync (non-blocking)
@@ -404,7 +359,6 @@ async def update_tenant(
         tenant_id=str(tenant.tenant_id),
         tenant_name=tenant.tenant_name,
         tenant_code=tenant.tenant_code,
-        subscription_plan=tenant.subscription_plan,
         is_active=bool(tenant.is_active),
     ))
 
@@ -459,7 +413,6 @@ async def delete_tenant(
         tenant_code=tenant.tenant_code,
         contact_email=tenant.contact_email,
         contact_phone=tenant.contact_phone,
-        subscription_plan=tenant.subscription_plan,
         is_active=False,
     ))
     # Sync deactivation to API gateway so Envoy routing stays in sync
@@ -467,7 +420,6 @@ async def delete_tenant(
         tenant_id=str(tenant.tenant_id),
         tenant_name=tenant.tenant_name,
         tenant_code=tenant.tenant_code,
-        subscription_plan=tenant.subscription_plan,
         is_active=False,
     ))
 

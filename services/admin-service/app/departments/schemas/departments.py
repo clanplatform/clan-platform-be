@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from decimal import Decimal
@@ -6,22 +6,21 @@ import uuid
 
 class DepartmentBase(BaseModel):
     department_name: str = Field(..., min_length=1, max_length=100, description="Department name")
-    description: Optional[str] = Field(None, description="Department description")
     department_code: Optional[str] = Field(None, min_length=1, max_length=20, description="Department code")
     entity_id: uuid.UUID = Field(..., description="Entity ID this department belongs to")
-    parent_department_id: Optional[uuid.UUID] = Field(None, description="Parent department ID for hierarchy")
-    # manager_id removed - column doesn't exist in database
     department_type: Optional[str] = Field(None, max_length=50, description="Department type")
     cost_center: Optional[str] = Field(None, max_length=50, description="Department cost center")
+    department_head: Optional[str] = Field(None, max_length=100, description="Department head / manager")
     location: str = Field(..., max_length=255, description="Department location")
     phone: str = Field(..., max_length=20, description="Department phone number")
     email: str = Field(..., max_length=255, description="Department email address")
     annual_budget: Decimal = Field(..., description="Department annual budget")
-    reporting_structure: str = Field(..., max_length=100, description="Department reporting structure")
-    budget_info: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Budget information")
-    department_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Department metadata")
-    is_active: Optional[bool] = Field(True, description="Whether the department is active")
-    tenant_id: uuid.UUID = Field(..., description="Client ID this department belongs to")
+    reporting_structure: Optional[str] = Field(None, max_length=100, description="Department reporting structure")
+    # is_active is intentionally omitted from the schema: it is a backend-operational
+    # column (defaulted True on create, toggled by delete/restore), never sent in the
+    # request or returned in the response.
+    # tenant_id is intentionally omitted: it is derived from the JWT server-side,
+    # never sent in the request or returned in the response.
 
     @validator('email')
     def validate_email(cls, v):
@@ -35,20 +34,16 @@ class DepartmentCreate(DepartmentBase):
 
 class DepartmentUpdate(BaseModel):
     department_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Department name")
-    description: Optional[str] = Field(None, description="Department description")
     department_code: Optional[str] = Field(None, max_length=20, description="Department code")
-    parent_department_id: Optional[uuid.UUID] = Field(None, description="Parent department ID for hierarchy")
-    # manager_id removed - column doesn't exist in database
     department_type: Optional[str] = Field(None, max_length=50, description="Department type")
     cost_center: Optional[str] = Field(None, max_length=50, description="Department cost center")
+    department_head: Optional[str] = Field(None, max_length=100, description="Department head / manager")
     location: Optional[str] = Field(None, max_length=255, description="Department location")
     phone: Optional[str] = Field(None, max_length=20, description="Department phone number")
     email: Optional[str] = Field(None, max_length=255, description="Department email address")
     annual_budget: Optional[Decimal] = Field(None, description="Department annual budget")
     reporting_structure: Optional[str] = Field(None, max_length=100, description="Department reporting structure")
-    budget_info: Optional[Dict[str, Any]] = Field(None, description="Budget information")
-    department_metadata: Optional[Dict[str, Any]] = Field(None, description="Department metadata")
-    is_active: Optional[bool] = Field(None, description="Whether the department is active")
+    # is_active omitted — backend-operational only (see DepartmentBase).
 
     @validator('email')
     def validate_email(cls, v):

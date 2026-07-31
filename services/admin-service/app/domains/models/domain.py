@@ -12,7 +12,6 @@ class Domain(Base):
     code = Column(String(50), nullable=False, unique=True)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
-    domain_metadata = Column(JSON, default=dict)
     is_active = Column(Boolean, default=True)
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)

@@ -15,7 +15,6 @@ class Application(Base):
     description = Column(Text, nullable=True)
     version = Column(String(20), default="1.0.0")
     status = Column(String(50), default="active")
-    config = Column(JSON, default=dict)
     is_active = Column(Boolean, default=True)
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)

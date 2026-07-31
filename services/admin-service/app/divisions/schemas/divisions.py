@@ -1,16 +1,9 @@
-from typing import Optional, Dict, Any
+from typing import Optional
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 import uuid
 
 # Nested schemas for relationships
-class TenantNested(BaseModel):
-    tenant_id: uuid.UUID
-    tenant_name: str
-
-    class Config:
-        from_attributes = True
-
 class EntityNested(BaseModel):
     entity_id: uuid.UUID
     entity_name: str
@@ -25,35 +18,21 @@ class DepartmentNested(BaseModel):
     class Config:
         from_attributes = True
 
-class DivisionNested(BaseModel):
-    id: uuid.UUID
-    division_name: str
-    division_code: str
-    
-    class Config:
-        from_attributes = True
-
 class DivisionBase(BaseModel):
     division_name: str = Field(..., min_length=1, max_length=100, description="Division name")
     division_code: str = Field(..., min_length=1, max_length=20, description="Division code")
     description: Optional[str] = Field(None, description="Division description")
-    tenant_id: uuid.UUID = Field(..., description="Client ID this division belongs to")
+    # tenant_id is intentionally omitted: it is derived from the JWT server-side,
+    # never sent in the request or returned in the response.
+    # is_active is intentionally omitted: it is a backend-operational column
+    # (defaulted True on create, toggled by delete/restore), never in the schema.
     entity_id: uuid.UUID = Field(..., description="Entity ID this division belongs to")
     department_id: Optional[uuid.UUID] = Field(None, description="Department ID this division belongs to")
-    parent_division_id: Optional[uuid.UUID] = Field(None, description="Parent division ID")
+    division_head: Optional[str] = Field(None, max_length=100, description="Division head / lead")
     hierarchy_level: Optional[str] = Field("1", max_length=10, description="Hierarchy level")
-    division_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Division metadata")
-    is_active: Optional[bool] = Field(True, description="Whether the division is active")
 
     @validator('department_id', pre=True)
     def validate_department_id(cls, v):
-        # Convert empty string to None
-        if v == '':
-            return None
-        return v
-
-    @validator('parent_division_id', pre=True)
-    def validate_parent_division_id(cls, v):
         # Convert empty string to None
         if v == '':
             return None
@@ -68,22 +47,14 @@ class DivisionUpdate(BaseModel):
     division_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Division name")
     division_code: Optional[str] = Field(None, min_length=1, max_length=20, description="Division code")
     description: Optional[str] = Field(None, description="Division description")
-    tenant_id: Optional[uuid.UUID] = Field(None, description="Client ID this division belongs to")
+    # tenant_id is intentionally omitted: it is derived from the JWT and immutable.
     entity_id: Optional[uuid.UUID] = Field(None, description="Entity ID this division belongs to (cannot be changed after creation)")
     department_id: Optional[uuid.UUID] = Field(None, description="Department ID this division belongs to")
-    parent_division_id: Optional[uuid.UUID] = Field(None, description="Parent division ID")
+    division_head: Optional[str] = Field(None, max_length=100, description="Division head / lead")
     hierarchy_level: Optional[str] = Field(None, max_length=10, description="Hierarchy level")
-    division_metadata: Optional[Dict[str, Any]] = Field(None, description="Division metadata")
-    is_active: Optional[bool] = Field(None, description="Whether the division is active")
 
     @validator('department_id', pre=True)
     def validate_department_id(cls, v):
-        if v == '':
-            return None
-        return v
-
-    @validator('parent_division_id', pre=True)
-    def validate_parent_division_id(cls, v):
         if v == '':
             return None
         return v
@@ -95,11 +66,10 @@ class DivisionResponse(DivisionBase):
     created_at: datetime
     updated_at: datetime
     
-    # Nested relationships (optional)
-    tenant: Optional[TenantNested] = None
+    # Nested relationships (optional). tenant is intentionally not exposed —
+    # tenant identity stays in the JWT, out of the division JSON.
     entity: Optional[EntityNested] = None
     department: Optional[DepartmentNested] = None
-    parent_division: Optional[DivisionNested] = None
-    
+
     class Config:
         from_attributes = True

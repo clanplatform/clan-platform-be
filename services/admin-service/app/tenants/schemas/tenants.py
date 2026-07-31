@@ -14,38 +14,48 @@ class TenantBase(BaseModel):
     country: Optional[str] = None
     industry: Optional[str] = None
     company_size: Optional[str] = None
-    subscription_plan: Optional[str] = None
     onboarding_status: Optional[str] = None
     employees_count: Optional[int] = None
-    location: Optional[str] = None
-    status: Optional[str] = None
     description: Optional[str] = None
-    tenant_db_name: Optional[str] = None
-    table_permission: Optional[List[str]] = Field(
-        default=None,
-        description="List of table names allocated in this tenant's dedicated database.",
-        json_schema_extra={"example": ["users", "departments", "job_codes"]},
-    )
-    is_active: Optional[bool] = True
-    allowed_origins: Optional[List[str]] = Field(
-        default=None,
-        description="List of allowed CORS origins for this tenant's frontend apps.",
-        json_schema_extra={"example": ["https://app.customer.com", "https://portal.customer.org"]},
-    )
+
+    # Company identity
+    display_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    tax_id: Optional[str] = None
+    founded_year: Optional[int] = None
+    website: Optional[str] = None
+    company_logo: Optional[str] = None
+    annual_revenue: Optional[str] = None
+    # Headquarters address
+    postal_code: Optional[str] = None
+    # Primary contact
+    contact_name: Optional[str] = None
+    contact_title: Optional[str] = None
+    # Business domain & model
+    primary_domain: Optional[str] = None
+    business_model: Optional[str] = None
+    organization_type: Optional[str] = None
+    # Localization & business defaults
+    default_language: Optional[str] = None
+    time_zone: Optional[str] = None
+    default_currency: Optional[str] = None
+    date_format: Optional[str] = None
+    fiscal_year_start: Optional[str] = None
+    week_starts_on: Optional[str] = None
+    # Account status
+    internal_notes: Optional[str] = None
+    # Account owner (denormalized; owner password is never stored/returned here)
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+
+    # NOTE: tenant_db_name (derived from tenant_code), table_permission,
+    # allowed_origins and is_active are intentionally NOT part of the schema —
+    # they are operational/backend-managed and never accepted or returned here.
 
 class TenantCreate(TenantBase):
-    # Tenant DBs may only be provisioned by a master-DB user (usersetup_basic
-    # with tenant_id NULL). The creator re-authenticates with email + password;
-    # tenant users are rejected. These fields are consumed by the route and
-    # never stored on the tenant row.
-    created_by_email: str = Field(
-        ...,
-        description="Email of the master-DB user (usersetup_basic) authorizing this tenant creation.",
-    )
-    created_by_password: str = Field(
-        ...,
-        description="Password of the master-DB user authorizing this tenant creation.",
-    )
+    # Tenant creation is authorized by the caller's JWT (must be a master-DB
+    # user, tenant_id NULL). No credentials are carried in the request body.
+    pass
 
 class TenantUpdate(BaseModel):
     tenant_name: Optional[str] = None
@@ -58,16 +68,31 @@ class TenantUpdate(BaseModel):
     country: Optional[str] = None
     industry: Optional[str] = None
     company_size: Optional[str] = None
-    subscription_plan: Optional[str] = None
     onboarding_status: Optional[str] = None
     employees_count: Optional[int] = None
-    location: Optional[str] = None
-    status: Optional[str] = None
     description: Optional[str] = None
-    tenant_db_name: Optional[str] = None
-    table_permission: Optional[List[str]] = None
-    is_active: Optional[bool] = None
-    allowed_origins: Optional[List[str]] = None
+    display_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    tax_id: Optional[str] = None
+    founded_year: Optional[int] = None
+    website: Optional[str] = None
+    company_logo: Optional[str] = None
+    annual_revenue: Optional[str] = None
+    postal_code: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_title: Optional[str] = None
+    primary_domain: Optional[str] = None
+    business_model: Optional[str] = None
+    organization_type: Optional[str] = None
+    default_language: Optional[str] = None
+    time_zone: Optional[str] = None
+    default_currency: Optional[str] = None
+    date_format: Optional[str] = None
+    fiscal_year_start: Optional[str] = None
+    week_starts_on: Optional[str] = None
+    internal_notes: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
 
 class TenantResponse(TenantBase):
     tenant_id: UUID

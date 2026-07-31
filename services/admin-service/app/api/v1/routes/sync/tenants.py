@@ -46,7 +46,6 @@ class PortalTenantPayload(BaseModel):
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     status: str = "active"           # active | suspended | trial | cancelled
-    subscription_plan: Optional[str] = None
 
 
 # ──────────────────────────────── endpoint ────────────────────────────
@@ -100,8 +99,6 @@ def sync_tenant_from_portal(
         tenant.contact_email = payload.contact_email
     if payload.contact_phone:
         tenant.contact_phone = payload.contact_phone
-    if payload.subscription_plan:
-        tenant.subscription_plan = payload.subscription_plan
     tenant.is_active = payload.status == "active"
     # Always pin the cross-reference
     try:

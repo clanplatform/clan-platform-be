@@ -44,7 +44,6 @@ def _build_menu_item(menu: Menu, menus_by_parent: Dict[Any, List[Menu]], applica
         "module_id": str(menu.module_id) if menu.module_id else None,
         "order_index": menu.order_index,
         "level": menu.level,
-        "is_visible": menu.is_visible,
         "is_active": menu.is_active,
         "showtopbar": True if menu.showtopbar is None else menu.showtopbar,
         "showsidebar": True if menu.showsidebar is None else menu.showsidebar,
@@ -66,8 +65,6 @@ def _build_menu_item(menu: Menu, menus_by_parent: Dict[Any, List[Menu]], applica
         item["description"] = menu.menus_description
     if menu.access:
         item["access"] = menu.access
-    if menu.menu_metadata:
-        item["menu_metadata"] = menu.menu_metadata
 
     return item
 
@@ -84,7 +81,6 @@ def _build_module_item(module, root_menus: List[Menu], menus_by_parent: Dict[Any
         "application_id": str(application_id),
         "order_index": module.order_index,
         "level": 2,
-        "is_visible": module.is_active,
         "is_active": module.is_active,
         "access": module.access or [],
         "children": [
@@ -176,7 +172,6 @@ async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -
                 "application_id": str(application_id),
                 "order_index": 999000,
                 "level": 2,
-                "is_visible": True,
                 "is_active": True,
                 "access": [],
                 "children": [
@@ -223,7 +218,6 @@ async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -
                 **app_fields,
                 "application_id": str(application_id),
                 "level": 1,
-                "is_visible": True,
                 "is_active": True,
                 "created_at": now,
             }

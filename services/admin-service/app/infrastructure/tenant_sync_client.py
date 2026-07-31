@@ -24,7 +24,6 @@ async def sync_tenant_profile(
     tenant_code: Optional[str] = None,
     contact_email: Optional[str] = None,
     contact_phone: Optional[str] = None,
-    subscription_plan: Optional[str] = None,
     is_active: bool = True,
 ) -> None:
     """
@@ -43,7 +42,6 @@ async def sync_tenant_profile(
                     "tenant_code":       tenant_code,
                     "contact_email":     contact_email,
                     "contact_phone":     contact_phone,
-                    "subscription_plan": subscription_plan,
                     "is_active":         is_active,
                 },
             )

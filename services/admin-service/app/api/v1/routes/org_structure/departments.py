@@ -19,7 +19,6 @@ def get_departments(
     skip: int = 0,
     limit: int = 100,
     entity_id: Optional[uuid.UUID] = None,
-    parent_department_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
@@ -28,10 +27,6 @@ def get_departments(
         if entity_id:
             departments = department_service.get_departments_by_entity(
                 db, entity_id=entity_id, skip=skip, limit=limit
-            )
-        elif parent_department_id:
-            departments = department_service.get_departments_by_parent(
-                db, parent_department_id=parent_department_id, skip=skip, limit=limit
             )
         else:
             departments = department_service.get_all_departments(db, skip=skip, limit=limit)
@@ -112,10 +107,12 @@ def create_department(
     current_user = Depends(get_current_user)
 ):
     """Create a new department"""
+    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     try:
         user_id = current_user.user_id if hasattr(current_user, 'user_id') else None
         department = department_service.create_department(
-            db, department=department_data, user_id=user_id
+            db, department=department_data, tenant_id=tenant_id, user_id=user_id
         )
 
         # Audit log: department created
@@ -272,7 +269,6 @@ def get_departments_by_client(
     skip: int = 0,
     limit: int = 100,
     entity_id: Optional[uuid.UUID] = None,
-    parent_department_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
 ):
@@ -287,12 +283,6 @@ def get_departments_by_client(
             # Use tenant-scoped query so entity_id is validated against tenant_id
             departments = department_service.get_departments_by_tenant(
                 db, tenant_id=tenant_id, entity_id=entity_id, skip=skip, limit=limit
-            )
-            if parent_department_id:
-                departments = [d for d in departments if d.parent_department_id == parent_department_id]
-        elif parent_department_id:
-            departments = department_service.get_departments_by_parent(
-                db, parent_department_id=parent_department_id, skip=skip, limit=limit
             )
         else:
             departments = department_service.get_departments_by_tenant(

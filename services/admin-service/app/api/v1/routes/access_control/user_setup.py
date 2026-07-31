@@ -13,9 +13,6 @@ from app.user_setup.schemas.user_setup import (
     UserSetupBasicCreate,
     UserSetupBasicUpdate,
     UserSetupBasicResponse,
-    UserSetupRolesEntityCreate,
-    UserSetupRolesEntityUpdate,
-    UserSetupRolesEntityResponse,
     UserSetupPreferenceCreate,
     UserSetupPreferenceUpdate,
     UserSetupPreferenceResponse,
@@ -41,7 +38,9 @@ async def create_user_setup_with_details(
     current_user: dict = Depends(get_current_user)
 ):
     """Create a user setup with roles, entities, and preferences in one request."""
-    result = await UserSetupService.create_user_setup_with_details(db, user_data)
+    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    result = await UserSetupService.create_user_setup_with_details(db, user_data, tenant_id=tenant_id)
 
     try:
         uid = get_user_id(current_user)
@@ -62,7 +61,7 @@ async def create_user_setup_with_details(
                 "username": user_data.basic.username,
                 "firstname": user_data.basic.firstname,
                 "lastname": user_data.basic.lastname,
-                "tenant_id": str(user_data.basic.tenant_id) if user_data.basic.tenant_id else None,
+                "tenant_id": str(tenant_id) if tenant_id else None,
             },
         )
         logger.info(f"Audit log fired: CREATE UserSetup {result.id} by user {uid}")
@@ -82,7 +81,6 @@ def get_all_user_setups(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
     status_filter: Optional[str] = Query(None, description="Filter by status"),
-    department_filter: Optional[UUID] = Query(None, description="Filter by department"),
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -92,7 +90,6 @@ def get_all_user_setups(
         skip=skip,
         limit=limit,
         status_filter=status_filter,
-        department_filter=department_filter
     )
 
     try:
@@ -108,7 +105,7 @@ def get_all_user_setups(
             ip_address=get_client_ip(request),
             user_agent=request.headers.get("user-agent"),
             risk_score="LOW",
-            new_values={"filters": {"status": status_filter, "department": str(department_filter) if department_filter else None}},
+            new_values={"filters": {"status": status_filter}},
         )
         logger.info(f"Audit log fired: READ ALL UserSetup by user {uid}")
     except Exception as e:
@@ -239,7 +236,7 @@ async def delete_user_setup(
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Delete a user setup (cascades to roles_entities and preferences)."""
+    """Delete a user setup (cascades to preferences)."""
     result = await UserSetupService.delete_user_setup(db, user_id)
 
     try:

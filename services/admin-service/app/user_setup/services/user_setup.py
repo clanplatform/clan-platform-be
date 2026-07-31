@@ -5,13 +5,11 @@ from typing import List, Optional
 from uuid import UUID
 import logging
 
-from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
+from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupPreference
 from app.user_role.models.user_role import UserRoleBasic
 from app.user_setup.schemas.user_setup import (
     UserSetupBasicCreate,
     UserSetupBasicUpdate,
-    UserSetupRolesEntityCreate,
-    UserSetupRolesEntityUpdate,
     UserSetupPreferenceCreate,
     UserSetupPreferenceUpdate,
     UserSetupCreateWithDetails,
@@ -71,25 +69,17 @@ class UserSetupService:
     # ============================================================================
 
     @staticmethod
-    async def create_user_setup(db: Session, user_data: UserSetupBasicCreate) -> UserSetupBasic:
-        """Create a new user setup with parent UserSetup record"""
+    async def create_user_setup(
+        db: Session,
+        user_data: UserSetupBasicCreate,
+        tenant_id: Optional[UUID] = None,
+    ) -> UserSetupBasic:
+        """Create a new user setup with parent UserSetup record.
+
+        tenant_id is not part of the request body — it is derived from the
+        caller's JWT and injected here (None for master-DB users).
+        """
         try:
-            # Validate reporting_to if provided
-            if user_data.reporting_to:
-                manager = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_data.reporting_to).first()
-                if not manager:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Manager with ID {user_data.reporting_to} not found. Please create the manager user first or leave reporting_to empty."
-                    )
-
-            UserSetupService._validate_roles_tenant_match(
-                db,
-                user_data.manage_roles,
-                user_data.tenant_id,
-                field_name="manage_roles",
-            )
-
             # Create parent UserSetup record first
             db_user_setup = UserSetup()
             db.add(db_user_setup)
@@ -100,20 +90,24 @@ class UserSetupService:
             password = user_dict.pop('password')  # Remove password from dict
             password_hash = get_password_hash(password)  # Hash the password
 
-            # Create UserSetupBasic record with reference to parent
-            # can_change_password=True → forced password change on first login
-            # (is_password_change=False); False → user logs straight in and is
-            # redirected to the tenant's application.
+            if user_dict.get('role_id') is not None:
+                UserSetupService._validate_roles_tenant_match(db, [user_dict['role_id']], tenant_id, field_name="role_id")
+
+            # Create UserSetupBasic record with reference to parent.
+            # can_change_password is always True at creation — forces the
+            # first-login password-change flow (is_password_change=False).
             db_user_basic = UserSetupBasic(
                 user_setup_id=db_user_setup.id,
+                tenant_id=tenant_id,
                 password_hash=password_hash,  # Store hashed password
-                is_password_change=not user_dict.get('can_change_password', False),
+                is_password_change=False,
+                can_change_password=True,
                 **user_dict
             )
             db.add(db_user_basic)
             db.commit()
             db.refresh(db_user_basic)
-            
+
             # Sync user to identity-domain auth-service
             if AuthServiceSync.sync_enabled():
                 try:
@@ -180,7 +174,7 @@ class UserSetupService:
 
     @staticmethod
     def get_user_setup_with_details(db: Session, user_id: UUID) -> UserSetupBasic:
-        """Get user setup with all related data (roles, entities, preferences)"""
+        """Get user setup with all related data (role, entity, preferences)"""
         # First get the UserSetupBasic record
         user_basic = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_id).first()
 
@@ -193,7 +187,6 @@ class UserSetupService:
         # Load the parent UserSetup with all relationships
         user_setup = db.query(UserSetup).options(
             joinedload(UserSetup.basic),
-            joinedload(UserSetup.roles_entities),
             joinedload(UserSetup.preferences)
         ).filter(UserSetup.id == user_basic.user_setup_id).first()
 
@@ -206,17 +199,14 @@ class UserSetupService:
         skip: int = 0,
         limit: int = 100,
         status_filter: Optional[str] = None,
-        department_filter: Optional[UUID] = None
     ) -> UserSetupListResponse:
         """Get all user setups with pagination and filtering"""
         query = db.query(UserSetupBasic)
-        
+
         # Apply filters
         if status_filter:
             query = query.filter(UserSetupBasic.status == status_filter)
-        if department_filter:
-            query = query.filter(UserSetupBasic.department == department_filter)
-        
+
         total = query.count()
         users = query.offset(skip).limit(limit).all()
         
@@ -234,31 +224,6 @@ class UserSetupService:
 
         try:
             update_data = user_data.model_dump(exclude_unset=True)
-
-            # Validate reporting_to if being updated
-            if "reporting_to" in update_data and update_data["reporting_to"]:
-                # Prevent self-reference
-                if update_data["reporting_to"] == user_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="A user cannot report to themselves"
-                    )
-
-                manager = db.query(UserSetupBasic).filter(UserSetupBasic.id == update_data["reporting_to"]).first()
-                if not manager:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Manager with ID {update_data['reporting_to']} not found"
-                    )
-
-            # Validate manage_roles against the tenant the user will end up in
-            if update_data.get("manage_roles"):
-                UserSetupService._validate_roles_tenant_match(
-                    db,
-                    update_data["manage_roles"],
-                    update_data.get("tenant_id", db_user.tenant_id),
-                    field_name="manage_roles",
-                )
 
             # Hash password if being updated
             if "password" in update_data:
@@ -333,7 +298,7 @@ class UserSetupService:
 
     @staticmethod
     async def delete_user_setup(db: Session, user_id: UUID) -> dict:
-        """Delete user setup (cascades to roles_entities and preferences)"""
+        """Delete user setup (cascades to preferences)"""
         db_user = UserSetupService.get_user_setup(db, user_id)
         
         db.delete(db_user)
@@ -354,104 +319,6 @@ class UserSetupService:
                 logger.error(f"Unexpected error during auth-service sync: {str(e)}")
         
         return {"message": f"User setup {user_id} deleted successfully"}
-
-    # ============================================================================
-    # UserSetupRolesEntity Operations
-    # ============================================================================
-
-    @staticmethod
-    def create_roles_entity(db: Session, roles_entity_data: UserSetupRolesEntityCreate) -> UserSetupRolesEntity:
-        """Create roles and entities assignment for a user"""
-        # Verify user_setup exists
-        db_user_setup = db.query(UserSetup).filter(UserSetup.id == roles_entity_data.user_setup_id).first()
-        if not db_user_setup:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User setup with ID {roles_entity_data.user_setup_id} not found"
-            )
-
-        # Validate role tenant_id matches user tenant_id
-        if roles_entity_data.assigned_roles:
-            db_user_basic = db.query(UserSetupBasic).filter(
-                UserSetupBasic.user_setup_id == roles_entity_data.user_setup_id
-            ).first()
-            if db_user_basic:
-                UserSetupService._validate_roles_tenant_match(
-                    db,
-                    roles_entity_data.assigned_roles,
-                    db_user_basic.tenant_id
-                )
-
-        try:
-            db_roles_entity = UserSetupRolesEntity(**roles_entity_data.model_dump())
-            db.add(db_roles_entity)
-            db.commit()
-            db.refresh(db_roles_entity)
-            return db_roles_entity
-        except IntegrityError as e:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Failed to create roles/entities assignment: {str(e.orig)}"
-            )
-
-    @staticmethod
-    def get_roles_entities_by_user(db: Session, user_id: UUID) -> List[UserSetupRolesEntity]:
-        """Get all roles and entities assignments for a user (user_id is UserSetupBasic.id)"""
-        # Get the user_setup_id from UserSetupBasic
-        db_user_basic = UserSetupService.get_user_setup(db, user_id)
-        return db.query(UserSetupRolesEntity).filter(UserSetupRolesEntity.user_setup_id == db_user_basic.user_setup_id).all()
-
-    @staticmethod
-    def update_roles_entity(db: Session, roles_entity_id: UUID, roles_entity_data: UserSetupRolesEntityUpdate) -> UserSetupRolesEntity:
-        """Update roles and entities assignment"""
-        db_roles_entity = db.query(UserSetupRolesEntity).filter(UserSetupRolesEntity.id == roles_entity_id).first()
-        if not db_roles_entity:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Roles/entities assignment with ID {roles_entity_id} not found"
-            )
-
-        # Validate role tenant_id matches user tenant_id when roles are being updated
-        if roles_entity_data.assigned_roles:
-            db_user_basic = db.query(UserSetupBasic).filter(
-                UserSetupBasic.user_setup_id == db_roles_entity.user_setup_id
-            ).first()
-            if db_user_basic:
-                UserSetupService._validate_roles_tenant_match(
-                    db,
-                    roles_entity_data.assigned_roles,
-                    db_user_basic.tenant_id
-                )
-
-        try:
-            update_data = roles_entity_data.model_dump(exclude_unset=True)
-            for field, value in update_data.items():
-                setattr(db_roles_entity, field, value)
-            
-            db.commit()
-            db.refresh(db_roles_entity)
-            return db_roles_entity
-        except IntegrityError as e:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Failed to update roles/entities assignment: {str(e.orig)}"
-            )
-
-    @staticmethod
-    def delete_roles_entity(db: Session, roles_entity_id: UUID) -> dict:
-        """Delete roles and entities assignment"""
-        db_roles_entity = db.query(UserSetupRolesEntity).filter(UserSetupRolesEntity.id == roles_entity_id).first()
-        if not db_roles_entity:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Roles/entities assignment with ID {roles_entity_id} not found"
-            )
-        
-        db.delete(db_roles_entity)
-        db.commit()
-        return {"message": f"Roles/entities assignment {roles_entity_id} deleted successfully"}
 
     # ============================================================================
     # UserSetupPreference Operations
@@ -532,32 +399,23 @@ class UserSetupService:
     # ============================================================================
 
     @staticmethod
-    async def create_user_setup_with_details(db: Session, user_data: UserSetupCreateWithDetails) -> UserSetupBasic:
-        """Create a user setup with roles, entities, and preferences in one transaction"""
-        try:
-            # Validate reporting_to if provided
-            if user_data.basic.reporting_to:
-                manager = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_data.basic.reporting_to).first()
-                if not manager:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Manager with ID {user_data.basic.reporting_to} not found. Please create the manager user first or leave reporting_to empty."
-                    )
+    async def create_user_setup_with_details(
+        db: Session,
+        user_data: UserSetupCreateWithDetails,
+        tenant_id: Optional[UUID] = None,
+    ) -> UserSetupBasic:
+        """Create a user setup with a role/entity assignment and preferences in
+        one transaction.
 
-            # Both role arrays must hold user_role.id — validate before any writes
-            UserSetupService._validate_roles_tenant_match(
-                db,
-                user_data.basic.manage_roles,
-                user_data.basic.tenant_id,
-                field_name="manage_roles",
-            )
-            if user_data.roles_entities:
-                UserSetupService._validate_roles_tenant_match(
-                    db,
-                    user_data.roles_entities.assigned_roles,
-                    user_data.basic.tenant_id,
-                    field_name="assigned_roles",
-                )
+        tenant_id is not part of the request body — it is derived from the
+        caller's JWT and injected here (None for master-DB users).
+        """
+        try:
+            role_id = user_data.basic.role_id
+
+            # role_id must hold a user_role.id — validate before any writes
+            if role_id is not None:
+                UserSetupService._validate_roles_tenant_match(db, [role_id], tenant_id, field_name="role_id")
 
             # Create parent UserSetup record first
             db_user_setup = UserSetup()
@@ -569,48 +427,24 @@ class UserSetupService:
             password = user_dict.pop('password')  # Remove password from dict
             password_hash = get_password_hash(password)  # Hash the password
 
-            # Create basic user setup with reference to parent
-            # can_change_password=True → forced password change on first login
-            # (is_password_change=False); False → user logs straight in and is
-            # redirected to the tenant's application.
+            # Create basic user setup with reference to parent.
+            # can_change_password is always True at creation — forces the
+            # first-login password-change flow (is_password_change=False).
             db_user_basic = UserSetupBasic(
                 user_setup_id=db_user_setup.id,
+                tenant_id=tenant_id,
                 password_hash=password_hash,  # Store hashed password
-                is_password_change=not user_dict.get('can_change_password', False),
+                is_password_change=False,
+                can_change_password=True,
                 **user_dict
             )
             db.add(db_user_basic)
             db.flush()  # Get the ID without committing
 
-            # Create roles and entities assignment if provided (already validated above)
-            if user_data.roles_entities:
-                db_roles_entity = UserSetupRolesEntity(
-                    user_setup_id=db_user_setup.id,
-                    usersetup_basic_id=db_user_basic.id,
-                    **user_data.roles_entities.model_dump()
-                )
-                db.add(db_roles_entity)
-                db.flush()  # Get the ID for preferences
-
             # Create preferences if provided
             if user_data.preferences:
-                # Get the roles_entity record to link to preferences
-                roles_entity_id = db_roles_entity.id if user_data.roles_entities else None
-                if not roles_entity_id:
-                    # If no roles_entities provided, create a default one
-                    db_roles_entity = UserSetupRolesEntity(
-                        user_setup_id=db_user_setup.id,
-                        usersetup_basic_id=db_user_basic.id,
-                        assigned_roles=None,
-                        assigned_entities=None
-                    )
-                    db.add(db_roles_entity)
-                    db.flush()
-                    roles_entity_id = db_roles_entity.id
-
                 db_preference = UserSetupPreference(
                     user_setup_id=db_user_setup.id,
-                    usersetup_roles_entity_id=roles_entity_id,
                     usersetup_basic_id=db_user_basic.id,
                     **user_data.preferences.model_dump()
                 )

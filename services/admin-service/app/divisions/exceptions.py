@@ -20,13 +20,6 @@ class DivisionNotFoundError(HTTPException):
         super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
 
-class ParentDivisionNotFoundError(HTTPException):
-    """Raised when the referenced parent division does not exist."""
-
-    def __init__(self):
-        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail="Parent division not found")
-
-
 class DuplicateDivisionNameError(HTTPException):
     """Raised when a division name already exists within the entity."""
 
@@ -93,36 +86,6 @@ class DivisionDepartmentTenantMismatchError(HTTPException):
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Department does not belong to the {kind} tenant",
-        )
-
-
-class ParentDivisionTenantMismatchError(HTTPException):
-    """Raised when the parent division belongs to a different tenant."""
-
-    def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Parent division does not belong to the same tenant",
-        )
-
-
-class DivisionSelfParentError(HTTPException):
-    """Raised when a division is set as its own parent."""
-
-    def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Division cannot be its own parent",
-        )
-
-
-class DivisionHasChildrenError(HTTPException):
-    """Raised when deleting a division that still has active child divisions."""
-
-    def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete division with active child divisions",
         )
 
 

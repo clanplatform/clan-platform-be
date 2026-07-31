@@ -7,17 +7,12 @@ from app.divisions.models.divisions import Division
 from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate
 from app.divisions.exceptions import (
     DivisionNotFoundError,
-    ParentDivisionNotFoundError,
     DuplicateDivisionNameError,
     DuplicateDivisionCodeError,
     DivisionTenantNotFoundError,
     DivisionEntityNotFoundError,
-    DivisionEntityTenantMismatchError,
     DivisionDepartmentNotFoundError,
     DivisionDepartmentTenantMismatchError,
-    ParentDivisionTenantMismatchError,
-    DivisionSelfParentError,
-    DivisionHasChildrenError,
     DivisionNotDeletedError,
 )
 from app.infrastructure.audit_tenant import fire_audit_log
@@ -28,8 +23,7 @@ def get_division(db: Session, division_id: UUID) -> Optional[Division]:
     division = db.query(Division).options(
         joinedload(Division.tenant),
         joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
+        joinedload(Division.department)
     ).filter(
         Division.id == division_id,
         Division.is_active == True,
@@ -54,16 +48,14 @@ def get_divisions_by_tenant(
     db: Session,
     tenant_id: UUID,
     entity_id: Optional[UUID] = None,
-    parent_id: Optional[UUID] = None,
     skip: int = 0,
     limit: int = 100
 ) -> List[Division]:
-    """Get all divisions for a specific tenant with optional entity and parent filters"""
+    """Get all divisions for a specific tenant with an optional entity filter"""
     query = db.query(Division).options(
         joinedload(Division.tenant),
         joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
+        joinedload(Division.department)
     ).filter(
         Division.tenant_id == tenant_id,
         Division.is_active == True,
@@ -72,9 +64,6 @@ def get_divisions_by_tenant(
 
     if entity_id:
         query = query.filter(Division.entity_id == entity_id)
-
-    if parent_id:
-        query = query.filter(Division.parent_division_id == parent_id)
 
     # Sort by newest first (FILO)
     query = query.order_by(Division.created_at.desc())
@@ -88,8 +77,7 @@ def get_divisions_by_entity(db: Session, entity_id: UUID, skip: int = 0, limit: 
     divisions = db.query(Division).options(
         joinedload(Division.tenant),
         joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
+        joinedload(Division.department)
     ).filter(
         Division.entity_id == entity_id,
         Division.is_active == True,
@@ -116,8 +104,7 @@ def get_divisions_by_department(db: Session, department_id: UUID, skip: int = 0,
     query = db.query(Division).options(
         joinedload(Division.tenant),
         joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
+        joinedload(Division.department)
     ).filter(
         Division.tenant_id == department.tenant_id,
         Division.is_active == True,
@@ -138,21 +125,6 @@ def get_divisions_by_department(db: Session, department_id: UUID, skip: int = 0,
     return divisions
 
 
-def get_divisions_by_parent(db: Session, parent_division_id: UUID, skip: int = 0, limit: int = 100) -> List[Division]:
-    """Get all child divisions for a specific parent division"""
-    divisions = db.query(Division).options(
-        joinedload(Division.tenant),
-        joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
-    ).filter(
-        Division.parent_division_id == parent_division_id,
-        Division.is_active == True,
-        Division.deleted_at.is_(None)
-    ).order_by(Division.created_at.desc()).offset(skip).limit(limit).all()
-    return divisions
-
-
 def get_all_divisions(
     db: Session,
     tenant_id: Optional[UUID] = None,
@@ -164,8 +136,7 @@ def get_all_divisions(
     query = db.query(Division).options(
         joinedload(Division.tenant),
         joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
+        joinedload(Division.department)
     ).filter(
         Division.is_active == True,
         Division.deleted_at.is_(None)
@@ -231,13 +202,31 @@ def get_unique_divisions(
     return sorted(division_list)
 
 
-def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUID] = None) -> Division:
-    """Create a new division"""
-    # Verify tenant exists
-    from app.tenants.services.tenants import get_tenant
-    tenant = get_tenant(db, division.tenant_id)
-    if not tenant:
-        raise DivisionTenantNotFoundError()
+def create_division(
+    db: Session,
+    division: DivisionCreate,
+    tenant_id: Optional[UUID],
+    user_id: Optional[UUID] = None,
+    division_id: Optional[UUID] = None,
+) -> Division:
+    """Create a new division.
+
+    tenant_id is not part of the request body — it is derived from the caller's
+    JWT and passed in here so the column stays populated while remaining absent
+    from the CRUD schema. It is None for master-DB users (token without a
+    tenant_id) and a tenant UUID for tenant-DB users.
+
+    division_id lets a caller supply the primary key (divisions.id) instead of
+    letting the DB generate one (used by onboarding, where the client generates
+    division UUIDs so job_codes can reference them in the same request). When
+    None, the model's uuid4 default applies.
+    """
+    # Verify tenant exists (skipped for master-DB users, whose tenant_id is None)
+    if tenant_id is not None:
+        from app.tenants.services.tenants import get_tenant
+        tenant = get_tenant(db, tenant_id)
+        if not tenant:
+            raise DivisionTenantNotFoundError()
 
     # Verify entity exists if provided
     if division.entity_id:
@@ -245,9 +234,8 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
         entity = get_entity(db, division.entity_id)
         if not entity:
             raise DivisionEntityNotFoundError()
-        # Verify entity belongs to the tenant
-        if entity.tenant_id != division.tenant_id:
-            raise DivisionEntityTenantMismatchError()
+        # Entities live in this tenant's own DB, so an existing entity is
+        # inherently tenant-scoped — no separate tenant-match check needed.
 
     # Verify department exists if provided
     if division.department_id:
@@ -256,7 +244,7 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
         if not department:
             raise DivisionDepartmentNotFoundError()
         # Verify department belongs to the tenant
-        if department.tenant_id != division.tenant_id:
+        if department.tenant_id != tenant_id:
             raise DivisionDepartmentTenantMismatchError("specified")
 
     # Check if division name already exists in the same entity
@@ -269,21 +257,17 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
         raise DuplicateDivisionNameError()
 
     # Check if division code already exists in the same entity
-    existing_code = get_division_by_code(db, division.division_code, division.tenant_id, division.entity_id)
+    existing_code = get_division_by_code(db, division.division_code, tenant_id, division.entity_id)
     if existing_code:
         raise DuplicateDivisionCodeError()
 
-    # Verify parent division exists and belongs to same tenant if provided
-    if division.parent_division_id:
-        parent_div = get_division(db, division.parent_division_id)
-        if not parent_div:
-            raise ParentDivisionNotFoundError()
-        if parent_div.tenant_id != division.tenant_id:
-            raise ParentDivisionTenantMismatchError()
-
-    # Create new division
+    # Create new division. tenant_id comes from the token, not the payload.
     division_data = division.model_dump()
-    db_division = Division(**division_data)
+    db_division = Division(**division_data, tenant_id=tenant_id)
+    # Honor a caller-supplied primary key (onboarding); otherwise the model's
+    # uuid4 default generates one.
+    if division_id is not None:
+        db_division.id = division_id
 
     db.add(db_division)
     db.commit()
@@ -291,7 +275,7 @@ def create_division(db: Session, division: DivisionCreate, user_id: Optional[UUI
     fire_audit_log(
         action="CREATE", object_type="Division",
         object_id=str(db_division.id),
-        tenant_id=str(db_division.tenant_id),
+        tenant_id=str(db_division.tenant_id) if db_division.tenant_id else None,
         entity_id=str(db_division.entity_id) if db_division.entity_id else None,
         user_id=str(user_id) if user_id else None,
         new_values={"division_name": db_division.division_name, "division_code": db_division.division_code},
@@ -333,16 +317,6 @@ def update_division(
         if existing_code:
             raise DuplicateDivisionCodeError()
 
-    # Verify parent division if being updated
-    if "parent_division_id" in update_data and update_data["parent_division_id"]:
-        if update_data["parent_division_id"] == division_id:
-            raise DivisionSelfParentError()
-        parent_div = get_division(db, update_data["parent_division_id"])
-        if not parent_div:
-            raise ParentDivisionNotFoundError()
-        if parent_div.tenant_id != db_division.tenant_id:
-            raise ParentDivisionTenantMismatchError()
-
     # Verify department if being updated
     if "department_id" in update_data and update_data["department_id"]:
         from app.departments.services.departments import get_department
@@ -380,11 +354,6 @@ def delete_division(db: Session, division_id: UUID, user_id: Optional[UUID] = No
 
     if not db_division:
         raise DivisionNotFoundError()
-
-    # Check if division has child divisions
-    child_divisions = get_divisions_by_parent(db, division_id)
-    if child_divisions:
-        raise DivisionHasChildrenError()
 
     # Perform soft delete
     db_division.is_active = False
@@ -462,8 +431,7 @@ def search_divisions(
     query = db.query(Division).options(
         joinedload(Division.tenant),
         joinedload(Division.entity),
-        joinedload(Division.department),
-        joinedload(Division.parent_division)
+        joinedload(Division.department)
     ).filter(
         Division.tenant_id == tenant_id,
         Division.is_active == True,

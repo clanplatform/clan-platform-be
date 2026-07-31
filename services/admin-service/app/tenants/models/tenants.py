@@ -13,20 +13,53 @@ class Tenant(Base):
     tenant_code = Column(String(100), nullable=True)
     contact_email = Column(String(255), nullable=False)
     contact_phone = Column(String(50), nullable=True)
+    # Headquarters address
     address = Column(String(500), nullable=True)
     city = Column(String(100), nullable=True)
     state = Column(String(100), nullable=True)
     country = Column(String(100), nullable=True)
-    industry = Column(String(100), nullable=True)
+    postal_code = Column(String(20), nullable=True)
+
+    # Primary contact (email/phone are above)
+    contact_name = Column(String(255), nullable=True)
+    contact_title = Column(String(100), nullable=True)
+
+    # Company identity
+    display_name = Column(String(255), nullable=True)           # Display / brand name
+    industry = Column(String(100), nullable=True)               # Industry / sub-sector
+    registration_number = Column(String(100), nullable=True)
+    tax_id = Column(String(100), nullable=True)                 # Tax / VAT / GST ID
+    founded_year = Column(Integer, nullable=True)
+    website = Column(String(255), nullable=True)
+    company_logo = Column(String(500), nullable=True)           # Logo URL / file reference
     company_size = Column(String(50), nullable=True)
-    subscription_plan = Column(String(100), nullable=True)
-    onboarding_status = Column(String(50), nullable=True)
     employees_count = Column(Integer, nullable=True)
-    location = Column(String(255), nullable=True)
-    status = Column(String(50), nullable=True)
-    description = Column(Text, nullable=True)
+    annual_revenue = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)                   # Company description
+
+    # Business domain & model
+    primary_domain = Column(String(100), nullable=True)
+    business_model = Column(String(100), nullable=True)
+    organization_type = Column(String(100), nullable=True)
+
+    # Localization & business defaults
+    default_language = Column(String(50), nullable=True)
+    time_zone = Column(String(50), nullable=True)
+    default_currency = Column(String(10), nullable=True)
+    date_format = Column(String(20), nullable=True)
+    fiscal_year_start = Column(String(20), nullable=True)
+    week_starts_on = Column(String(20), nullable=True)
+
+    # Status
+    onboarding_status = Column(String(50), nullable=True)
+    internal_notes = Column(Text, nullable=True)                # platform-admin only
+
+    # Account owner (denormalized from the owner user for display; the owner's
+    # login password is NEVER stored here — it is hashed on usersetup_basic).
+    owner_name = Column(String(200), nullable=True)
+    owner_email = Column(String(255), nullable=True)
+
     gateway_tenant_ref = Column(UUID(as_uuid=True), unique=True, nullable=True, default=None, index=True)
-    tenant_db_name = Column(String(150), unique=True, nullable=True, index=True)
     table_permission = Column(ARRAY(Text), nullable=True, default=list)
     allowed_origins = Column(ARRAY(Text), nullable=True, default=list)
     is_active = Column(Boolean, nullable=True, server_default='true')
@@ -36,8 +69,16 @@ class Tenant(Base):
     created_by = Column(UUID(as_uuid=True), nullable=True)
 
     # Relationships
-    entities = relationship("Entity", back_populates="tenant")
     tenant_modules = relationship("TenantModule", back_populates="tenant", cascade="all, delete-orphan")
+
+    @property
+    def tenant_db_name(self):
+        """Derived from tenant_code (not stored): clan_platform_<slug(tenant_code)>.
+        Returns None when tenant_code is missing."""
+        if not self.tenant_code:
+            return None
+        from app.infrastructure.database.tenant_db_manager import TenantDatabaseManager
+        return TenantDatabaseManager.make_db_name(self.tenant_code)
 
     def __repr__(self):
         return f"<Tenant(tenant_name='{self.tenant_name}', is_active='{self.is_active}')>"

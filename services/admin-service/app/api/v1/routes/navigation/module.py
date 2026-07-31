@@ -50,7 +50,6 @@ async def create_module(
     - **level**: Hierarchy level (default: 1)
     - **order_index**: Ordering index (default: 0)
     - **is_active**: Whether module is active (default: true)
-    - **is_public**: Whether module is public (default: false)
     """
     
     # Check for duplicate code
@@ -114,7 +113,6 @@ async def get_modules(
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     application_id: Optional[str] = Query(None, description="Filter by application ID"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    is_public: Optional[bool] = Query(None, description="Filter by public status"),
     search: Optional[str] = Query(None, description="Search in name, label, description, code, or key"),
     sort_by: str = Query("created_at", description="Field to sort by"),
     sort_order: str = Query("desc", regex="^(asc|desc)$", description="Sort order (asc or desc)")
@@ -126,7 +124,6 @@ async def get_modules(
     - **size**: Number of items per page (1-100)
     - **application_id**: Filter by application ID
     - **is_active**: Filter by active status
-    - **is_public**: Filter by public status
     - **search**: Search in name, label, description, code, or key
     - **sort_by**: Field to sort by (default: created_at)
     - **sort_order**: Sort order - asc or desc (default: desc)
@@ -145,7 +142,6 @@ async def get_modules(
             limit=size,
             application_id=application_id,
             is_active=is_active,
-            is_public=is_public,
             search=search,
             sort_by=sort_by,
             sort_order=sort_order,
@@ -241,7 +237,6 @@ async def update_module(
     module_data: ModuleUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
-    updated_by: Optional[int] = Query(None, description="User ID who is updating the module")
 ):
     """
     Update an existing module.
@@ -277,7 +272,7 @@ async def update_module(
             )
     
     try:
-        updated_module = ModuleService.update_module(db, module_id, module_data, updated_by)
+        updated_module = ModuleService.update_module(db, module_id, module_data)
 
         # Sync the application's navigation document so module changes
         # (label, icon, order, ...) reach MongoDB
@@ -307,6 +302,10 @@ async def update_module(
             pass
 
         return updated_module
+    except HTTPException:
+        # Let intended HTTP errors (e.g. 403 read-only lock) surface unchanged
+        # instead of being masked as a 500 by the generic handler below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

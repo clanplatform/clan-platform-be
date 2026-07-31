@@ -16,7 +16,6 @@ from app.api.v1.routes.navigation.menu_language import router as menus_language_
 from app.api.v1.routes.forms.form_language import router as forms_language_router
 from app.api.v1.routes.access_control.user_role import router as user_role_router
 from app.api.v1.routes.access_control.user_setup import router as user_setup_router
-from app.api.v1.routes.access_control.user_role_form_permission import router as user_role_form_permission_router
 from app.api.v1.routes.audit_logs.audit_logs import router as audit_logs_router
 from app.api.v1.routes.navigation.button import router as buttons_router
 from app.api.v1.routes.org_structure.tenant_modules import router as tenant_modules_router
@@ -27,6 +26,9 @@ from app.api.v1.routes.master_datas.master_states import router as master_states
 from app.api.v1.routes.master_datas.master_cities import router as master_cities_router
 from app.api.v1.routes.master_datas.master_languages import router as master_languages_router
 from app.api.v1.routes.master_datas.master_locales import router as master_locales_router
+from app.api.v1.routes.onboarding.onboarding import router as onboarding_router
+from app.api.v1.routes.subscription.subscription import router as subscription_router
+from app.api.v1.routes.security.security import router as security_router
 # Create v1 API router
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -121,13 +123,6 @@ api_v1_router.include_router(
     tags=["user_role"]
 )
 
-#include user_role_form_permission routes
-api_v1_router.include_router(
-    user_role_form_permission_router,
-    prefix="/user_role_form_permission",
-    tags=["user_role_form_permission"]
-)
-
 #include user_setup routes
 api_v1_router.include_router(
     user_setup_router,
@@ -203,4 +198,25 @@ api_v1_router.include_router(
     master_locales_router,
     prefix="/master_locales",
     tags=["master_locales"],
+)
+
+# include onboarding routes (step-form client creation)
+api_v1_router.include_router(
+    onboarding_router,
+    prefix="/onboarding",
+    tags=["onboarding"],
+)
+
+# include subscription routes
+api_v1_router.include_router(
+    subscription_router,
+    prefix="/subscription",
+    tags=["subscription"],
+)
+
+# include security routes
+api_v1_router.include_router(
+    security_router,
+    prefix="/security",
+    tags=["security"],
 )

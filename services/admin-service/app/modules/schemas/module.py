@@ -19,7 +19,6 @@ class ModuleBase(BaseModel):
     level: Optional[int] = Field(2, description="Hierarchy level")
     order_index: Optional[int] = Field(0, description="Ordering index")
     is_active: Optional[bool] = Field(True, description="Whether the module is active")
-    is_public: Optional[bool] = Field(False, description="Whether the module is public")
     access: Optional[List[str]] = Field(default_factory=list, description="Array of access permissions")
 
 class ModuleCreate(ModuleBase):
@@ -42,9 +41,7 @@ class ModuleUpdate(BaseModel):
     level: Optional[int] = Field(None, description="Hierarchy level")
     order_index: Optional[int] = Field(None, description="Ordering index")
     is_active: Optional[bool] = Field(None, description="Whether the module is active")
-    is_public: Optional[bool] = Field(None, description="Whether the module is public")
     access: Optional[List[str]] = Field(None, description="Array of access permissions")
-    updated_by: Optional[int] = Field(None, description="User ID who updated the module")
 
     @field_validator("access")
     @classmethod
@@ -56,8 +53,6 @@ class ModuleResponse(ModuleBase):
     is_deleted: bool
     created_at: datetime
     updated_at: datetime
-    created_by: Optional[int] = Field(None, description="User ID who created the module")
-    updated_by: Optional[int] = Field(None, description="User ID who last updated the module")
 
     model_config = ConfigDict(from_attributes=True)
 

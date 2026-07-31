@@ -28,11 +28,3 @@ class DuplicateEntityCodeError(HTTPException):
             detail="Entity code already registered",
         )
         self.entity_code = entity_code
-
-
-class EntityTenantNotFoundError(HTTPException):
-    """Raised when the tenant an entity is being created under does not exist."""
-
-    def __init__(self, tenant_id: Optional[str] = None):
-        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-        self.tenant_id = tenant_id

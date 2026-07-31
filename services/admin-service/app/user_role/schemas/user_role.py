@@ -9,18 +9,20 @@ from uuid import UUID
 # ============================================================================
 
 class UserRoleBasicBase(BaseModel):
-    """Base schema for UserRoleBasic"""
-    tenant_id: Optional[UUID] = Field(
-        None,
-        description="Tenant ID this role belongs to. Required for tenant-scoped roles.",
-        json_schema_extra={"example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}
-    )
+    """Base schema for UserRoleBasic.
+
+    tenant_id is intentionally omitted: it is derived from the JWT server-side,
+    never sent in the request or returned in the response (consistent with the
+    other admin-service modules).
+    """
     role_name: str = Field(..., min_length=1, max_length=100, description="Role name")
     role_code: str = Field(..., min_length=1, max_length=50, description="Role code (unique identifier)")
     description: Optional[str] = Field(None, description="Role description")
     role_level: int = Field(default=1, ge=1, description="Role hierarchy level")
-    system_role: bool = Field(default=False, description="Whether this is a system role")
+    parent_role_id: Optional[UUID] = Field(None, description="Parent role id (user_role.id) — Reports to")
+    access_scope: Optional[str] = Field(None, max_length=50, description="Access scope")
     is_admin: bool = Field(default=False, description="Whether this is an admin role")
+    default_for_new_users: bool = Field(default=False, description="Default role for new users")
     active: bool = Field(default=True, description="Whether the role is active")
 
 
@@ -30,14 +32,18 @@ class UserRoleBasicCreate(UserRoleBasicBase):
 
 
 class UserRoleBasicUpdate(BaseModel):
-    """Schema for updating a user role"""
-    tenant_id: Optional[UUID] = Field(None, description="Tenant ID this role belongs to")
+    """Schema for updating a user role.
+
+    tenant_id is intentionally omitted (JWT-derived, immutable after creation).
+    """
     role_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Role name")
     role_code: Optional[str] = Field(None, min_length=1, max_length=50, description="Role code")
     description: Optional[str] = Field(None, description="Role description")
     role_level: Optional[int] = Field(None, ge=1, description="Role hierarchy level")
-    system_role: Optional[bool] = Field(None, description="Whether this is a system role")
+    parent_role_id: Optional[UUID] = Field(None, description="Parent role id (user_role.id)")
+    access_scope: Optional[str] = Field(None, max_length=50, description="Access scope")
     is_admin: Optional[bool] = Field(None, description="Whether this is an admin role")
+    default_for_new_users: Optional[bool] = Field(None, description="Default role for new users")
     active: Optional[bool] = Field(None, description="Whether the role is active")
 
 
@@ -81,9 +87,14 @@ class PermissionItem(BaseModel):
         description="Form access permissions: ['read'], ['read', 'write'], or ['disable']",
         json_schema_extra={"example": ["write"]}
     )
-   
+    button_access: Optional[List[str]] = Field(
+        None,
+        description="Button access permissions: ['read'], ['read', 'write'], or ['disable']",
+        json_schema_extra={"example": ["write"]}
+    )
 
-    @field_validator('menu_access', 'form_access')
+
+    @field_validator('menu_access', 'form_access', 'button_access')
     def validate_access(cls, v):
         """Validate access array contains valid values"""
         if v is None:
@@ -130,7 +141,33 @@ class UserRolePermissionBase(BaseModel):
             ]
         }
     )
-   
+    button_permissions: Optional[List[PermissionItem]] = Field(
+        default=[],
+        description="Array of button permissions - each button has individual access",
+        json_schema_extra={
+            "example": [
+                {
+                    "id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01",
+                    "button_access": ["write"]
+                }
+            ]
+        }
+    )
+    form_permissions: Optional[List[PermissionItem]] = Field(
+        default=[],
+        description="Array of form permissions - each form has individual access",
+        json_schema_extra={
+            "example": [
+                {
+                    "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
+                    "application_id": "app-uuid-123",
+                    "modules_id": "module-uuid-456",
+                    "form_access": ["write"]
+                }
+            ]
+        }
+    )
+
 
 
 class UserRolePermissionCreate(UserRolePermissionBase):
@@ -196,7 +233,33 @@ class UserRolePermissionUpdate(BaseModel):
             ]
         }
     )
-    
+    button_permissions: Optional[List[PermissionItem]] = Field(
+        None,
+        description="Array of button permissions - each button has individual access",
+        json_schema_extra={
+            "example": [
+                {
+                    "id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01",
+                    "button_access": ["read"]
+                }
+            ]
+        }
+    )
+    form_permissions: Optional[List[PermissionItem]] = Field(
+        None,
+        description="Array of form permissions - each form has individual access",
+        json_schema_extra={
+            "example": [
+                {
+                    "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
+                    "application_id": "app-uuid-123",
+                    "modules_id": "module-uuid-456",
+                    "form_access": ["read"]
+                }
+            ]
+        }
+    )
+
 
 
 class UserRolePermissionResponse(BaseModel):
@@ -206,7 +269,11 @@ class UserRolePermissionResponse(BaseModel):
     userrole_basic_id: UUID
     menu_permissions: List[PermissionItem] = Field(default_factory=list)
     menu_access: Optional[str] = Field(None, description="Highest menu access level: read, write, or disable")
-    
+    button_permissions: List[PermissionItem] = Field(default_factory=list)
+    button_access: Optional[str] = Field(None, description="Highest button access level: read, write, or disable")
+    form_permissions: List[PermissionItem] = Field(default_factory=list)
+    form_access: Optional[str] = Field(None, description="Highest form access level: read, write, or disable")
+
     created_at: datetime
     updated_at: datetime
 
@@ -312,41 +379,43 @@ class UserRoleCreateWithDetails(BaseModel):
         json_schema_extra={
             "example": {
                 "basic": {
-                    "tenant_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                     "role_name": "Manager",
                     "role_code": "MGR",
                     "description": "Manager role",
                     "role_level": 2,
-                    "system_role": False,
+                    "access_scope": "tenant",
                     "is_admin": False,
+                    "default_for_new_users": False,
                     "active": True
                 },
                 "permissions": [
                     {
                         "menu_permissions": [
                             {
-                                "id": "",
+                                "id": "cd829d19-3ad4-4b43-93dc-855774e3afd0",
                                 "application_id": "app-uuid-123",
                                 "modules_id": "module-uuid-456",
                                 "menu_access": ["write"]
                             },
                             {
-                                "id": "",
+                                "id": "c3101217-3fa8-4e5e-8762-92a306c3c7d6",
                                 "application_id": "app-uuid-789",
                                 "modules_id": "module-uuid-012",
-                                "menu_access": ["write"]
-                            },
-                            {
-                                "id": "",
-                                "application_id": "app-uuid-123",
-                                "modules_id": "module-uuid-456",
                                 "menu_access": ["read"]
-                            },
+                            }
+                        ],
+                        "form_permissions": [
                             {
-                                "id": "",
-                                "application_id": "app-uuid-789",
-                                "modules_id": "module-uuid-012",
-                                "menu_access": ["write"]
+                                "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
+                                "application_id": "app-uuid-123",
+                                "modules_id": "module-uuid-456",
+                                "form_access": ["write"]
+                            }
+                        ],
+                        "button_permissions": [
+                            {
+                                "id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01",
+                                "button_access": ["read"]
                             }
                         ]
                     }
@@ -379,7 +448,6 @@ class UserRoleUpdateWithDetails(BaseModel):
         json_schema_extra={
             "example": {
                 "basic": {
-                    "tenant_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                     "role_name": "Updated Admin Role",
                     "description": "Updated description",
                     "active": True

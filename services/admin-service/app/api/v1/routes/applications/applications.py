@@ -5,8 +5,8 @@ from app.infrastructure.database.session import get_tenant_db as get_db
 from app.applications.models.application import Application
 from app.menus.models.menu import Menu
 from app.applications.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationResponse
-from app.applications.exceptions import ApplicationNotFoundError, DuplicateApplicationNameError
-from app.core.access import is_active_from_access
+from app.applications.exceptions import ApplicationNotFoundError, DuplicateApplicationNameError, ApplicationReadOnlyError
+from app.core.access import is_active_from_access, is_write_locked
 from app.menus.schemas.menu import MenuResponse
 from app.core.security import get_current_user
 from app.core.config import settings
@@ -74,7 +74,6 @@ def get_applications(
                 "domain_id": str(a.domain_id),
                 "version": a.version,
                 "status": a.status,
-                "config": a.config,
                 "is_active": a.is_active,
                 "key": getattr(a, 'key', None),
                 "label": getattr(a, 'label', None),
@@ -438,7 +437,6 @@ def get_applications_by_domain(
             "description": app.description,
             "version": app.version,
             "status": app.status,
-            "config": app.config,
             "is_active": app.is_active,
             "key": app.key,
             "label": app.label,
@@ -494,6 +492,13 @@ def create_application(
 
         # Create application using dict() method
         application_dict = application_data.dict()
+
+        # Access drives the active state: "disable" forces it off, "write"/"read"
+        # keep it on; otherwise fall back to the value supplied on the request.
+        derived_active = is_active_from_access(application_dict.get("access"))
+        if derived_active is not None:
+            application_dict["is_active"] = derived_active
+
         application = Application(**application_dict)
         
         db.add(application)
@@ -508,7 +513,6 @@ def create_application(
             "domain_id": str(application.domain_id),
             "version": application.version,
             "status": application.status,
-            "config": application.config,
             "is_active": application.is_active,
             "key": application.key,
             "label": application.label,
@@ -595,6 +599,11 @@ async def update_application(
     ).first()
     if not application:
         raise ApplicationNotFoundError()
+
+    # Read-only lock: a write-locked app (access grants no "write") can only be
+    # edited by a payload that also changes "access" (the way to unlock it).
+    if is_write_locked(application.access) and "access" not in application_data.model_fields_set:
+        raise ApplicationReadOnlyError()
 
     # Check if new name conflicts with existing application in the target domain
     target_domain_id = application_data.domain_id or application.domain_id
@@ -692,13 +701,17 @@ def delete_application(
 ):
     """Soft delete an application"""
     application = db.query(Application).filter(
-        Application.id == application_id, 
+        Application.id == application_id,
         Application.is_active == True,
         Application.is_deleted == False
     ).first()
     if not application:
         raise ApplicationNotFoundError()
-    
+
+    # Read-only lock: a write-locked app (access grants no "write") cannot be deleted.
+    if is_write_locked(application.access):
+        raise ApplicationReadOnlyError()
+
     try:
         # Import datetime for soft delete
         from datetime import datetime

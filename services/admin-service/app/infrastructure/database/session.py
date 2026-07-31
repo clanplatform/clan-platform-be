@@ -58,8 +58,7 @@ def create_tables():
     from app.divisions.models.divisions import Division
     from app.job_codes.models.job_codes import JobCode
     from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
-    from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
-    from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission
+    from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupPreference
     from app.buttons.models.button import Button
     from app.tenant_modules.models.tenant_module import TenantModule
     from app.tenant_applications.models.tenant_application import TenantApplication
@@ -68,6 +67,8 @@ def create_tables():
     from app.master_datas.models.master_cities import MasterCity
     from app.master_datas.models.master_languages import MasterLanguage
     from app.master_datas.models.master_locales import MasterLocale
+    from app.subscription.models.subscription import Subscription
+    from app.security.models.security import Security
 
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)
@@ -104,12 +105,13 @@ def _make_get_tenant_db() -> callable:
                 db.close()
             return
 
-        # Look up this tenant's database name from the master DB
+        # Look up this tenant's code from the master DB; the DB name is derived
+        # from tenant_code (not stored).
         master_db = SessionLocal()
         try:
             row = master_db.execute(
                 text(
-                    "SELECT tenant_db_name FROM tenants "
+                    "SELECT tenant_code FROM tenants "
                     "WHERE tenant_id = :tid AND is_active = true"
                 ),
                 {"tid": str(tenant_id)},
@@ -117,7 +119,11 @@ def _make_get_tenant_db() -> callable:
         finally:
             master_db.close()
 
-        if not row or not row.tenant_db_name:
+        tenant_db_name = (
+            tenant_db_manager.make_db_name(row.tenant_code)
+            if row and row.tenant_code else None
+        )
+        if not tenant_db_name:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
@@ -126,7 +132,7 @@ def _make_get_tenant_db() -> callable:
                 ),
             )
 
-        db = tenant_db_manager.get_session(row.tenant_db_name, settings.DATABASE_URL)
+        db = tenant_db_manager.get_session(tenant_db_name, settings.DATABASE_URL)
         try:
             yield db
         except Exception as exc:

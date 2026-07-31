@@ -23,7 +23,6 @@ class UserRoleMain(Base):
     basic = relationship("UserRoleBasic", back_populates="user_role_main", cascade="all, delete-orphan", uselist=False)
     permissions = relationship("UserRolePermission", back_populates="user_role_main", cascade="all, delete-orphan")
     conditionals = relationship("UserRoleConditional", back_populates="user_role_main", cascade="all, delete-orphan")
-    form_permissions = relationship("RoleFormPermission", back_populates="user_role", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRoleMain(id={self.id})>"
@@ -49,8 +48,10 @@ class UserRoleBasic(Base):
     role_code = Column(String(50), nullable=False)
     description = Column(Text, nullable=True)
     role_level = Column(Integer, nullable=False, default=1)
-    system_role = Column(Boolean, default=False, nullable=False)
+    parent_role_id = Column(UUID(as_uuid=True), nullable=True)   # user_role.id of the parent role (Reports to)
+    access_scope = Column(String(50), nullable=True)             # Access scope
     is_admin = Column(Boolean, default=False, nullable=False)  # Admin role flag
+    default_for_new_users = Column(Boolean, default=False, nullable=False, server_default='false')
     active = Column(Boolean, default=True, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -58,7 +59,6 @@ class UserRoleBasic(Base):
 
     # Relationships
     user_role_main = relationship("UserRoleMain", back_populates="basic")
-    form_permissions = relationship("RoleFormPermission", back_populates="userrole_basic", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRoleBasic(id={self.id}, role_name={self.role_name}, role_code={self.role_code}, active={self.active})>"
@@ -85,13 +85,26 @@ class UserRolePermission(Base):
     # Menu access level
     menu_access = Column(String(50), nullable=True, default='disable')
 
+    # Button permissions stored as JSONB (same shape as menu_permissions)
+    # Format: [{"id": "button-uuid", "access": ["read", "write"]}, ...]
+    button_permissions = Column(postgresql.JSONB, nullable=False, default=[], server_default='[]')
+
+    # Highest button access level (read / write / disable)
+    button_access = Column(String(50), nullable=True, default='disable', server_default='disable')
+
+    # Form permissions stored as JSONB (same shape as menu_permissions)
+    # Format: [{"id": "form-uuid", "application_id": "...", "modules_id": "...", "access": ["read","write"]}, ...]
+    form_permissions = Column(postgresql.JSONB, nullable=False, default=[], server_default='[]')
+
+    # Highest form access level (read / write / disable)
+    form_access = Column(String(50), nullable=True, default='disable', server_default='disable')
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
     user_role_main = relationship("UserRoleMain", back_populates="permissions")
     userrole_basic = relationship("UserRoleBasic", backref="permissions")
-    role_form_permissions = relationship("RoleFormPermission", back_populates="userrole_permission", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRolePermission(id={self.id}, userrole_basic_id={self.userrole_basic_id}, menu_access={self.menu_access})>"

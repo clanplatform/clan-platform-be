@@ -18,18 +18,7 @@ from app.infrastructure.audit_tenant import fire_audit_log
 def get_application(db: Session, application_id: uuid.UUID) -> Optional[Application]:
     """Get an application by ID"""
     application = db.query(Application).filter(Application.id == application_id).first()
-    if application:
-        _decrypt_application_fields(application)
-    return application
 
-def _decrypt_application_fields(application: Application) -> None:
-    """Decrypt sensitive fields in application object"""
-    if application.config:
-        try:
-            application.config = hybrid_encryption.decrypt_sensitive_field(application.config)
-        except Exception:
-            # If decryption fails, the field might not be encrypted (legacy data)
-            pass
 
 def is_application_write_locked(db: Session, application_id: uuid.UUID) -> bool:
     """Return True if the given application's access is read-only/disabled."""
@@ -50,8 +39,6 @@ def ensure_application_writable(db: Session, application_id: uuid.UUID, resource
 def get_all_applications(db: Session, skip: int = 0, limit: int = 100) -> List[Application]:
     """Get all applications with pagination"""
     applications = db.query(Application).offset(skip).limit(limit).all()
-    for application in applications:
-        _decrypt_application_fields(application)
     return applications
 
 def fetch_applications_by_domain_name(
@@ -70,8 +57,6 @@ def fetch_applications_by_domain_name(
     if application_name:
         query = query.filter(Application.name == application_name)
     applications = query.offset(skip).limit(limit).all()
-    for application in applications:
-        _decrypt_application_fields(application)
     return applications
 
 def fetch_applications_by_domain_id(
@@ -85,8 +70,6 @@ def fetch_applications_by_domain_id(
     if application_name:
         query = query.filter(Application.name == application_name)
     applications = query.offset(skip).limit(limit).all()
-    for application in applications:
-        _decrypt_application_fields(application)
     return applications
 
 
@@ -107,11 +90,6 @@ def create_application(db: Session, application: ApplicationCreate, user_id: Opt
     if any(app.name == application.name for app in existing_applications):
         raise DuplicateApplicationNameError()
 
-    # Encrypt sensitive fields
-    encrypted_config = None
-    if application.config:
-        encrypted_config = hybrid_encryption.encrypt_sensitive_field(application.config)
-
     # Access drives the active state: "disable" forces it off, "write"/"read"
     # keep it on; otherwise fall back to the value supplied on the request.
     derived_active = _is_active_from_access(application.access)
@@ -124,7 +102,6 @@ def create_application(db: Session, application: ApplicationCreate, user_id: Opt
         version=application.version,
         status=application.status,
         domain_id=application.domain_id,
-        config=encrypted_config,
         is_active=is_active,
         key=application.key,
         label=application.label,
@@ -173,10 +150,6 @@ def update_application(db: Session, application_id: uuid.UUID, application: Appl
         )
         if existing_apps:
             raise DuplicateApplicationNameError()
-
-    # Encrypt sensitive fields if being updated
-    if "config" in update_data and update_data["config"]:
-        update_data["config"] = hybrid_encryption.encrypt_sensitive_field(update_data["config"])
 
     # Keep is_active in sync when access changes: "disable" forces it off,
     # "write"/"read" keep it on (access wins over any is_active in the payload).

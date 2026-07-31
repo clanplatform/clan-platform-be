@@ -32,7 +32,7 @@ from app.infrastructure.audit_tenant import fire_audit_log
 from app.menu_language.models.menu_language import MenuLanguage
 from bson import ObjectId
 from app.infrastructure.mongodb import get_mongodb
-from app.user_setup.models.user_setup import UserSetupBasic, UserSetupRolesEntity
+from app.user_setup.models.user_setup import UserSetupBasic
 from app.user_role.models.user_role import UserRolePermission
 import uuid
 from uuid import UUID
@@ -582,23 +582,19 @@ async def get_login_user_menus(
             print(f"[GET Login User Menus] ✅ Returning cached navigation for user {user.id} (lang_code: {lang_code})")
             return cached_data
 
-        # 2. Get user's assigned roles from usersetup_roles_entity
-        roles_entity = db.query(UserSetupRolesEntity).filter(
-            UserSetupRolesEntity.usersetup_basic_id == user.id
-        ).first()
-
+        # 2. Get user's assigned role (usersetup_basic.role_id)
         # Initialize accessible menu IDs
         accessible_menu_ids = set()
         has_permissions = False
         is_admin_user = False
 
-        if not roles_entity or not roles_entity.assigned_roles:
-            print(f"[GET Login User Menus] ⚠️ User {user.id} has no assigned roles")
+        if not user.role_id:
+            print(f"[GET Login User Menus] ⚠️ User {user.id} has no assigned role")
             print(f"[GET Login User Menus] 📊 Will return all menus (no role-based filtering)")
             # Don't return early - fetch all menus instead
         else:
-            assigned_role_ids = roles_entity.assigned_roles
-            print(f"[GET Login User Menus] ✅ User has {len(assigned_role_ids)} assigned roles: {assigned_role_ids}")
+            assigned_role_ids = [user.role_id]
+            print(f"[GET Login User Menus] ✅ User has assigned role: {user.role_id}")
 
             # 2a. Check if user has any admin role (is_admin = True)
             from app.user_role.models.user_role import UserRoleBasic
@@ -1125,12 +1121,10 @@ async def get_menus_by_module(
             "description": menu.menus_description,
             "order_index": menu.order_index,
             "level": menu.level,
-            "is_visible": menu.is_visible,
             "is_active": menu.is_active,
             "showtopbar": menu.showtopbar,
             "showsidebar": menu.showsidebar,
             "access": menu.access if menu.access else ["read"],
-            "menu_metadata": menu.menu_metadata,
             "created_at": menu.created_at.isoformat() if menu.created_at else None,
             "updated_at": menu.updated_at.isoformat() if menu.updated_at else None,
             "children": []
@@ -1343,9 +1337,9 @@ async def create_single_menu_structured(
     if 'key' not in create_data or create_data['key'] is None:
         create_data['key'] = create_data['name']
     
-    for field in ['badge', 'section_title', 'mongo_id', 'component', 'icon', 'menu_metadata']:
+    for field in ['badge', 'section_title', 'mongo_id', 'component', 'icon']:
         if field not in create_data:
-            create_data[field] = None if field != 'menu_metadata' else {}
+            create_data[field] = None
 
     # Access drives the active state: "disable" -> False, "write"/"read" -> True
     derived_active = is_active_from_access(create_data.get('access'))
@@ -1463,10 +1457,8 @@ async def process_children_recursive_structured(
             'component': child_data.get('component'),
             'order_index': child_data.get('order_index', 1000),
             'level': child_data.get('level', parent_level + 1),
-            'is_visible': child_data.get('is_visible', True),
             'is_active': child_data.get('is_active', True),
             'parent_menu_id': parent_id,
-            'menu_metadata': child_data.get('menu_metadata', {}),
             'badge': child_data.get('badge'),
             'section_title': child_data.get('section_title', ''),
             'menus_description': child_data.get('menus_description', ''),
@@ -1822,10 +1814,8 @@ def build_menu_response(menu: Menu, processed_children: List[Dict[str, Any]]) ->
                 "component": child_item.get('component'),
                 "level": child_item.get('level'),
                 "order_index": child_item.get('order_index'),
-                "is_visible": True,
                 "is_active": True,
                 "parent_menu_id": None,
-                "menu_metadata": {},
                 "access": ["read"],
                 "mongo_id": None,
                 "object_id": None,
@@ -1852,10 +1842,8 @@ def build_menu_response(menu: Menu, processed_children: List[Dict[str, Any]]) ->
         "menus_description": menu.menus_description,
         "order_index": menu.order_index,
         "level": menu.level,
-        "is_visible": menu.is_visible,
         "is_active": menu.is_active,
         "parent_menu_id": str(menu.parent_menu_id) if menu.parent_menu_id else None,
-        "menu_metadata": menu.menu_metadata or {},
         "access": menu.access or ["read"],
         "mongo_id": menu.mongo_id,
         "object_id": None,
@@ -2025,8 +2013,6 @@ async def create_single_menu(
     if 'icon' not in create_data:
         create_data['icon'] = None
     
-    if 'menu_metadata' not in create_data or create_data['menu_metadata'] is None:
-        create_data['menu_metadata'] = {}
     
     menu = Menu(**create_data)
     
@@ -2065,10 +2051,8 @@ async def create_single_menu(
                 'component': child_data.get('component'),
                 'order_index': child_data.get('order_index', 1000),
                 'level': child_data.get('level', parent_level + 1),
-                'is_visible': child_data.get('is_visible', True),
                 'is_active': child_data.get('is_active', True),
                 'parent_menu_id': parent_id,
-                'menu_metadata': child_data.get('menu_metadata', {}),
                 'badge': child_data.get('badge'),
                 'section_title': child_data.get('section_title', ''),
                 'menus_description': child_data.get('menus_description', ''),
@@ -2147,7 +2131,7 @@ async def create_single_menu(
             "key": menu.key or menu.name,
             "label": menu.label,
             "icon": menu.icon,
-            "description": menu.menus_description or create_data.get('menu_metadata', {}).get('description'),
+            "description": menu.menus_description,
             "badge": menu.badge,
             "section_title": menu.section_title or "",
             "sectionTitle": menu.section_title or "",
@@ -2314,10 +2298,8 @@ async def create_single_menu(
                 "component": child_item.get('component'),
                 "level": child_item.get('level'),
                 "order_index": child_item.get('order_index'),
-                "is_visible": True,
                 "is_active": True,
                 "parent_menu_id": None,
-                "menu_metadata": {},
                 "access": ["read"],
                 "mongo_id": None,
                 "object_id": None,
@@ -2344,10 +2326,8 @@ async def create_single_menu(
         "menus_description": menu.menus_description,
         "order_index": menu.order_index,
         "level": menu.level,
-        "is_visible": menu.is_visible,
         "is_active": menu.is_active,
         "parent_menu_id": str(menu.parent_menu_id) if menu.parent_menu_id else None,
-        "menu_metadata": menu.menu_metadata or {},
         "access": menu.access or ["read"],
         "mongo_id": menu.mongo_id,
         "object_id": None,
@@ -2401,8 +2381,6 @@ async def create_menus_batch(
             children_payload = menu_dict.pop('children', [])
             
             # Set defaults
-            if 'menu_metadata' not in menu_dict:
-                menu_dict['menu_metadata'] = {}
             if 'key' not in menu_dict:
                 menu_dict['key'] = menu_dict['name']
             if 'label' not in menu_dict:
@@ -2449,10 +2427,8 @@ async def create_menus_batch(
                         'component': child_data.get('component'),
                         'order_index': child_data.get('order_index', 1000),
                         'level': child_data.get('level', parent_level + 1),
-                        'is_visible': child_data.get('is_visible', True),
                         'is_active': child_data.get('is_active', True),
                         'parent_menu_id': parent_id,
-                        'menu_metadata': child_data.get('menu_metadata', {}),
                         'badge': child_data.get('badge'),
                         'section_title': child_data.get('section_title', ''),
                         'menus_description': child_data.get('menus_description', ''),
@@ -2787,7 +2763,7 @@ async def update_menu(
     try:
         details_update: dict = {}
         # ✅ Include all fields including new ones: key, badge, section_title, mongo_id, description
-        for key in ['route', 'icon', 'order_index', 'parent_menu_id', 'level', 'is_visible', 'component', 'menu_metadata', 'is_active', 'key', 'badge', 'section_title', 'mongo_id', 'description']:
+        for key in ['route', 'icon', 'order_index', 'parent_menu_id', 'level', 'component', 'is_active', 'key', 'badge', 'section_title', 'mongo_id', 'description']:
             if key in update_data:
                 details_update[key] = update_data[key]
         if 'parent_menu_id' in details_update and details_update['parent_menu_id'] is not None:
@@ -2807,7 +2783,6 @@ async def update_menu(
             return menu
 
         # Build the update object for navigation
-        metadata = update_data.get('menu_metadata') or menu.menu_metadata or {}
         nav_update: dict = {}
 
         if 'name' in update_data:
@@ -2834,14 +2809,6 @@ async def update_menu(
         if 'description' in update_data:
             nav_update["description"] = update_data['description']
 
-        # Handle menu_metadata fields
-        if 'menu_metadata' in update_data:
-            if metadata.get('description') is not None:
-                nav_update["description"] = metadata.get('description')
-            if metadata.get('badge') is not None:
-                nav_update["badge"] = metadata.get('badge')
-            if metadata.get('sectionTitle') is not None:
-                nav_update["sectionTitle"] = metadata.get('sectionTitle')
 
         if not nav_update:
             print("[Menu Update] No navigation fields to update")
@@ -3239,7 +3206,6 @@ async def delete_menu(
             child_icon = item.get("icon") or ""
             child_route = item.get("route")
             child_component = item.get("component")
-            child_meta = item.get("menu_metadata") or {}
             # Derive next order_index under this parent
             max_order = db.query(func.max(Menu.order_index)).filter(
                 Menu.parent_menu_id == parent_id,
@@ -3258,8 +3224,6 @@ async def delete_menu(
                 "icon": child_icon,
                 "order_index": child_order,
                 "level": base_level,
-                "is_visible": True,
-                "menu_metadata": child_meta,
                 "is_active": True
             }
             child_menu = Menu(**child_data)
@@ -3277,9 +3241,7 @@ async def delete_menu(
                     order_index=child_order,
                     parent_menu_id=str(parent_id),
                     level=base_level,
-                    is_visible=True,
                     component=child_component,
-                    menu_metadata=child_meta,
                     is_active=True,
                     description=item.get("description"),
                     badge=item.get("badge"),
@@ -3335,17 +3297,16 @@ async def delete_menu(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid nav_doc_id")
 
         # ✅ Use validation helper to build child object for navigation
-        metadata = create_data.get('menu_metadata') or {}
         new_item = create_navigation_item(
             key=create_data['name'],
             label=create_data.get('label') or create_data['name'],
             icon=create_data.get('icon'),
-            description=create_data.get('description') or metadata.get('description'),
-            badge=metadata.get('badge'),
+            description=create_data.get('description'),
+            badge=None,
             children=children_snapshot or [],
             # Optional fields
             route=create_data.get('route'),
-            sectionTitle=metadata.get('sectionTitle'),
+            sectionTitle=None,
             menu_id=str(menu.id),
             application_id=str(menu.application_id),
             mongo_id=str(mongo_id) if mongo_id else "",  # ✅ Use mongo_id

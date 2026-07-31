@@ -7,7 +7,7 @@ from sqlalchemy import and_
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 
-from app.models.user_setup import UserSetupBasic, UserSetupRolesEntity
+from app.models.user_setup import UserSetupBasic
 from app.models.user_role import UserRolePermission
 from app.models.menu import Menu
 
@@ -32,16 +32,12 @@ class UserMenuService:
         if not user:
             return []
         
-        # 2. Get user's assigned roles from usersetup_roles_entity
-        roles_entity = db.query(UserSetupRolesEntity).filter(
-            UserSetupRolesEntity.usersetup_basic_id == user_id
-        ).first()
-        
-        if not roles_entity or not roles_entity.assigned_roles:
+        # 2. Get user's assigned role
+        if not user.role_id:
             return []
-        
-        assigned_role_ids = roles_entity.assigned_roles
-        
+
+        assigned_role_ids = [user.role_id]
+
         # 3. Get all menu permissions for these roles from userrole_permission
         # Fixed: Check for menu_permissions JSONB field, not menu_id
         menu_permissions = db.query(UserRolePermission).filter(
@@ -103,7 +99,6 @@ class UserMenuService:
                 "parent_menu_id": str(menu.parent_menu_id) if menu.parent_menu_id else None,
                 "level": menu.level,
                 "order_index": menu.order_index,
-                "is_visible": menu.is_visible,
                 "user_access": user_access,  # User's specific access permissions
                 "can_read": 'read' in user_access,
                 "can_write": 'write' in user_access,
@@ -161,18 +156,16 @@ class UserMenuService:
         Returns:
             True if user has the required access, False otherwise
         """
-        # Get user's roles
-        roles_entity = db.query(UserSetupRolesEntity).filter(
-            UserSetupRolesEntity.usersetup_basic_id == user_id
-        ).first()
-        
-        if not roles_entity or not roles_entity.assigned_roles:
+        # Get user's assigned role
+        user = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_id).first()
+
+        if not user or not user.role_id:
             return False
-        
+
         # Check permissions in JSONB menu_permissions field
         permissions = db.query(UserRolePermission).filter(
             and_(
-                UserRolePermission.user_role_id.in_(roles_entity.assigned_roles),
+                UserRolePermission.user_role_id == user.role_id,
                 UserRolePermission.menu_permissions.isnot(None)
             )
         ).all()

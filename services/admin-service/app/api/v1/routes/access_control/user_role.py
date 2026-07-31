@@ -52,7 +52,9 @@ async def create_user_role_with_details(
     current_user: dict = Depends(get_current_user)
 ):
     """Create a user role with permissions and conditionals in one request"""
-    role = UserRoleService.create_user_role_with_details(db, role_data)
+    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    role = UserRoleService.create_user_role_with_details(db, role_data, tenant_id=tenant_id)
 
     # Audit log: user role created
     try:

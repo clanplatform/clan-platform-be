@@ -8,6 +8,7 @@ from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRole
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.menus.models.menu import Menu
 from app.forms.models.forms import Form
+from app.buttons.models.button import Button
 from app.user_role.schemas.user_role import (
     UserRoleBasicCreate,
     UserRoleBasicUpdate,
@@ -29,8 +30,16 @@ class UserRoleService:
     # ============================================================================
 
     @staticmethod
-    def create_user_role(db: Session, role_data: UserRoleBasicCreate) -> UserRoleBasic:
-        """Create a new user role with parent UserRoleMain record"""
+    def create_user_role(
+        db: Session,
+        role_data: UserRoleBasicCreate,
+        tenant_id: Optional[UUID] = None,
+    ) -> UserRoleBasic:
+        """Create a new user role with parent UserRoleMain record.
+
+        tenant_id is not part of the request body — it is derived from the
+        caller's JWT and injected here (None for master-DB users).
+        """
         try:
             # Create parent UserRoleMain record first
             db_user_role_main = UserRoleMain()
@@ -40,6 +49,7 @@ class UserRoleService:
             # Create UserRoleBasic record with reference to parent
             db_role = UserRoleBasic(
                 user_role_id=db_user_role_main.id,
+                tenant_id=tenant_id,
                 **role_data.model_dump()
             )
             db.add(db_role)
@@ -206,18 +216,36 @@ class UserRoleService:
                 perm_dict["access"] = item.menu_access
             menu_perms.append(perm_dict)
         
-        # Form permissions removed - not needed
-        
-        # Calculate the highest access level for menus
+        # Button permissions — same JSONB shape as menus, keyed by button id
+        if getattr(permission_data, "button_permissions", None):
+            button_ids = [item.id for item in permission_data.button_permissions]
+            UserRoleService._verify_buttons_exist(db, button_ids)
+        button_perms = UserRoleService._build_button_perms(
+            getattr(permission_data, "button_permissions", None)
+        )
+
+        # Form permissions — same JSONB shape as menus, keyed by form id
+        if getattr(permission_data, "form_permissions", None):
+            form_ids = [item.id for item in permission_data.form_permissions]
+            UserRoleService._verify_forms_exist(db, form_ids)
+        form_perms = UserRoleService._build_form_perms(
+            getattr(permission_data, "form_permissions", None)
+        )
+
+        # Calculate the highest access level for menus / buttons / forms
         menu_access_level = UserRoleService._calculate_highest_access(menu_perms)
-        
+        button_access_level = UserRoleService._calculate_highest_access(button_perms)
+        form_access_level = UserRoleService._calculate_highest_access(form_perms)
+
         db_permission = UserRolePermission(
             user_role_id=user_role_id,  # Use the auto-fetched user_role_id
             userrole_basic_id=permission_data.userrole_basic_id,
             menu_permissions=menu_perms,
-            # form_permissions removed
             menu_access=menu_access_level,
-            # form_access removed
+            button_permissions=button_perms,
+            button_access=button_access_level,
+            form_permissions=form_perms,
+            form_access=form_access_level,
         )
         db.add(db_permission)
         db.commit()
@@ -268,8 +296,23 @@ class UserRoleService:
                     perm_dict["access"] = item.menu_access
                 menu_perms.append(perm_dict)
             update_data["menu_permissions"] = menu_perms
+            update_data["menu_access"] = UserRoleService._calculate_highest_access(menu_perms)
 
-        # Form permissions removed - not needed
+        # Button permissions if being updated — same JSONB shape as menus
+        if "button_permissions" in update_data and update_data["button_permissions"]:
+            button_ids = [item.id for item in permission_data.button_permissions]
+            UserRoleService._verify_buttons_exist(db, button_ids)
+            button_perms = UserRoleService._build_button_perms(permission_data.button_permissions)
+            update_data["button_permissions"] = button_perms
+            update_data["button_access"] = UserRoleService._calculate_highest_access(button_perms)
+
+        # Form permissions if being updated — same JSONB shape as menus
+        if "form_permissions" in update_data and update_data["form_permissions"]:
+            form_ids = [item.id for item in permission_data.form_permissions]
+            UserRoleService._verify_forms_exist(db, form_ids)
+            form_perms = UserRoleService._build_form_perms(permission_data.form_permissions)
+            update_data["form_permissions"] = form_perms
+            update_data["form_access"] = UserRoleService._calculate_highest_access(form_perms)
 
         for field, value in update_data.items():
             setattr(db_permission, field, value)
@@ -371,8 +414,16 @@ class UserRoleService:
     # ============================================================================
 
     @staticmethod
-    def create_user_role_with_details(db: Session, role_data: UserRoleCreateWithDetails) -> UserRoleBasic:
-        """Create a user role with permissions and conditionals in one transaction"""
+    def create_user_role_with_details(
+        db: Session,
+        role_data: UserRoleCreateWithDetails,
+        tenant_id: Optional[UUID] = None,
+    ) -> UserRoleBasic:
+        """Create a user role with permissions and conditionals in one transaction.
+
+        tenant_id is not part of the request body — it is derived from the
+        caller's JWT and injected here (None for master-DB users).
+        """
         try:
             # Create parent UserRoleMain record first
             db_user_role_main = UserRoleMain()
@@ -382,6 +433,7 @@ class UserRoleService:
             # Create the basic role with reference to parent
             db_role = UserRoleBasic(
                 user_role_id=db_user_role_main.id,
+                tenant_id=tenant_id,
                 **role_data.basic.model_dump()
             )
             db.add(db_role)
@@ -409,19 +461,37 @@ class UserRoleService:
                         if item.menu_access:
                             perm_dict["access"] = item.menu_access
                         menu_perms.append(perm_dict)
-                    
-                    # Form permissions removed - not needed
-                    
-                    # Calculate the highest access level for menus
+
+                    # Button permissions — same JSONB shape as menus, keyed by button id
+                    if getattr(perm_data, "button_permissions", None):
+                        button_ids = [item.id for item in perm_data.button_permissions]
+                        UserRoleService._verify_buttons_exist(db, button_ids)
+                    button_perms = UserRoleService._build_button_perms(
+                        getattr(perm_data, "button_permissions", None)
+                    )
+
+                    # Form permissions — same JSONB shape as menus, keyed by form id
+                    if getattr(perm_data, "form_permissions", None):
+                        form_ids = [item.id for item in perm_data.form_permissions]
+                        UserRoleService._verify_forms_exist(db, form_ids)
+                    form_perms = UserRoleService._build_form_perms(
+                        getattr(perm_data, "form_permissions", None)
+                    )
+
+                    # Calculate the highest access level for menus / buttons / forms
                     menu_access_level = UserRoleService._calculate_highest_access(menu_perms)
+                    button_access_level = UserRoleService._calculate_highest_access(button_perms)
+                    form_access_level = UserRoleService._calculate_highest_access(form_perms)
 
                     db_permission = UserRolePermission(
                         user_role_id=db_user_role_main.id,
                         userrole_basic_id=db_role.id,
                         menu_permissions=menu_perms,
-                        # form_permissions removed
                         menu_access=menu_access_level,
-                        # form_access removed
+                        button_permissions=button_perms,
+                        button_access=button_access_level,
+                        form_permissions=form_perms,
+                        form_access=form_access_level,
                     )
                     db.add(db_permission)
                     db.flush()  # Get the permission ID
@@ -432,9 +502,11 @@ class UserRoleService:
                     user_role_id=db_user_role_main.id,
                     userrole_basic_id=db_role.id,
                     menu_permissions=[],
-                    # form_permissions removed
                     menu_access='disable',
-                    # form_access removed
+                    button_permissions=[],
+                    button_access='disable',
+                    form_permissions=[],
+                    form_access='disable',
                 )
                 db.add(db_permission)
                 db.flush()  # Get the permission ID
@@ -508,16 +580,26 @@ class UserRoleService:
                         if hasattr(item, 'menu_access') and item.menu_access:
                             perm_dict["access"] = item.menu_access
                         menu_perms.append(perm_dict)
-                    
-                    # Form permissions removed - not needed
+
+                    # Button permissions — same JSONB shape as menus, keyed by button id
+                    button_perms = UserRoleService._build_button_perms(
+                        getattr(perm_data, "button_permissions", None)
+                    )
+
+                    # Form permissions — same JSONB shape as menus, keyed by form id
+                    form_perms = UserRoleService._build_form_perms(
+                        getattr(perm_data, "form_permissions", None)
+                    )
 
                     db_permission = UserRolePermission(
                         user_role_id=db_role.user_role_id,
                         userrole_basic_id=db_role.id,
                         menu_permissions=menu_perms,
-                        # form_permissions removed
-                        menu_access=menu_perms,
-                        # form_access removed
+                        menu_access=UserRoleService._calculate_highest_access(menu_perms),
+                        button_permissions=button_perms,
+                        button_access=UserRoleService._calculate_highest_access(button_perms),
+                        form_permissions=form_perms,
+                        form_access=UserRoleService._calculate_highest_access(form_perms),
                     )
                     db.add(db_permission)
 
@@ -621,6 +703,80 @@ class UserRoleService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid UUID format: {form_id_str}"
                 )
+
+    @staticmethod
+    def _verify_buttons_exist(db: Session, button_ids: List[str]) -> None:
+        """Verify that all buttons in the array exist"""
+        from uuid import UUID as UUIDType
+        for button_id_str in button_ids:
+            try:
+                button_id = UUIDType(str(button_id_str))
+                button = db.query(Button).filter(Button.id == button_id).first()
+                if not button:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Button with ID {button_id_str} not found"
+                    )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid UUID format: {button_id_str}"
+                )
+
+    @staticmethod
+    def _build_button_perms(button_permissions) -> List[Dict[str, Any]]:
+        """Convert button PermissionItems (or dicts) to the JSONB shape stored on
+        userrole_permission.button_permissions: [{"id": ..., "access": [...]}].
+
+        Mirrors how menu_permissions are stored; each item carries a button id and
+        a button_access list (['read'], ['read','write'], or ['disable'])."""
+        button_perms: List[Dict[str, Any]] = []
+        for item in (button_permissions or []):
+            if isinstance(item, dict):
+                item_id = item.get("id")
+                access = item.get("button_access") or item.get("access")
+            else:
+                item_id = getattr(item, "id", None)
+                access = getattr(item, "button_access", None)
+            if not item_id:
+                continue
+            perm_dict = {"id": item_id}
+            if access:
+                perm_dict["access"] = access
+            button_perms.append(perm_dict)
+        return button_perms
+
+    @staticmethod
+    def _build_form_perms(form_permissions) -> List[Dict[str, Any]]:
+        """Convert form PermissionItems (or dicts) to the JSONB shape stored on
+        userrole_permission.form_permissions:
+        [{"id":..., "application_id":..., "modules_id":..., "access": [...]}].
+
+        Mirrors how menu_permissions are stored; each item carries a form id and
+        a form_access list (['read'], ['read','write'], or ['disable'])."""
+        form_perms: List[Dict[str, Any]] = []
+        for item in (form_permissions or []):
+            if isinstance(item, dict):
+                item_id = item.get("id")
+                application_id = item.get("application_id")
+                modules_id = item.get("modules_id")
+                access = item.get("form_access") or item.get("access")
+            else:
+                item_id = getattr(item, "id", None)
+                application_id = getattr(item, "application_id", None)
+                modules_id = getattr(item, "modules_id", None)
+                access = getattr(item, "form_access", None)
+            if not item_id:
+                continue
+            perm_dict = {"id": item_id}
+            if application_id:
+                perm_dict["application_id"] = application_id
+            if modules_id:
+                perm_dict["modules_id"] = modules_id
+            if access:
+                perm_dict["access"] = access
+            form_perms.append(perm_dict)
+        return form_perms
 
     @staticmethod
     def _calculate_highest_access(permissions: List[Dict[str, Any]]) -> str:

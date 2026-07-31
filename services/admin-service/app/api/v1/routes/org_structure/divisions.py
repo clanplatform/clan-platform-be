@@ -104,8 +104,10 @@ def create_division(
     current_user: dict = Depends(get_current_user)
 ):
     """Create a new division"""
+    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     try:
-        division = division_service.create_division(db, division=division_data)
+        division = division_service.create_division(db, division=division_data, tenant_id=tenant_id)
 
         # Audit log: division created
         try:

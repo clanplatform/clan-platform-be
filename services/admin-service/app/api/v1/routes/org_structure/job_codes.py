@@ -129,9 +129,14 @@ async def create_job_code(
     current_user = Depends(get_current_user)
 ):
     """Create a new job code with optional nested relationships"""
-    
+
+    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+
     user_id = current_user.user_id if hasattr(current_user, 'user_id') else None
-    job_code = job_code_service.create_job_code(db, job_code_data=job_code_data, user_id=user_id)
+    job_code = job_code_service.create_job_code(
+        db, job_code_data=job_code_data, tenant_id=tenant_id, user_id=user_id
+    )
 
     # Audit log: job code created
     try:

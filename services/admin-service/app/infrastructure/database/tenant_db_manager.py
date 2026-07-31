@@ -155,14 +155,13 @@ class TenantDatabaseManager:
             UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
         )
         from app.user_setup.models.user_setup import (                                       # noqa: F401
-            UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
-        )
-        from app.user_role_form_permission.models.user_role_form_permission import (         # noqa: F401
-            RoleFormPermission
+            UserSetup, UserSetupBasic, UserSetupPreference
         )
         from app.buttons.models.button import Button                                         # noqa: F401
         from app.tenant_modules.models.tenant_module import TenantModule                     # noqa: F401
         from app.tenant_applications.models.tenant_application import TenantApplication      # noqa: F401
+        from app.subscription.models.subscription import Subscription                        # noqa: F401
+        from app.security.models.security import Security                                     # noqa: F401
 
         if not allowed_tables:
             # No restriction — create every table (default / backwards-compatible)

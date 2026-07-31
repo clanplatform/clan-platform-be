@@ -41,9 +41,11 @@ class JobCode(Base):
     active_status = Column(Boolean, default=True, nullable=False,
                           comment="Whether the job code is currently active")
 
-    # Client reference
+    # Derived from the JWT (never accepted/returned in the CRUD schema):
+    # NULL -> master-DB user, a tenant -> tenant-DB user. Nullable so master-DB
+    # users can create rows in the master DB.
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
-                      nullable=False, index=True, comment="Foreign key to tenants table")
+                      nullable=True, index=True, comment="Foreign key to tenants table")
 
     # Soft delete: set on DELETE (with active_status=False); rows are
     # permanently purged after the retention period (30 days).
@@ -106,10 +108,12 @@ class JobCodeBasicInfo(Base):
     level = Column(String(50), comment="Job level (e.g., Senior, Junior, Lead)")
     description = Column(Text, comment="Job description")
     
-    # Client and entity references with proper UUID foreign keys
+    # tenant_id is derived from the JWT (NULL = master-DB user) and never
+    # returned in the CRUD schema; entity/department/division stay client-supplied.
+    # Nullable so master-DB users can create rows in the master DB.
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
-                      nullable=False, index=True, comment="Foreign key to tenants table")
-    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id", ondelete="CASCADE"), 
+                      nullable=True, index=True, comment="Foreign key to tenants table")
+    entity_id = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id", ondelete="CASCADE"),
                       nullable=False, index=True, comment="Foreign key to entities table")
     department_id = Column(UUID(as_uuid=True), ForeignKey("departments.department_id", ondelete="CASCADE"), 
                           nullable=False, index=True, comment="Foreign key to departments table")
@@ -121,10 +125,12 @@ class JobCodeBasicInfo(Base):
                            comment="Employment type (Full-time, Contract, Part-time)")
     work_mode = Column(String(50),
                       comment="Work mode (Onsite, Remote, Hybrid)")
-    
+    grade_band = Column(String(50), comment="Grade / band (e.g. L4 / Band 3)")
+
     # Salary information (matching schema)
     minimum_salary = Column(Integer, comment="Minimum salary")
     maximum_salary = Column(Integer, comment="Maximum salary")
+    salary_currency = Column(String(10), comment="Salary currency (e.g. USD)")
     
     # Experience and reporting (matching schema)
     experience_years = Column(Integer, comment="Required experience in years")

@@ -14,7 +14,7 @@ class TenantBase(BaseModel):
     country: Optional[str] = None
     industry: Optional[str] = None
     company_size: Optional[str] = None
-    onboarding_status: Optional[str] = None
+    initial_status: Optional[str] = Field("Active", description="Active, Trial, or Pending setup")
     employees_count: Optional[int] = None
     description: Optional[str] = None
 
@@ -54,7 +54,9 @@ class TenantBase(BaseModel):
 
 class TenantCreate(TenantBase):
     # Tenant creation is authorized by the caller's JWT (must be a master-DB
-    # user, tenant_id NULL). No credentials are carried in the request body.
+    # user, tenant_id NULL). The owner's password is never accepted here —
+    # it's always randomly generated server-side (see create_tenant()) and
+    # returned once via TenantCreateResponse.temp_password.
     pass
 
 class TenantUpdate(BaseModel):
@@ -68,7 +70,7 @@ class TenantUpdate(BaseModel):
     country: Optional[str] = None
     industry: Optional[str] = None
     company_size: Optional[str] = None
-    onboarding_status: Optional[str] = None
+    initial_status: Optional[str] = None
     employees_count: Optional[int] = None
     description: Optional[str] = None
     display_name: Optional[str] = None

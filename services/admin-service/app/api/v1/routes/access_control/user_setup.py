@@ -8,6 +8,7 @@ from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import resolve_scope_filter
 from app.user_setup.services.user_setup import UserSetupService
 from app.user_setup.schemas.user_setup import (
     UserSetupBasicCreate,
@@ -85,11 +86,13 @@ def get_all_user_setups(
     current_user: dict = Depends(get_current_user)
 ):
     """Get all user setups with pagination and optional filters."""
+    scope_filter = resolve_scope_filter(db, get_user_id(current_user))
     result = UserSetupService.get_all_user_setups(
         db,
         skip=skip,
         limit=limit,
         status_filter=status_filter,
+        scope_filter=scope_filter,
     )
 
     try:

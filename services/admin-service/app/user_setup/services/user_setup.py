@@ -64,6 +64,24 @@ class UserSetupService:
                 )
             )
 
+    @staticmethod
+    def _derive_dept_division_from_job_code(db: Session, job_code_id: Optional[UUID]):
+        """Resolve department_id/division_id from job_code_id's jobcode_basicinfo
+        row, as single-element arrays (matching usersetup_basic's array shape —
+        same "first is default" convention as entity_id). (None, None) when
+        job_code_id is None or has no basic-info row."""
+        if not job_code_id:
+            return None, None
+        from app.job_codes.models.job_codes import JobCodeBasicInfo
+        info = db.query(
+            JobCodeBasicInfo.department_id, JobCodeBasicInfo.division_id
+        ).filter(JobCodeBasicInfo.job_code_id == job_code_id).first()
+        if not info:
+            return None, None
+        department_id = [info.department_id] if info.department_id else None
+        division_id = [info.division_id] if info.division_id else None
+        return department_id, division_id
+
     # ============================================================================
     # UserSetupBasic Operations
     # ============================================================================
@@ -93,6 +111,10 @@ class UserSetupService:
             if user_dict.get('role_id') is not None:
                 UserSetupService._validate_roles_tenant_match(db, [user_dict['role_id']], tenant_id, field_name="role_id")
 
+            department_id, division_id = UserSetupService._derive_dept_division_from_job_code(
+                db, user_dict.get('job_code_id')
+            )
+
             # Create UserSetupBasic record with reference to parent.
             # can_change_password is always True at creation — forces the
             # first-login password-change flow (is_password_change=False).
@@ -102,6 +124,8 @@ class UserSetupService:
                 password_hash=password_hash,  # Store hashed password
                 is_password_change=False,
                 can_change_password=True,
+                department_id=department_id,
+                division_id=division_id,
                 **user_dict
             )
             db.add(db_user_basic)
@@ -199,6 +223,7 @@ class UserSetupService:
         skip: int = 0,
         limit: int = 100,
         status_filter: Optional[str] = None,
+        scope_filter=None,
     ) -> UserSetupListResponse:
         """Get all user setups with pagination and filtering"""
         query = db.query(UserSetupBasic)
@@ -206,6 +231,10 @@ class UserSetupService:
         # Apply filters
         if status_filter:
             query = query.filter(UserSetupBasic.status == status_filter)
+
+        if scope_filter is not None:
+            from app.infrastructure.scope_helpers import apply_user_scope_filter
+            query = apply_user_scope_filter(query, scope_filter)
 
         total = query.count()
         users = query.offset(skip).limit(limit).all()
@@ -229,6 +258,15 @@ class UserSetupService:
             if "password" in update_data:
                 password = update_data.pop('password')
                 update_data['password_hash'] = get_password_hash(password)
+
+            # Re-derive department_id/division_id whenever job_code_id changes
+            # (including being cleared to null).
+            if "job_code_id" in update_data:
+                department_id, division_id = UserSetupService._derive_dept_division_from_job_code(
+                    db, update_data["job_code_id"]
+                )
+                update_data["department_id"] = department_id
+                update_data["division_id"] = division_id
 
             for field, value in update_data.items():
                 setattr(db_user, field, value)
@@ -427,6 +465,10 @@ class UserSetupService:
             password = user_dict.pop('password')  # Remove password from dict
             password_hash = get_password_hash(password)  # Hash the password
 
+            department_id, division_id = UserSetupService._derive_dept_division_from_job_code(
+                db, user_dict.get('job_code_id')
+            )
+
             # Create basic user setup with reference to parent.
             # can_change_password is always True at creation — forces the
             # first-login password-change flow (is_password_change=False).
@@ -436,6 +478,8 @@ class UserSetupService:
                 password_hash=password_hash,  # Store hashed password
                 is_password_change=False,
                 can_change_password=True,
+                department_id=department_id,
+                division_id=division_id,
                 **user_dict
             )
             db.add(db_user_basic)

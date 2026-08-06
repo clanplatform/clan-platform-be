@@ -19,11 +19,21 @@ class Security(Base):
     # Nullable so master-DB users can create rows in the master DB.
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id"), nullable=True, index=True)
 
-    # Single sign-on (SSO)
+    # Single sign-on (SSO) — sso_* fields apply only when enable_sso is true
     enable_sso = Column(Boolean, nullable=False, server_default='false', default=False)
+    sso_provider = Column(String(50), nullable=True)
+    sso_entity_id = Column(String(255), nullable=True)          # Entity ID / Issuer
+    sso_sign_in_url = Column(String(500), nullable=True)
+    sso_metadata_url = Column(String(500), nullable=True)
+    sso_auto_provision_users = Column(Boolean, nullable=False, server_default='false', default=False)
+    sso_force_for_all_users = Column(Boolean, nullable=False, server_default='false', default=False)
+    sso_signing_certificate = Column(Text, nullable=True)       # X.509 signing certificate (PEM)
 
-    # Multi-factor authentication (MFA)
+    # Multi-factor authentication (MFA) — mfa_* fields apply only when require_mfa is true
     require_mfa = Column(Boolean, nullable=False, server_default='false', default=False)
+    mfa_allowed_methods = Column(ARRAY(Text), nullable=True)    # e.g. ['totp', 'sms', 'email']
+    mfa_enforce_for = Column(String(50), nullable=True)         # scope this is enforced for
+    mfa_enrollment_grace_days = Column(Integer, nullable=True)
 
     # Session & password policy
     session_timeout_min = Column(Integer, nullable=True)
@@ -35,6 +45,7 @@ class Security(Base):
     password_history = Column(Integer, nullable=True)
     require_complexity = Column(Boolean, nullable=False, server_default='true', default=True)
     lock_after_failed_logins = Column(Boolean, nullable=False, server_default='true', default=True)
+    lockout_threshold = Column(Integer, nullable=True)          # failed attempts before lockout
     ip_allowlist = Column(ARRAY(Text), nullable=True)   # list of CIDRs (one per line in the UI)
 
     is_active = Column(Boolean, nullable=False, server_default='true', default=True)

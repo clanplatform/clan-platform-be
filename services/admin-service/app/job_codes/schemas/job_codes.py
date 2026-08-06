@@ -5,7 +5,6 @@ This module defines Pydantic schemas for:
 - JobCode
 - JobCodeBasicInfo
 - JobCodeSkills
-- JobCodeBenefits
 
 Includes:
 - Base schemas for shared attributes
@@ -36,8 +35,6 @@ class JobCodeBase(BaseModel):
 
 class JobCodeBasicInfoBase(BaseModel):
     """Base for job basic information"""
-    # category / level / description are backend columns retained on the table but
-    # omitted from the schema (not part of the job-code form).
     # Required organizational hierarchy fields with proper UUID types.
     # tenant_id is intentionally omitted: it is derived from the JWT server-side,
     # never sent in the request or returned in the response.
@@ -55,12 +52,7 @@ class JobCodeBasicInfoBase(BaseModel):
 
 
 class JobCodeSkillsBase(BaseModel):
-    """Base for job skills and qualifications.
-
-    requirements / education_level / certifications / performance_metrics are
-    backend columns retained on the table but omitted from the schema (not part
-    of the job-code form).
-    """
+    """Base for job skills and qualifications."""
     key_responsibilities: Optional[str] = None
     required_skills: Optional[str] = None
 
@@ -249,7 +241,6 @@ class JobCodeErrorResponse(BaseModel):
 class JobCodeSearchParams(BaseModel):
     job_code: Optional[str] = None
     job_title: Optional[str] = None
-    category: Optional[str] = None
     active_status: Optional[bool] = None
     min_salary_range: Optional[int] = None
     max_salary_range: Optional[int] = None

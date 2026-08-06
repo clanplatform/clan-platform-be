@@ -130,7 +130,8 @@ def get_all_divisions(
     tenant_id: Optional[UUID] = None,
     entity_id: Optional[UUID] = None,
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    scoped_ids: Optional[List[UUID]] = None,
 ) -> List[Division]:
     """Get all divisions with optional filtering"""
     query = db.query(Division).options(
@@ -147,6 +148,9 @@ def get_all_divisions(
 
     if entity_id:
         query = query.filter(Division.entity_id == entity_id)
+
+    if scoped_ids is not None:
+        query = query.filter(Division.id.in_(scoped_ids))
 
     # Sort by newest first (FILO)
     query = query.order_by(Division.created_at.desc())

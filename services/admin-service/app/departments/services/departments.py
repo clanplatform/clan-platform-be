@@ -48,13 +48,18 @@ def get_departments_by_tenant(db: Session, tenant_id: UUID, entity_id: Optional[
     return query.offset(skip).limit(limit).all()
 
 
-def get_departments_by_entity(db: Session, entity_id: UUID, skip: int = 0, limit: int = 100) -> List[Department]:
+def get_departments_by_entity(
+    db: Session, entity_id: UUID, skip: int = 0, limit: int = 100,
+    scoped_ids: Optional[List[UUID]] = None,
+) -> List[Department]:
     """Get all departments for a specific entity"""
-    departments = db.query(Department).filter(
+    query = db.query(Department).filter(
         Department.entity_id == entity_id,
         Department.is_deleted == False
-    ).offset(skip).limit(limit).all()
-    return departments
+    )
+    if scoped_ids is not None:
+        query = query.filter(Department.department_id.in_(scoped_ids))
+    return query.offset(skip).limit(limit).all()
 
 
 def get_active_departments(db: Session, tenant_id: UUID, entity_id: Optional[UUID] = None, skip: int = 0, limit: int = 100) -> List[Department]:
@@ -69,12 +74,15 @@ def get_active_departments(db: Session, tenant_id: UUID, entity_id: Optional[UUI
     return query.offset(skip).limit(limit).all()
 
 
-def get_all_departments(db: Session, skip: int = 0, limit: int = 100) -> List[Department]:
+def get_all_departments(
+    db: Session, skip: int = 0, limit: int = 100,
+    scoped_ids: Optional[List[UUID]] = None,
+) -> List[Department]:
     """Get all departments with pagination"""
-    departments = db.query(Department).filter(
-        Department.is_deleted == False
-    ).offset(skip).limit(limit).all()
-    return departments
+    query = db.query(Department).filter(Department.is_deleted == False)
+    if scoped_ids is not None:
+        query = query.filter(Department.department_id.in_(scoped_ids))
+    return query.offset(skip).limit(limit).all()
 
 
 def create_department(

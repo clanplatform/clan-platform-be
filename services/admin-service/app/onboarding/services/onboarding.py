@@ -6,27 +6,27 @@ Flow (POST):
   1. Create the tenant row in the MASTER db and provision its dedicated DB.
   2. In the TENANT db: seed the tenant row (so FKs / get_tenant resolve) and the
      owner admin user, then create branches -> departments -> divisions ->
-     job codes -> roles -> users, resolving each child to its parent by the
-     0-based array index carried in the payload.
+     job codes -> roles -> user_groups -> users, resolving each child to its
+     parent by the client-supplied UUID carried in the payload.
 
-Reuse: branches/departments/divisions/job codes go through the existing per-record
-services (validation, locale derivation, audit). Roles and users are written
-directly (they only need the small subset the step form collects).
+Reuse: branches/departments/divisions/job codes/user_groups go through the
+existing per-record services (validation, locale derivation, audit). Roles
+and users are written directly (they only need the small subset the step
+form collects).
 
 Atomicity: the per-record services commit as they go, so this is NOT a single
-transaction. On failure after the tenant is created, the tenant is marked
-onboarding_status='failed' and the error is surfaced; the (empty/partial) client
-can be retried or deleted.
+transaction. On failure after the tenant is created, the error is surfaced
+and the (empty/partial) client can be retried or deleted.
 """
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, generate_temp_password
 from app.infrastructure.database.tenant_db_manager import tenant_db_manager
 
 from app.tenants.models.tenants import Tenant
@@ -48,12 +48,17 @@ from app.job_codes.schemas.job_codes import (
     JobCodeSkillsCreate,
 )
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic
+from app.user_role.services.user_role import UserRoleService
+from app.users_groups.models.users_groups import UserGroup
+from app.users_groups.services.users_groups import create_user_group
+from app.users_groups.schemas.users_groups import UserGroupCreate
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic
 from app.subscription.models.subscription import Subscription
 from app.subscription.services.subscription import create_subscription
 from app.security.models.security import Security
 from app.security.services.security import create_security
 
+from app.onboarding.models.onboarding import OnboardingDraft
 from app.onboarding.schemas.onboarding import (
     OnboardingRequest,
     OnboardingCompanyUpdate,
@@ -61,6 +66,11 @@ from app.onboarding.schemas.onboarding import (
     OnboardingDetail,
     OnboardingSummary,
     OnboardingListResponse,
+    OnboardingDraftSummary,
+    OnboardingDraftDetail,
+    OnboardingDraftListResponse,
+    OnboardingStepProgress,
+    OnboardingProgress,
     _NamedRef,
 )
 from app.onboarding.exceptions import (
@@ -69,6 +79,7 @@ from app.onboarding.exceptions import (
     OnboardingDuplicateError,
     TenantProvisioningError,
     OnboardingNotFoundError,
+    OnboardingDraftNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,12 +93,22 @@ def _safe_uuid(value) -> Optional[UUID]:
 
 
 def _validate_indices(payload: OnboardingRequest) -> None:
-    """Fail fast (422) if any child references an unknown parent UUID.
+    """Fail fast (422) if any child references an out-of-range index into a
+    parent array.
 
-    Every created record carries a client-supplied UUID (branches[].entity_id,
-    departments[].department_id, divisions[].id, roles[].id). Those ids must be
-    unique within each list, and every reference must point at one of them —
-    both are validated here by set membership.
+    branches[], departments[], divisions[] and roles[] carry a client-supplied
+    UUID (branches[].entity_id, departments[].department_id,
+    divisions[].division_id, roles[].role_id) — those must be unique within
+    their list, and departments[].entity_id / divisions[].entity_id /
+    divisions[].department_id / job_codes[].entity_id /
+    job_codes[].department_id / job_codes[].division_id /
+    users_groups[].default_role_id must point at one of them, validated here
+    by set membership. roles[].role_code also doubles as a natural key (also
+    validated for uniqueness here) so roles[].parent_role can reference a
+    sibling role by role_code instead of by role_id. users and users_groups
+    have no client-supplied id of their own; children reference a parent by
+    its 0-based position in that parent's array instead — every such index is
+    validated here as in-bounds.
     """
     branch_ids = [b.entity_id for b in payload.branches]
     branch_id_set = set(branch_ids)
@@ -99,15 +120,29 @@ def _validate_indices(payload: OnboardingRequest) -> None:
     if len(department_id_set) != len(department_ids):
         raise OnboardingDuplicateError("departments[].department_id")
 
-    division_ids = [dv.id for dv in payload.divisions]
+    division_ids = [dv.division_id for dv in payload.divisions]
     division_id_set = set(division_ids)
     if len(division_id_set) != len(division_ids):
-        raise OnboardingDuplicateError("divisions[].id")
+        raise OnboardingDuplicateError("divisions[].division_id")
 
-    role_ids = [r.id for r in payload.roles]
+    role_ids = [r.role_id for r in payload.roles]
     role_id_set = set(role_ids)
     if len(role_id_set) != len(role_ids):
-        raise OnboardingDuplicateError("roles[].id")
+        raise OnboardingDuplicateError("roles[].role_id")
+
+    role_codes = [r.role_code for r in payload.roles]
+    role_code_set = set(role_codes)
+    if len(role_code_set) != len(role_codes):
+        raise OnboardingDuplicateError("roles[].role_code")
+
+    branch_count = len(payload.branches)
+    job_code_count = len(payload.job_codes)
+    role_count = len(payload.roles)
+    user_group_count = len(payload.users_groups)
+
+    def _check_index(where: str, index: Optional[int], count: int, target: str) -> None:
+        if index is not None and not (0 <= index < count):
+            raise OnboardingUnknownReferenceError(where, index, target)
 
     for i, d in enumerate(payload.departments):
         if d.entity_id not in branch_id_set:
@@ -125,13 +160,17 @@ def _validate_indices(payload: OnboardingRequest) -> None:
         if j.division_id not in division_id_set:
             raise OnboardingUnknownReferenceError(f"job_codes[{i}]", j.division_id, "divisions")
     for i, r in enumerate(payload.roles):
-        if r.parent_role_id is not None and r.parent_role_id not in role_id_set:
-            raise OnboardingUnknownReferenceError(f"roles[{i}]", r.parent_role_id, "roles")
+        if r.parent_role is not None and r.parent_role not in role_code_set:
+            raise OnboardingUnknownReferenceError(f"roles[{i}]", r.parent_role, "roles")
+    for i, g in enumerate(payload.users_groups):
+        if g.default_role_id is not None and g.default_role_id not in role_id_set:
+            raise OnboardingUnknownReferenceError(f"users_groups[{i}]", g.default_role_id, "roles")
     for i, u in enumerate(payload.users):
-        if u.role_id is not None and u.role_id not in role_id_set:
-            raise OnboardingUnknownReferenceError(f"users[{i}]", u.role_id, "roles")
-        if u.entity_id is not None and u.entity_id not in branch_id_set:
-            raise OnboardingUnknownReferenceError(f"users[{i}]", u.entity_id, "branches")
+        _check_index(f"users[{i}]", u.role_index, role_count, "roles")
+        for eidx in (u.entity_indices or []):
+            _check_index(f"users[{i}]", eidx, branch_count, "branches")
+        _check_index(f"users[{i}]", u.job_code_index, job_code_count, "job_codes")
+        _check_index(f"users[{i}]", u.user_group_index, user_group_count, "users_groups")
 
 
 def _split_full_name(full_name: Optional[str]) -> Tuple[str, str]:
@@ -163,16 +202,35 @@ def _create_user_row(
     password: str,
     tenant_id: UUID,
     phone: Optional[str] = None,
+    profile_image_url: Optional[str] = None,
     status: str = "active",
     role_id: Optional[UUID] = None,
-    entity_id: Optional[UUID] = None,
+    entity_id: Optional[List[UUID]] = None,
+    job_code_id: Optional[UUID] = None,
     user_group_id: Optional[UUID] = None,
     send_invite_email: bool = False,
 ) -> Tuple[UUID, UUID]:
-    """Create user_setup + usersetup_basic (+ optional role/entity assignment)."""
+    """Create user_setup + usersetup_basic (+ optional role/entity/job code assignment).
+
+    department_id/division_id are not accepted directly — they're derived
+    from job_code_id's jobcode_basicinfo row here (same rule as the direct
+    user_setup CRUD's UserSetupService._derive_dept_division_from_job_code).
+    By this point in the onboarding sequence, job_codes have already been
+    created (step 5, before users at step 8), so the lookup resolves.
+    """
     user_setup = UserSetup()
     tenant_db.add(user_setup)
     tenant_db.flush()
+
+    department_id, division_id = None, None
+    if job_code_id is not None:
+        from app.job_codes.models.job_codes import JobCodeBasicInfo
+        info = tenant_db.query(
+            JobCodeBasicInfo.department_id, JobCodeBasicInfo.division_id
+        ).filter(JobCodeBasicInfo.job_code_id == job_code_id).first()
+        if info:
+            department_id = [info.department_id] if info.department_id else None
+            division_id = [info.division_id] if info.division_id else None
 
     basic = UserSetupBasic(
         user_setup_id=user_setup.id,
@@ -183,10 +241,13 @@ def _create_user_row(
         email=email,
         password_hash=get_password_hash(password),
         phone_number=phone,
+        profile_image_url=profile_image_url,
         status=status or "active",
         tenant_id=tenant_id,
-        entities=[entity_id] if entity_id else None,
-        default_entity=entity_id,
+        entity_id=entity_id,
+        department_id=department_id,
+        division_id=division_id,
+        job_code_id=job_code_id,
         role_id=role_id,
         user_group_id=user_group_id,
         send_invite_email=send_invite_email,
@@ -198,21 +259,17 @@ def _create_user_row(
     return user_setup.id, basic.id
 
 
-def _mark_status(master_db: Session, tenant: Tenant, status: str) -> None:
-    try:
-        tenant.onboarding_status = status
-        master_db.commit()
-    except Exception:
-        master_db.rollback()
-
-
 def create_onboarding(
     master_db: Session,
     payload: OnboardingRequest,
     created_by_user_id: Optional[str] = None,
-) -> Tuple[Tenant, OnboardingCounts]:
-    """Create the tenant + its whole org structure. Returns (tenant, counts)."""
+) -> Tuple[Tenant, OnboardingCounts, str]:
+    """Create the tenant + its whole org structure. Returns (tenant, counts, temp_password)."""
     company = payload.company
+    # The owner's password is never accepted from the caller — always
+    # randomly generated here, used to seed the actual login below, and
+    # returned once so the caller can hand it to the owner.
+    temp_password = generate_temp_password()
 
     # Duplicate guard (master DB)
     if master_db.query(Tenant).filter(Tenant.tenant_name == company.client_name).first():
@@ -259,8 +316,10 @@ def create_onboarding(
         company_logo=company.company_logo,
         owner_name=company.owner_name,
         owner_email=company.owner_email,
-        onboarding_status="in_progress",
-        is_active=(company.status or "active").strip().lower() == "active",
+        owner_password_hash=get_password_hash(temp_password),
+        # Active/Trial/Pending setup, as selected on the account-status step.
+        initial_status=company.initial_status,
+        is_active=(company.initial_status or "active").strip().lower() == "active",
         created_by=_safe_uuid(created_by_user_id),
     )
     master_db.add(tenant)
@@ -270,13 +329,11 @@ def create_onboarding(
     # The DB name is derived from tenant_code (Tenant.tenant_db_name is a computed
     # property) — a client code is required to provision the dedicated database.
     if not tenant.tenant_db_name:
-        _mark_status(master_db, tenant, "failed")
         raise TenantProvisioningError()
 
     # 2. Provision the tenant's dedicated database (CREATE DB + all tables)
     ok = tenant_db_manager.provision(tenant.tenant_db_name, settings.DATABASE_URL, None)
     if not ok:
-        _mark_status(master_db, tenant, "failed")
         raise TenantProvisioningError(tenant.tenant_db_name)
 
     tenant_db = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
@@ -297,13 +354,16 @@ def create_onboarding(
             employee_id=f"OWNER-{code}",
             username=company.owner_email.split("@")[0],
             email=company.owner_email,
-            password=company.owner_password,
+            password=temp_password,
             tenant_id=tenant_id,
         )
         counts.users += 1
 
         # 3. Branches (entities) — created with the client-supplied entity_id so
-        #    children can reference them by that UUID.
+        #    departments/divisions/job_codes can reference them by that UUID
+        #    directly; users[].entity_indices still resolves via
+        #    branch_ids[index], which this same list also serves (in
+        #    payload.branches order).
         branch_ids: List[UUID] = []
         for b in payload.branches:
             entity = create_entity(
@@ -350,8 +410,8 @@ def create_onboarding(
                 tenant_db,
                 DepartmentCreate(
                     department_name=d.department_name,
-                    # d.entity_id is the branch's client-supplied UUID (validated
-                    # to exist among branches) — used directly.
+                    # d.entity_id is the branch's client-supplied UUID
+                    # (validated to exist among branches) — used directly.
                     entity_id=d.entity_id,
                     department_code=d.department_code,
                     department_type=d.department_type,
@@ -378,9 +438,10 @@ def create_onboarding(
                 DivisionCreate(
                     division_name=dv.division_name,
                     division_code=dv.division_code,
+                    # dv.entity_id / dv.department_id are the branch's and
+                    # department's client-supplied UUIDs (validated to exist
+                    # among branches/departments) — used directly.
                     entity_id=dv.entity_id,
-                    # dv.department_id is a department's client-supplied UUID
-                    # (validated to exist among departments) — used directly.
                     department_id=dv.department_id,
                     division_head=dv.division_head,
                     hierarchy_level=dv.hierarchy_level,
@@ -388,19 +449,24 @@ def create_onboarding(
                 ),
                 tenant_id=tenant_id,
                 user_id=_safe_uuid(created_by_user_id),
-                division_id=dv.id,
+                division_id=dv.division_id,
             )
             division_ids.append(division.id)
         counts.divisions = len(division_ids)
 
         # 6. Job codes
+        job_code_ids: List[UUID] = []
         for j in payload.job_codes:
-            create_job_code(
+            job_code = create_job_code(
                 tenant_db,
                 JobCodeCreate(
                     job_code=j.job_code,
                     job_title=j.job_title,
                     basic_info=JobCodeBasicInfoCreate(
+                        # j.entity_id / j.department_id / j.division_id are the
+                        # branch's, department's and division's client-supplied
+                        # UUIDs (validated to exist among branches/departments/
+                        # divisions) — used directly.
                         entity_id=j.entity_id,
                         department_id=j.department_id,
                         division_id=j.division_id,
@@ -424,31 +490,56 @@ def create_onboarding(
                 tenant_id=tenant_id,
                 user_id=_safe_uuid(created_by_user_id),
             )
-        counts.job_codes = len(payload.job_codes)
+            job_code_ids.append(job_code.id)
+        counts.job_codes = len(job_code_ids)
 
-        # 7. Roles
+        # 7. Roles (+ their userrole_permission — Menu/Form/Button access).
+        # Two passes: parent_role may point at any role regardless of array
+        # order (including one later in the array), so every UserRoleMain
+        # (and its real id) must exist before any UserRoleBasic sets
+        # parent_role_id.
         role_ids: List[UUID] = []
-        admin_role_id: Optional[UUID] = None
+        role_mains: List[UserRoleMain] = []
+        role_code_to_id: Dict[str, UUID] = {}
         for r in payload.roles:
-            # Client supplies the role's UUID (user_role.id) so parent_role_id and
-            # users[].role_id can reference it in the same request.
-            main = UserRoleMain(id=r.id)
+            # r.role_id is the client-supplied UUID (users_groups reference it
+            # directly as default_role_id) — used as UserRoleMain's real pk.
+            main = UserRoleMain(id=r.role_id)
             tenant_db.add(main)
             tenant_db.flush()
-            tenant_db.add(UserRoleBasic(
+            role_mains.append(main)
+            role_ids.append(main.id)
+            role_code_to_id[r.role_code] = main.id
+
+        admin_role_id: Optional[UUID] = None
+        for r, main in zip(payload.roles, role_mains):
+            basic = UserRoleBasic(
                 user_role_id=main.id,
                 tenant_id=tenant_id,
                 role_name=r.role_name,
                 role_code=r.role_code,
                 description=r.description,
                 role_level=r.role_level,
-                parent_role_id=r.parent_role_id,
+                # r.parent_role is the parent's role_code (validated to exist
+                # among roles[] in _validate_indices); resolved to that
+                # role's real id via the map built above.
+                parent_role_id=(
+                    role_code_to_id.get(r.parent_role)
+                    if r.parent_role is not None else None
+                ),
                 access_scope=r.access_scope,
                 is_admin=r.is_admin,
                 default_for_new_users=r.default_for_new_users,
                 active=r.active,
-            ))
-            role_ids.append(main.id)
+            )
+            tenant_db.add(basic)
+            tenant_db.flush()  # Get basic.id for the permission rows below
+
+            for perm_data in (r.permissions or []):
+                tenant_db.add(
+                    UserRoleService.build_permission_row(tenant_db, perm_data, main.id, basic.id)
+                )
+
             if admin_role_id is None and r.is_admin:
                 admin_role_id = main.id
         if role_ids:
@@ -462,7 +553,26 @@ def create_onboarding(
                 owner_basic.role_id = admin_role_id
                 tenant_db.commit()
 
-        # 8. Users
+        # 8. User groups
+        user_group_ids: List[UUID] = []
+        for g in payload.users_groups:
+            group = create_user_group(
+                tenant_db,
+                UserGroupCreate(
+                    group_name=g.group_name,
+                    group_code=g.group_code,
+                    # g.default_role_id is the role's client-supplied UUID
+                    # (validated to exist among roles[]) — used directly.
+                    default_role_id=g.default_role_id,
+                    description=g.description,
+                ),
+                tenant_id=tenant_id,
+                user_id=_safe_uuid(created_by_user_id),
+            )
+            user_group_ids.append(group.id)
+        counts.users_groups = len(user_group_ids)
+
+        # 9. Users
         for u in payload.users:
             _create_user_row(
                 tenant_db,
@@ -474,15 +584,17 @@ def create_onboarding(
                 password=u.password,
                 tenant_id=tenant_id,
                 phone=u.phone,
+                profile_image_url=u.profile_image_url,
                 status=u.status or "active",
-                role_id=u.role_id,
-                entity_id=u.entity_id,
-                user_group_id=u.user_group_id,
+                role_id=role_ids[u.role_index] if u.role_index is not None else None,
+                entity_id=[branch_ids[idx] for idx in u.entity_indices] if u.entity_indices else None,
+                job_code_id=job_code_ids[u.job_code_index] if u.job_code_index is not None else None,
+                user_group_id=user_group_ids[u.user_group_index] if u.user_group_index is not None else None,
                 send_invite_email=u.send_invite_email,
             )
             counts.users += 1
 
-        # 9. Subscription plan (optional; one per client)
+        # 10. Subscription plan (optional; one per client)
         if payload.subscription is not None:
             create_subscription(
                 tenant_db,
@@ -492,7 +604,7 @@ def create_onboarding(
             )
             counts.subscription = 1
 
-        # 10. Security settings (optional; one per client)
+        # 11. Security settings (optional; one per client)
         if payload.security is not None:
             create_security(
                 tenant_db,
@@ -504,14 +616,12 @@ def create_onboarding(
 
     except Exception:
         tenant_db.rollback()
-        _mark_status(master_db, tenant, "failed")
         raise
     finally:
         tenant_db.close()
 
-    _mark_status(master_db, tenant, "completed")
     master_db.refresh(tenant)
-    return tenant, counts
+    return tenant, counts, temp_password
 
 
 def list_onboardings(
@@ -546,6 +656,7 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
     divisions: List[_NamedRef] = []
     job_codes: List[_NamedRef] = []
     roles: List[_NamedRef] = []
+    users_groups: List[_NamedRef] = []
     users: List[_NamedRef] = []
     subscription_count = 0
     security_count = 0
@@ -573,6 +684,10 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
                 _NamedRef(id=r.id, name=r.role_name, code=r.role_code)
                 for r in tdb.query(UserRoleBasic).all()
             ]
+            users_groups = [
+                _NamedRef(id=g.id, name=g.group_name, code=g.group_code)
+                for g in tdb.query(UserGroup).filter(UserGroup.deleted_at.is_(None)).all()
+            ]
             users = [
                 _NamedRef(id=u.id, name=f"{u.firstname} {u.lastname}".strip(), code=u.email)
                 for u in tdb.query(UserSetupBasic).all()
@@ -587,6 +702,7 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
     counts.divisions = len(divisions)
     counts.job_codes = len(job_codes)
     counts.roles = len(roles)
+    counts.users_groups = len(users_groups)
     counts.users = len(users)
     counts.subscription = subscription_count
     counts.security = security_count
@@ -596,7 +712,7 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
         client_name=tenant.tenant_name,
         client_code=tenant.tenant_code,
         contact_email=tenant.contact_email,
-        onboarding_status=tenant.onboarding_status,
+        initial_status=tenant.initial_status,
         is_active=tenant.is_active,
         tenant_db_name=tenant.tenant_db_name,
         counts=counts,
@@ -605,8 +721,109 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
         divisions=divisions,
         job_codes=job_codes,
         roles=roles,
+        users_groups=users_groups,
         users=users,
     )
+
+
+# The 10 onboarding steps, in wizard order.
+_PROGRESS_STEPS = [
+    ("company", "Company"),
+    ("branches", "Branches"),
+    ("departments", "Departments"),
+    ("divisions", "Divisions"),
+    ("job_codes", "Job Codes"),
+    ("roles", "Roles"),
+    ("users_groups", "User Groups"),
+    ("users", "Users"),
+    ("subscription", "Subscription"),
+    ("security", "Security"),
+]
+
+# The subset of steps required before a draft auto-finalizes into a real
+# tenant (see save_or_create_onboarding). subscription/security are
+# deliberately excluded — they stay optional and never block finalizing.
+_REQUIRED_FOR_FINALIZE = {"company", "branches", "departments", "divisions", "job_codes", "roles", "users_groups", "users"}
+
+
+def _build_progress(step_counts: Dict[str, int], tenant_id: Optional[UUID]) -> OnboardingProgress:
+    """Shared step/completed/next_step assembly for both the DB-backed
+    (get_onboarding_progress) and payload-based (compute_payload_progress)
+    progress views."""
+    steps: List[OnboardingStepProgress] = []
+    next_step: Optional[str] = None
+    completed_steps = 0
+    for key, label in _PROGRESS_STEPS:
+        if key == "company":
+            completed, count = True, 1
+        else:
+            count = step_counts[key]
+            completed = count > 0
+        steps.append(OnboardingStepProgress(step=key, label=label, completed=completed, count=count))
+        if completed:
+            completed_steps += 1
+        elif next_step is None:
+            next_step = key
+
+    return OnboardingProgress(
+        tenant_id=tenant_id,
+        steps=steps,
+        completed_steps=completed_steps,
+        total_steps=len(_PROGRESS_STEPS),
+        next_step=next_step,
+    )
+
+
+def get_onboarding_progress(master_db: Session, tenant_id: UUID) -> OnboardingProgress:
+    """Which of the 10 onboarding steps have at least one record yet, and
+    which to continue with next — powers a 'resume onboarding' wizard.
+
+    company is always complete once the tenant row exists; every other step
+    is complete once its tenant-DB table has at least one row.
+    """
+    tenant = master_db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    if not tenant:
+        raise OnboardingNotFoundError()
+
+    step_counts: Dict[str, int] = {key: 0 for key, _ in _PROGRESS_STEPS if key != "company"}
+    if tenant.tenant_db_name:
+        tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
+        try:
+            step_counts["branches"] = tdb.query(Entity).filter(Entity.deleted == False).count()  # noqa: E712
+            step_counts["departments"] = tdb.query(Department).filter(Department.is_deleted == False).count()  # noqa: E712
+            step_counts["divisions"] = tdb.query(Division).filter(Division.deleted_at.is_(None)).count()
+            step_counts["job_codes"] = tdb.query(JobCode).filter(JobCode.deleted_at.is_(None)).count()
+            step_counts["roles"] = tdb.query(UserRoleBasic).count()
+            step_counts["users_groups"] = tdb.query(UserGroup).filter(UserGroup.deleted_at.is_(None)).count()
+            step_counts["users"] = tdb.query(UserSetupBasic).count()
+            step_counts["subscription"] = tdb.query(Subscription).count()
+            step_counts["security"] = tdb.query(Security).count()
+        finally:
+            tdb.close()
+
+    return _build_progress(step_counts, tenant.tenant_id)
+
+
+def compute_payload_progress(payload: OnboardingRequest) -> OnboardingProgress:
+    """Same 10-step shape as get_onboarding_progress(), computed directly
+    from a submitted (not-yet-created) payload — no tenant/DB lookup."""
+    step_counts = {
+        "branches": len(payload.branches),
+        "departments": len(payload.departments),
+        "divisions": len(payload.divisions),
+        "job_codes": len(payload.job_codes),
+        "roles": len(payload.roles),
+        "users_groups": len(payload.users_groups),
+        "users": len(payload.users),
+        "subscription": 1 if payload.subscription is not None else 0,
+        "security": 1 if payload.security is not None else 0,
+    }
+    return _build_progress(step_counts, tenant_id=None)
+
+
+def is_progress_complete(progress: OnboardingProgress) -> bool:
+    """True once every step in _REQUIRED_FOR_FINALIZE has data."""
+    return all(s.completed for s in progress.steps if s.step in _REQUIRED_FOR_FINALIZE)
 
 
 # Map OnboardingCompanyUpdate field -> Tenant column
@@ -658,5 +875,95 @@ def delete_onboarding(master_db: Session, tenant_id: UUID) -> bool:
         raise OnboardingNotFoundError()
     tenant.is_active = False
     tenant.deleted_at = datetime.now(timezone.utc)
+    master_db.commit()
+    return True
+
+
+# ============================================================================
+# Drafts — auto-saved when POST /onboarding/ fails partway
+# ============================================================================
+
+def save_onboarding_draft(
+    master_db: Session,
+    draft_id: UUID,
+    payload_dict: dict,
+    error_message: str,
+    created_by: Optional[str] = None,
+) -> None:
+    """Upsert the submitted payload under draft_id after a failed onboarding attempt.
+
+    Best-effort: never raises — a failure here must not mask the original
+    error the caller is already handling.
+    """
+    try:
+        draft = master_db.query(OnboardingDraft).filter(
+            OnboardingDraft.draft_id == draft_id
+        ).first()
+        if draft is None:
+            draft = OnboardingDraft(draft_id=draft_id, payload=payload_dict)
+            master_db.add(draft)
+        else:
+            draft.payload = payload_dict
+        draft.error_message = error_message
+        draft.status = "draft"
+        draft.created_by = _safe_uuid(created_by)
+        master_db.commit()
+    except Exception:
+        logger.warning("Failed to save onboarding draft %s", draft_id, exc_info=True)
+        master_db.rollback()
+
+
+def mark_draft_completed(master_db: Session, draft_id: UUID, tenant_id: UUID) -> None:
+    """Mark a draft as completed once its draft_id successfully onboards.
+
+    Best-effort — the tenant is already created either way.
+    """
+    try:
+        draft = master_db.query(OnboardingDraft).filter(
+            OnboardingDraft.draft_id == draft_id
+        ).first()
+        if draft is not None:
+            draft.status = "completed"
+            draft.tenant_id = tenant_id
+            master_db.commit()
+    except Exception:
+        logger.warning("Failed to mark onboarding draft %s completed", draft_id, exc_info=True)
+        master_db.rollback()
+
+
+def list_drafts(
+    master_db: Session,
+    page: int = 1,
+    size: int = 10,
+    status_filter: Optional[str] = None,
+) -> OnboardingDraftListResponse:
+    """List saved onboarding drafts, newest first."""
+    query = master_db.query(OnboardingDraft)
+    if status_filter:
+        query = query.filter(OnboardingDraft.status == status_filter)
+    total = query.count()
+    rows = query.order_by(OnboardingDraft.updated_at.desc()).offset((page - 1) * size).limit(size).all()
+    return OnboardingDraftListResponse(
+        data=[OnboardingDraftSummary.model_validate(r) for r in rows],
+        total=total,
+        page=page,
+        per_page=size,
+    )
+
+
+def get_draft(master_db: Session, draft_id: UUID) -> OnboardingDraftDetail:
+    """Return a saved draft's payload, for resuming the step form."""
+    draft = master_db.query(OnboardingDraft).filter(OnboardingDraft.draft_id == draft_id).first()
+    if not draft:
+        raise OnboardingDraftNotFoundError()
+    return OnboardingDraftDetail.model_validate(draft)
+
+
+def delete_draft(master_db: Session, draft_id: UUID) -> bool:
+    """Discard a saved draft."""
+    draft = master_db.query(OnboardingDraft).filter(OnboardingDraft.draft_id == draft_id).first()
+    if not draft:
+        raise OnboardingDraftNotFoundError()
+    master_db.delete(draft)
     master_db.commit()
     return True

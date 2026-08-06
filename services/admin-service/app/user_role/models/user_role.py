@@ -1,5 +1,5 @@
-from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey, Integer, Time, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
+from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,7 +22,6 @@ class UserRoleMain(Base):
     # Child relationships
     basic = relationship("UserRoleBasic", back_populates="user_role_main", cascade="all, delete-orphan", uselist=False)
     permissions = relationship("UserRolePermission", back_populates="user_role_main", cascade="all, delete-orphan")
-    conditionals = relationship("UserRoleConditional", back_populates="user_role_main", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<UserRoleMain(id={self.id})>"
@@ -49,7 +48,10 @@ class UserRoleBasic(Base):
     description = Column(Text, nullable=True)
     role_level = Column(Integer, nullable=False, default=1)
     parent_role_id = Column(UUID(as_uuid=True), nullable=True)   # user_role.id of the parent role (Reports to)
-    access_scope = Column(String(50), nullable=True)             # Access scope
+    # What this role's permissions apply against: whole_organization,
+    # branch_entity, department, or division. Enforced at the API layer
+    # (see ACCESS_SCOPE_VALUES in schemas/user_role.py).
+    access_scope = Column(String(50), nullable=True)
     is_admin = Column(Boolean, default=False, nullable=False)  # Admin role flag
     default_for_new_users = Column(Boolean, default=False, nullable=False, server_default='false')
     active = Column(Boolean, default=True, nullable=False)
@@ -108,44 +110,4 @@ class UserRolePermission(Base):
 
     def __repr__(self):
         return f"<UserRolePermission(id={self.id}, userrole_basic_id={self.userrole_basic_id}, menu_access={self.menu_access})>"
-
-
-class UserRoleConditional(Base):
-    """
-    User role conditional access table (child table 3).
-    Stores time-based and IP-based access restrictions for user roles.
-    References user_role.id, userrole_permission.id, and userrole_basic.id as foreign keys.
-    """
-    __tablename__ = "userrole_conditional"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_role_id = Column(UUID(as_uuid=True), ForeignKey("user_role.id", ondelete="CASCADE"), nullable=False)
-    userrole_permission_id = Column(UUID(as_uuid=True), ForeignKey("userrole_permission.id", ondelete="CASCADE"), nullable=False)
-    userrole_basic_id = Column(UUID(as_uuid=True), ForeignKey("userrole_basic.id", ondelete="CASCADE"), nullable=False)
-
-    # Time-based restrictions
-    enable_time = Column(Boolean, default=False, nullable=False)
-    allowtime_start = Column(Time, nullable=True)
-    allowtime_end = Column(Time, nullable=True)
-    allow_days = Column(ARRAY(String), nullable=True)  # Array of day names: ['Monday', 'Tuesday', ...]
-
-    # IP-based restrictions
-    ip_restric = Column(Boolean, default=False, nullable=False)  # Enable IP restriction
-    aip = Column(String(45), nullable=True)  # IP address A (supports IPv4 and IPv6)
-    bip = Column(String(45), nullable=True)  # IP address B (for range)
-
-    # Other restrictions
-    enable_restric = Column(Boolean, default=False, nullable=False)  # General restriction enable flag
-    required_reg = Column(Boolean, default=False, nullable=False)  # Require registration
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    # Relationships
-    user_role_main = relationship("UserRoleMain", back_populates="conditionals")
-    userrole_permission = relationship("UserRolePermission", backref="conditionals")
-    userrole_basic = relationship("UserRoleBasic", backref="conditionals")
-
-    def __repr__(self):
-        return f"<UserRoleConditional(id={self.id}, user_role_id={self.user_role_id}, enable_time={self.enable_time}, ip_restric={self.ip_restric})>"
 

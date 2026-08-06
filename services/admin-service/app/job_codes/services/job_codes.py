@@ -2,7 +2,7 @@
 JobCode Service Layer
 
 This module contains all business logic for JobCode operations including
-CRUD operations with nested relationships (basic_info, skills, benefits).
+CRUD operations with nested relationships (basic_info, skills).
 """
 
 from sqlalchemy.orm import Session, joinedload
@@ -13,7 +13,7 @@ from uuid import UUID
 from datetime import datetime, timedelta, timezone
 import logging
 
-from app.job_codes.models.job_codes import JobCode, JobCodeBasicInfo, JobCodeSkills, JobCodeBenefits
+from app.job_codes.models.job_codes import JobCode, JobCodeBasicInfo, JobCodeSkills
 from app.job_codes.schemas.job_codes import JobCodeCreate, JobCodeUpdate
 from app.job_codes.exceptions import JobCodeNotFoundError, DuplicateJobCodeError
 from app.infrastructure.audit_tenant import fire_audit_log
@@ -27,7 +27,7 @@ JOB_CODE_RETENTION_DAYS = 30
 def purge_expired_job_codes(db: Session, retention_days: int = JOB_CODE_RETENTION_DAYS) -> int:
     """
     Permanently delete job codes that were soft-deleted more than
-    retention_days ago (cascade removes basic_info/skills/benefits).
+    retention_days ago (cascade removes basic_info/skills).
 
     Called opportunistically from delete/list operations so no scheduler is
     needed. Best-effort: failures are logged and never break the caller.
@@ -70,8 +70,7 @@ def get_job_code_by_id(db: Session, job_code_id: UUID, load_relationships: bool 
     if load_relationships:
         query = query.options(
             joinedload(JobCode.basic_info),
-            joinedload(JobCode.skills),
-            joinedload(JobCode.benefits)
+            joinedload(JobCode.skills)
         )
     
     return query.filter(
@@ -97,8 +96,7 @@ def get_job_code_by_code(db: Session, job_code: str, load_relationships: bool = 
     if load_relationships:
         query = query.options(
             joinedload(JobCode.basic_info),
-            joinedload(JobCode.skills),
-            joinedload(JobCode.benefits)
+            joinedload(JobCode.skills)
         )
     
     return query.filter(
@@ -112,20 +110,18 @@ def get_job_codes_paginated(
     page: int = 1,
     size: int = 10,
     search: Optional[str] = None,
-    category: Optional[str] = None,
     active_status: Optional[bool] = None
 ) -> Tuple[List[JobCode], int]:
     """
     Get paginated list of job codes with optional filtering
-    
+
     Args:
         db: Database session
         page: Page number (1-indexed)
         size: Number of items per page
         search: Search term for job_code or job_title
-        category: Filter by category
         active_status: Filter by active status
-    
+
     Returns:
         Tuple of (job_codes list, total count)
     """
@@ -135,8 +131,7 @@ def get_job_codes_paginated(
     # Base query with relationships (soft-deleted rows excluded)
     query = db.query(JobCode).options(
         joinedload(JobCode.basic_info),
-        joinedload(JobCode.skills),
-        joinedload(JobCode.benefits)
+        joinedload(JobCode.skills)
     ).filter(JobCode.deleted_at.is_(None))
 
     # Apply filters
@@ -147,12 +142,7 @@ def get_job_codes_paginated(
                 JobCode.job_title.ilike(f"%{search}%")
             )
         )
-    
-    if category:
-        query = query.join(JobCodeBasicInfo).filter(
-            JobCodeBasicInfo.category.ilike(f"%{category}%")
-        )
-    
+
     if active_status is not None:
         query = query.filter(JobCode.active_status == active_status)
     
@@ -171,6 +161,7 @@ def create_job_code(
     job_code_data: JobCodeCreate,
     tenant_id: Optional[UUID],
     user_id: Optional[UUID] = None,
+    job_code_id: Optional[UUID] = None,
 ) -> JobCode:
     """
     Create a new job code with optional nested relationships
@@ -182,6 +173,10 @@ def create_job_code(
             Persisted onto both job_codes and jobcode_basicinfo. None for
             master-DB users (token without a tenant_id).
         user_id: ID of user creating the record (for audit)
+        job_code_id: lets a caller supply the primary key (job_codes.id)
+            instead of letting the DB generate one (used by onboarding, where
+            the client generates job code UUIDs so users can reference them
+            in the same request). When None, the model's uuid4 default applies.
 
     Returns:
         Created JobCode object with all relationships
@@ -193,17 +188,20 @@ def create_job_code(
     existing = db.query(JobCode).filter(JobCode.job_code == job_code_data.job_code).first()
     if existing:
         raise DuplicateJobCodeError(job_code_data.job_code)
-    
+
     try:
         # Create main JobCode. tenant_id comes from the token, not the payload.
         # active_status is backend-operational (not in the schema) — always active
         # on create; delete/restore toggle it later.
-        job_code = JobCode(
-            job_code=job_code_data.job_code,
-            job_title=job_code_data.job_title,
-            active_status=True,
-            tenant_id=tenant_id
-        )
+        job_code_kwargs = {
+            "job_code": job_code_data.job_code,
+            "job_title": job_code_data.job_title,
+            "active_status": True,
+            "tenant_id": tenant_id,
+        }
+        if job_code_id is not None:
+            job_code_kwargs["id"] = job_code_id
+        job_code = JobCode(**job_code_kwargs)
 
         db.add(job_code)
         db.flush()  # Get the ID for nested relationships
@@ -276,7 +274,7 @@ def update_job_code(
         # Update main JobCode fields
         update_data = job_code_data.model_dump(
             exclude_unset=True,
-            exclude={'basic_info', 'skills', 'benefits'}
+            exclude={'basic_info', 'skills'}
         )
         for field, value in update_data.items():
             setattr(job_code, field, value)
@@ -537,18 +535,16 @@ def bulk_create_job_codes(
 def get_job_codes_count(
     db: Session,
     search: Optional[str] = None,
-    category: Optional[str] = None,
     active_status: Optional[bool] = None
 ) -> int:
     """
     Get count of job codes with optional filtering
-    
+
     Args:
         db: Database session
         search: Search term for job_code or job_title
-        category: Filter by category
         active_status: Filter by active status
-    
+
     Returns:
         Count of job codes matching filters
     """
@@ -561,12 +557,7 @@ def get_job_codes_count(
                 JobCode.job_title.ilike(f"%{search}%")
             )
         )
-    
-    if category:
-        query = query.join(JobCodeBasicInfo).filter(
-            JobCodeBasicInfo.category.ilike(f"%{category}%")
-        )
-    
+
     if active_status is not None:
         query = query.filter(JobCode.active_status == active_status)
     
@@ -593,39 +584,13 @@ def search_job_codes(
     """
     query = db.query(JobCode).options(
         joinedload(JobCode.basic_info),
-        joinedload(JobCode.skills),
-        joinedload(JobCode.benefits)
+        joinedload(JobCode.skills)
     ).filter(
         JobCode.deleted_at.is_(None),
         or_(
             JobCode.job_code.ilike(f"%{search_term}%"),
             JobCode.job_title.ilike(f"%{search_term}%")
         )
-    )
-
-    return query.offset(skip).limit(limit).all()
-
-
-def get_job_codes_by_category(db: Session, category: str, skip: int = 0, limit: int = 100) -> List[JobCode]:
-    """
-    Get job codes filtered by category
-    
-    Args:
-        db: Database session
-        category: Category to filter by
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-    
-    Returns:
-        List of JobCode objects in the category
-    """
-    query = db.query(JobCode).options(
-        joinedload(JobCode.basic_info),
-        joinedload(JobCode.skills),
-        joinedload(JobCode.benefits)
-    ).join(JobCodeBasicInfo).filter(
-        JobCode.deleted_at.is_(None),
-        JobCodeBasicInfo.category.ilike(f"%{category}%")
     )
 
     return query.offset(skip).limit(limit).all()
@@ -645,8 +610,7 @@ def get_active_job_codes(db: Session, skip: int = 0, limit: int = 100) -> List[J
     """
     query = db.query(JobCode).options(
         joinedload(JobCode.basic_info),
-        joinedload(JobCode.skills),
-        joinedload(JobCode.benefits)
+        joinedload(JobCode.skills)
     ).filter(JobCode.active_status == True)
     
     return query.offset(skip).limit(limit).all()

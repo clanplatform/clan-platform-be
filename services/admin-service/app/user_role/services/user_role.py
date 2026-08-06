@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
-from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.menus.models.menu import Menu
 from app.forms.models.forms import Form
@@ -14,8 +14,6 @@ from app.user_role.schemas.user_role import (
     UserRoleBasicUpdate,
     UserRolePermissionCreate,
     UserRolePermissionUpdate,
-    UserRoleConditionalCreate,
-    UserRoleConditionalUpdate,
     UserRoleCreateWithDetails,
     EntityReference,
     AvailableEntitiesResponse
@@ -23,11 +21,58 @@ from app.user_role.schemas.user_role import (
 
 
 class UserRoleService:
-    """Service for managing user roles and their permissions/conditionals"""
+    """Service for managing user roles and their permissions"""
 
     # ============================================================================
     # UserRoleBasic CRUD Operations
     # ============================================================================
+
+    @staticmethod
+    def _resolve_parent_role_id(
+        db: Session,
+        tenant_id: Optional[UUID],
+        parent_role_code: Optional[str],
+    ) -> Optional[UUID]:
+        """Resolve a parent role's role_code to its real user_role.id
+        (UserRoleMain.id) — parent_role_id references user_role.id, not
+        userrole_basic.id (see UserRoleBasic.parent_role_id).
+
+        Roles have no client-generated UUID, so 'parent_role' is accepted as the
+        parent's role_code (unique per tenant) instead of a raw id."""
+        if parent_role_code is None:
+            return None
+        parent = db.query(UserRoleBasic).filter(
+            UserRoleBasic.tenant_id == tenant_id,
+            UserRoleBasic.role_code == parent_role_code,
+        ).first()
+        if not parent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Parent role with role_code '{parent_role_code}' not found",
+            )
+        return parent.user_role_id
+
+    @staticmethod
+    def _resolve_parent_role_code(db: Session, parent_role_id: Optional[UUID]) -> Optional[str]:
+        """The parent role's role_code, for display in responses (reverse of
+        _resolve_parent_role_id). parent_role_id is a user_role.id (UserRoleMain.id)."""
+        if parent_role_id is None:
+            return None
+        parent = db.query(UserRoleBasic).filter(UserRoleBasic.user_role_id == parent_role_id).first()
+        return parent.role_code if parent else None
+
+    @staticmethod
+    def _attach_parent_role_codes(db: Session, roles: List[UserRoleBasic]) -> None:
+        """Batch-resolve parent_role (role_code) for a list of roles, avoiding N+1 queries."""
+        parent_ids = {r.parent_role_id for r in roles if r.parent_role_id}
+        code_by_user_role_id = {}
+        if parent_ids:
+            parents = db.query(UserRoleBasic.user_role_id, UserRoleBasic.role_code).filter(
+                UserRoleBasic.user_role_id.in_(parent_ids)
+            ).all()
+            code_by_user_role_id = {uid: code for uid, code in parents}
+        for r in roles:
+            r.parent_role = code_by_user_role_id.get(r.parent_role_id)
 
     @staticmethod
     def create_user_role(
@@ -46,15 +91,21 @@ class UserRoleService:
             db.add(db_user_role_main)
             db.flush()  # Get the ID without committing
 
+            role_dict = role_data.model_dump()
+            parent_role_code = role_dict.pop("parent_role", None)
+            parent_role_id = UserRoleService._resolve_parent_role_id(db, tenant_id, parent_role_code)
+
             # Create UserRoleBasic record with reference to parent
             db_role = UserRoleBasic(
                 user_role_id=db_user_role_main.id,
                 tenant_id=tenant_id,
-                **role_data.model_dump()
+                parent_role_id=parent_role_id,
+                **role_dict
             )
             db.add(db_role)
             db.commit()
             db.refresh(db_role)
+            db_role.parent_role = parent_role_code
             fire_audit_log(
                 action="CREATE", object_type="UserRole",
                 object_id=str(db_role.id),
@@ -81,18 +132,20 @@ class UserRoleService:
     @staticmethod
     def get_user_role(db: Session, role_id: UUID) -> Optional[UserRoleBasic]:
         """Get a user role by ID"""
-        return db.query(UserRoleBasic).filter(UserRoleBasic.id == role_id).first()
+        role = db.query(UserRoleBasic).filter(UserRoleBasic.id == role_id).first()
+        if role:
+            role.parent_role = UserRoleService._resolve_parent_role_code(db, role.parent_role_id)
+        return role
 
     @staticmethod
     def get_user_role_with_details(db: Session, role_id: UUID) -> Optional[UserRoleBasic]:
-        """Get a user role with all permissions and conditionals (role_id is UserRoleMain.id)"""
+        """Get a user role with all permissions (role_id is UserRoleMain.id)"""
         # Load the UserRoleMain with all relationships
         db_user_role_main = (
             db.query(UserRoleMain)
             .options(
                 joinedload(UserRoleMain.basic),
-                joinedload(UserRoleMain.permissions),
-                joinedload(UserRoleMain.conditionals)
+                joinedload(UserRoleMain.permissions)
             )
             .filter(UserRoleMain.id == role_id)
             .first()
@@ -101,6 +154,9 @@ class UserRoleService:
         if not db_user_role_main or not db_user_role_main.basic:
             return None
 
+        db_user_role_main.basic.parent_role = UserRoleService._resolve_parent_role_code(
+            db, db_user_role_main.basic.parent_role_id
+        )
         # Return the basic info with loaded relationships
         return db_user_role_main.basic
 
@@ -121,7 +177,9 @@ class UserRoleService:
         if active_only:
             query = query.filter(UserRoleBasic.active == True)
 
-        return query.offset(skip).limit(limit).all()
+        roles = query.offset(skip).limit(limit).all()
+        UserRoleService._attach_parent_role_codes(db, roles)
+        return roles
 
     @staticmethod
     def update_user_role(
@@ -137,11 +195,17 @@ class UserRoleService:
 
         try:
             update_data = role_data.model_dump(exclude_unset=True)
+            if "parent_role" in update_data:
+                parent_role_code = update_data.pop("parent_role")
+                update_data["parent_role_id"] = UserRoleService._resolve_parent_role_id(
+                    db, db_role.tenant_id, parent_role_code
+                )
             for field, value in update_data.items():
                 setattr(db_role, field, value)
-            
+
             db.commit()
             db.refresh(db_role)
+            db_role.parent_role = UserRoleService._resolve_parent_role_code(db, db_role.parent_role_id)
             fire_audit_log(
                 action="UPDATE", object_type="UserRole",
                 object_id=str(role_id),
@@ -164,7 +228,7 @@ class UserRoleService:
 
     @staticmethod
     def delete_user_role(db: Session, role_id: UUID) -> bool:
-        """Delete a user role (cascades to permissions and conditionals) - role_id is UserRoleMain.id"""
+        """Delete a user role (cascades to permissions) - role_id is UserRoleMain.id"""
         db_role_main = db.query(UserRoleMain).filter(UserRoleMain.id == role_id).first()
         
         if not db_role_main:
@@ -333,81 +397,56 @@ class UserRoleService:
         db.commit()
         return True
 
-    # ============================================================================
-    # UserRoleConditional CRUD Operations
-    # ============================================================================
-
     @staticmethod
-    def create_conditional(db: Session, conditional_data: UserRoleConditionalCreate) -> UserRoleConditional:
-        """Create a new conditional for a user role"""
-        # Verify the user role exists (check UserRoleMain parent table)
-        role = db.query(UserRoleMain).filter(UserRoleMain.id == conditional_data.user_role_id).first()
-        if not role:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User role with ID {conditional_data.user_role_id} not found"
-            )
-
-        # Verify the userrole_permission exists
-        permission = db.query(UserRolePermission).filter(UserRolePermission.id == conditional_data.userrole_permission_id).first()
-        if not permission:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User role permission with ID {conditional_data.userrole_permission_id} not found"
-            )
-
-        db_conditional = UserRoleConditional(**conditional_data.model_dump())
-        db.add(db_conditional)
-        db.commit()
-        db.refresh(db_conditional)
-        return db_conditional
-
-    @staticmethod
-    def get_conditionals_by_role(db: Session, role_id: UUID) -> List[UserRoleConditional]:
-        """Get all conditionals for a specific user role"""
-        return db.query(UserRoleConditional).filter(UserRoleConditional.user_role_id == role_id).all()
-
-    @staticmethod
-    def update_conditional(
+    def build_permission_row(
         db: Session,
-        conditional_id: UUID,
-        conditional_data: UserRoleConditionalUpdate
-    ) -> Optional[UserRoleConditional]:
-        """Update a conditional"""
-        db_conditional = db.query(UserRoleConditional).filter(UserRoleConditional.id == conditional_id).first()
+        perm_data,
+        user_role_id: UUID,
+        userrole_basic_id: UUID,
+    ) -> UserRolePermission:
+        """Build (unattached — caller adds/flushes) a UserRolePermission from a
+        UserRolePermissionBase-shaped payload. Shared by create_user_role_with_details
+        and onboarding's role creation so the menu/button/form JSONB conversion and
+        access-level calculation stay in one place."""
+        if perm_data.menu_permissions:
+            menu_ids = [item.id for item in perm_data.menu_permissions]
+            UserRoleService._verify_menus_exist(db, menu_ids)
 
-        if not db_conditional:
-            return None
+        menu_perms = []
+        for item in (perm_data.menu_permissions or []):
+            perm_dict = {"id": item.id}
+            if item.application_id:
+                perm_dict["application_id"] = item.application_id
+            if item.modules_id:
+                perm_dict["modules_id"] = item.modules_id
+            if item.menu_access:
+                perm_dict["access"] = item.menu_access
+            menu_perms.append(perm_dict)
 
-        update_data = conditional_data.model_dump(exclude_unset=True)
+        if getattr(perm_data, "button_permissions", None):
+            button_ids = [item.id for item in perm_data.button_permissions]
+            UserRoleService._verify_buttons_exist(db, button_ids)
+        button_perms = UserRoleService._build_button_perms(
+            getattr(perm_data, "button_permissions", None)
+        )
 
-        # Verify userrole_permission if being updated
-        if "userrole_permission_id" in update_data and update_data["userrole_permission_id"]:
-            permission = db.query(UserRolePermission).filter(UserRolePermission.id == update_data["userrole_permission_id"]).first()
-            if not permission:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User role permission with ID {update_data['userrole_permission_id']} not found"
-                )
+        if getattr(perm_data, "form_permissions", None):
+            form_ids = [item.id for item in perm_data.form_permissions]
+            UserRoleService._verify_forms_exist(db, form_ids)
+        form_perms = UserRoleService._build_form_perms(
+            getattr(perm_data, "form_permissions", None)
+        )
 
-        for field, value in update_data.items():
-            setattr(db_conditional, field, value)
-
-        db.commit()
-        db.refresh(db_conditional)
-        return db_conditional
-
-    @staticmethod
-    def delete_conditional(db: Session, conditional_id: UUID) -> bool:
-        """Delete a conditional"""
-        db_conditional = db.query(UserRoleConditional).filter(UserRoleConditional.id == conditional_id).first()
-        
-        if not db_conditional:
-            return False
-        
-        db.delete(db_conditional)
-        db.commit()
-        return True
+        return UserRolePermission(
+            user_role_id=user_role_id,
+            userrole_basic_id=userrole_basic_id,
+            menu_permissions=menu_perms,
+            menu_access=UserRoleService._calculate_highest_access(menu_perms),
+            button_permissions=button_perms,
+            button_access=UserRoleService._calculate_highest_access(button_perms),
+            form_permissions=form_perms,
+            form_access=UserRoleService._calculate_highest_access(form_perms),
+        )
 
     # ============================================================================
     # Combined Operations
@@ -419,7 +458,7 @@ class UserRoleService:
         role_data: UserRoleCreateWithDetails,
         tenant_id: Optional[UUID] = None,
     ) -> UserRoleBasic:
-        """Create a user role with permissions and conditionals in one transaction.
+        """Create a user role with permissions in one transaction.
 
         tenant_id is not part of the request body — it is derived from the
         caller's JWT and injected here (None for master-DB users).
@@ -430,98 +469,28 @@ class UserRoleService:
             db.add(db_user_role_main)
             db.flush()  # Get the ID without committing
 
+            basic_dict = role_data.basic.model_dump()
+            parent_role_code = basic_dict.pop("parent_role", None)
+            parent_role_id = UserRoleService._resolve_parent_role_id(db, tenant_id, parent_role_code)
+
             # Create the basic role with reference to parent
             db_role = UserRoleBasic(
                 user_role_id=db_user_role_main.id,
                 tenant_id=tenant_id,
-                **role_data.basic.model_dump()
+                parent_role_id=parent_role_id,
+                **basic_dict
             )
             db.add(db_role)
             db.flush()
 
-            # Create permissions (at least one permission is required if conditionals exist)
-            created_permission_id = None
+            # Create permissions
             if role_data.permissions:
                 for perm_data in role_data.permissions:
-                    # Verify menu permissions - each item has a single ID
-                    if perm_data.menu_permissions:
-                        menu_ids = [item.id for item in perm_data.menu_permissions]
-                        UserRoleService._verify_menus_exist(db, menu_ids)
-
-                    # Form permissions removed - not needed
-
-                    # Convert Pydantic models to dict for JSONB storage
-                    menu_perms = []
-                    for item in (perm_data.menu_permissions or []):
-                        perm_dict = {"id": item.id}
-                        if item.application_id:
-                            perm_dict["application_id"] = item.application_id
-                        if item.modules_id:
-                            perm_dict["modules_id"] = item.modules_id
-                        if item.menu_access:
-                            perm_dict["access"] = item.menu_access
-                        menu_perms.append(perm_dict)
-
-                    # Button permissions — same JSONB shape as menus, keyed by button id
-                    if getattr(perm_data, "button_permissions", None):
-                        button_ids = [item.id for item in perm_data.button_permissions]
-                        UserRoleService._verify_buttons_exist(db, button_ids)
-                    button_perms = UserRoleService._build_button_perms(
-                        getattr(perm_data, "button_permissions", None)
-                    )
-
-                    # Form permissions — same JSONB shape as menus, keyed by form id
-                    if getattr(perm_data, "form_permissions", None):
-                        form_ids = [item.id for item in perm_data.form_permissions]
-                        UserRoleService._verify_forms_exist(db, form_ids)
-                    form_perms = UserRoleService._build_form_perms(
-                        getattr(perm_data, "form_permissions", None)
-                    )
-
-                    # Calculate the highest access level for menus / buttons / forms
-                    menu_access_level = UserRoleService._calculate_highest_access(menu_perms)
-                    button_access_level = UserRoleService._calculate_highest_access(button_perms)
-                    form_access_level = UserRoleService._calculate_highest_access(form_perms)
-
-                    db_permission = UserRolePermission(
-                        user_role_id=db_user_role_main.id,
-                        userrole_basic_id=db_role.id,
-                        menu_permissions=menu_perms,
-                        menu_access=menu_access_level,
-                        button_permissions=button_perms,
-                        button_access=button_access_level,
-                        form_permissions=form_perms,
-                        form_access=form_access_level,
+                    db_permission = UserRoleService.build_permission_row(
+                        db, perm_data, db_user_role_main.id, db_role.id
                     )
                     db.add(db_permission)
                     db.flush()  # Get the permission ID
-                    created_permission_id = db_permission.id
-            elif role_data.conditionals:
-                # If conditionals exist but no permissions provided, create an empty permission entry
-                db_permission = UserRolePermission(
-                    user_role_id=db_user_role_main.id,
-                    userrole_basic_id=db_role.id,
-                    menu_permissions=[],
-                    menu_access='disable',
-                    button_permissions=[],
-                    button_access='disable',
-                    form_permissions=[],
-                    form_access='disable',
-                )
-                db.add(db_permission)
-                db.flush()  # Get the permission ID
-                created_permission_id = db_permission.id
-
-            # Create conditionals (requires a permission to exist)
-            if role_data.conditionals and created_permission_id:
-                for cond_data in role_data.conditionals:
-                    db_conditional = UserRoleConditional(
-                        user_role_id=db_user_role_main.id,
-                        userrole_permission_id=created_permission_id,
-                        userrole_basic_id=db_role.id,
-                        **cond_data.model_dump()
-                    )
-                    db.add(db_conditional)
 
             db.commit()
             db.refresh(db_role)
@@ -542,7 +511,7 @@ class UserRoleService:
         role_id: UUID,
         role_data: "UserRoleUpdateWithDetails"
     ) -> Optional[UserRoleBasic]:
-        """Update a user role with permissions and conditionals in one transaction - role_id is UserRoleMain.id"""
+        """Update a user role with permissions in one transaction - role_id is UserRoleMain.id"""
         try:
             # Get the existing UserRoleMain
             db_user_role_main = db.query(UserRoleMain).filter(UserRoleMain.id == role_id).first()
@@ -557,6 +526,11 @@ class UserRoleService:
             # Update basic role information if provided
             if role_data.basic:
                 update_data = role_data.basic.model_dump(exclude_unset=True)
+                if "parent_role" in update_data:
+                    parent_role_code = update_data.pop("parent_role")
+                    update_data["parent_role_id"] = UserRoleService._resolve_parent_role_id(
+                        db, db_role.tenant_id, parent_role_code
+                    )
                 for field, value in update_data.items():
                     setattr(db_role, field, value)
 
@@ -602,29 +576,6 @@ class UserRoleService:
                         form_access=UserRoleService._calculate_highest_access(form_perms),
                     )
                     db.add(db_permission)
-
-            # Update conditionals if provided (replace all)
-            if role_data.conditionals is not None:
-                # Delete existing conditionals
-                db.query(UserRoleConditional).filter(
-                    UserRoleConditional.user_role_id == role_id
-                ).delete()
-
-                # Create new conditionals
-                for cond_data in role_data.conditionals:
-                    # Get a permission ID if exists (required for conditional)
-                    permission = db.query(UserRolePermission).filter(
-                        UserRolePermission.user_role_id == role_id
-                    ).first()
-                    
-                    if permission:
-                        db_conditional = UserRoleConditional(
-                            user_role_id=role_id,
-                            userrole_permission_id=permission.id,
-                            userrole_basic_id=db_role.id,
-                            **cond_data.model_dump()
-                        )
-                        db.add(db_conditional)
 
             db.commit()
             db.refresh(db_role)

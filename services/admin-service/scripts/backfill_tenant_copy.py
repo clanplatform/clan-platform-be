@@ -28,7 +28,7 @@ from app.departments.models.departments import Department                       
 from app.divisions.models.divisions import Division                                   # noqa: F401
 from app.job_codes.models.job_codes import JobCode                                   # noqa: F401
 from app.user_role.models.user_role import (                                         # noqa: F401
-    UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+    UserRoleMain, UserRoleBasic, UserRolePermission
 )
 from app.user_setup.models.user_setup import (                                       # noqa: F401
     UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference

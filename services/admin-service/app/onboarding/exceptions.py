@@ -68,3 +68,10 @@ class OnboardingNotFoundError(HTTPException):
 
     def __init__(self) -> None:
         super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+
+class OnboardingDraftNotFoundError(HTTPException):
+    """No saved draft with the given draft_id."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")

@@ -34,7 +34,7 @@ target_metadata = Base.metadata
 # Import all model modules here
 try:
     # User role models (all defined in user_role.py)
-    from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+    from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 
     # User role form permission model
     from app.user_role_form_permission.models.user_role_form_permission import RoleFormPermission

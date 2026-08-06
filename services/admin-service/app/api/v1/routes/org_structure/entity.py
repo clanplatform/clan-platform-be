@@ -17,6 +17,7 @@ from app.entities.schemas.entity import (
 )
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_entity_ids
 
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
 
@@ -83,6 +84,11 @@ async def list_entities(
 ):
     """List all entities with pagination and filtering"""
     query = db.query(Entity).filter(Entity.active == True)
+
+    scope_filter = resolve_scope_filter(db, get_user_id(current_user))
+    ids = scoped_entity_ids(db, scope_filter)
+    if ids is not None:
+        query = query.filter(Entity.entity_id.in_(ids))
 
     if search:
         query = query.filter(Entity.entity_name.ilike(f"%{search}%"))

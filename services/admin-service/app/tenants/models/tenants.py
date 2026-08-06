@@ -50,14 +50,20 @@ class Tenant(Base):
     fiscal_year_start = Column(String(20), nullable=True)
     week_starts_on = Column(String(20), nullable=True)
 
-    # Status
-    onboarding_status = Column(String(50), nullable=True)
+    # Status — "Initial status" (Active / Trial / Pending setup) selected on
+    # the account-status step. is_active (below) is derived from it at
+    # creation ('Active' => true, else => false) — backend-only, not on
+    # any schema.
+    initial_status = Column(String(50), nullable=True, server_default='Active')
     internal_notes = Column(Text, nullable=True)                # platform-admin only
 
-    # Account owner (denormalized from the owner user for display; the owner's
-    # login password is NEVER stored here — it is hashed on usersetup_basic).
+    # Account owner (denormalized from the owner user for display). The
+    # actual login credential is hashed on usersetup_basic; owner_password_hash
+    # here is a write-only convenience copy (bcrypt-hashed, never the raw
+    # value) — never returned by the API (see TenantBase/TenantResponse).
     owner_name = Column(String(200), nullable=True)
     owner_email = Column(String(255), nullable=True)
+    owner_password_hash = Column(String(255), nullable=True)
 
     gateway_tenant_ref = Column(UUID(as_uuid=True), unique=True, nullable=True, default=None, index=True)
     table_permission = Column(ARRAY(Text), nullable=True, default=list)

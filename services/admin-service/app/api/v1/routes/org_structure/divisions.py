@@ -8,6 +8,7 @@ from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate, Divi
 from app.divisions.services import divisions as division_service
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_division_ids
 import uuid
 
 router = APIRouter()
@@ -24,8 +25,12 @@ def get_divisions(
 ):
     """Get all divisions with pagination and optional tenant/entity filtering, sorted by newest first (FILO)"""
     try:
+        scope_filter = resolve_scope_filter(db, get_user_id(current_user))
+        scoped_ids = scoped_division_ids(db, scope_filter)
+
         divisions = division_service.get_all_divisions(
-            db, tenant_id=tenant_id, entity_id=entity_id, skip=skip, limit=limit
+            db, tenant_id=tenant_id, entity_id=entity_id, skip=skip, limit=limit,
+            scoped_ids=scoped_ids,
         )
         try:
             tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))

@@ -28,10 +28,9 @@ Tables Created (in dependency order):
     11. job_codes
     12. jobcode_basicinfo
     13. jobcode_skills
-    14. jobcode_benefits
-    15. tenant_modules
-    16. tenant_applications
-    17. audit_logs
+    14. tenant_modules
+    15. tenant_applications
+    16. audit_logs
 """
 
 import sys
@@ -61,7 +60,6 @@ from app.job_codes.models.job_codes import (
     JobCode,
     JobCodeBasicInfo,
     JobCodeSkills,
-    JobCodeBenefits
 )
 from app.tenant_modules.models.tenant_module import TenantModule
 from app.tenant_applications.models.tenant_application import TenantApplication
@@ -132,7 +130,6 @@ def get_table_dependency_order():
         'job_codes',            # No dependencies
         'jobcode_basicinfo',    # Depends on: job_codes, tenants, entities, departments, divisions
         'jobcode_skills',       # Depends on: job_codes
-        'jobcode_benefits',     # Depends on: job_codes
         'tenant_modules',       # Depends on: tenants, modules
         'tenant_applications',  # Depends on: tenants, applications
         'audit_logs',           # Depends on: tenants, entities (users not in scope)

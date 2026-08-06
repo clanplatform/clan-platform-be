@@ -57,8 +57,9 @@ def create_tables():
     from app.departments.models.departments import Department
     from app.divisions.models.divisions import Division
     from app.job_codes.models.job_codes import JobCode
-    from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+    from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupPreference
+    from app.users_groups.models.users_groups import UserGroup
     from app.buttons.models.button import Button
     from app.tenant_modules.models.tenant_module import TenantModule
     from app.tenant_applications.models.tenant_application import TenantApplication
@@ -69,6 +70,8 @@ def create_tables():
     from app.master_datas.models.master_locales import MasterLocale
     from app.subscription.models.subscription import Subscription
     from app.security.models.security import Security
+    from app.audit_logs.models.audit_logs import AuditLog
+    from app.onboarding.models.onboarding import OnboardingDraft
 
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)

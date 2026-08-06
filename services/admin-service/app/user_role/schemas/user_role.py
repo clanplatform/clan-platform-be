@@ -1,12 +1,27 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict, field_validator
-from datetime import datetime, time
+from datetime import datetime
 from uuid import UUID
 
 
 # ============================================================================
 # UserRoleBasic Schemas
 # ============================================================================
+
+# What the role's permissions apply against: whole tenant, the user's own
+# assigned entities/branches (usersetup_basic.entity_id, already an array —
+# so a role scoped to "branch_entity" naturally covers all of a user's
+# assigned entities), department, or division.
+ACCESS_SCOPE_VALUES = {"whole_organization", "branch_entity", "department", "division"}
+
+
+def _validate_access_scope(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return v
+    if v not in ACCESS_SCOPE_VALUES:
+        raise ValueError(f"Invalid access_scope: {v}. Must be one of {sorted(ACCESS_SCOPE_VALUES)}")
+    return v
+
 
 class UserRoleBasicBase(BaseModel):
     """Base schema for UserRoleBasic.
@@ -19,16 +34,28 @@ class UserRoleBasicBase(BaseModel):
     role_code: str = Field(..., min_length=1, max_length=50, description="Role code (unique identifier)")
     description: Optional[str] = Field(None, description="Role description")
     role_level: int = Field(default=1, ge=1, description="Role hierarchy level")
-    parent_role_id: Optional[UUID] = Field(None, description="Parent role id (user_role.id) — Reports to")
-    access_scope: Optional[str] = Field(None, max_length=50, description="Access scope")
+    access_scope: Optional[str] = Field(
+        None, max_length=50,
+        description="Access scope: whole_organization, branch_entity, department, or division",
+    )
     is_admin: bool = Field(default=False, description="Whether this is an admin role")
     default_for_new_users: bool = Field(default=False, description="Default role for new users")
     active: bool = Field(default=True, description="Whether the role is active")
 
+    @field_validator("access_scope")
+    @classmethod
+    def validate_access_scope(cls, v):
+        return _validate_access_scope(v)
+
 
 class UserRoleBasicCreate(UserRoleBasicBase):
     """Schema for creating a new user role"""
-    pass
+    parent_role: Optional[str] = Field(
+        None, max_length=50,
+        description="Parent role's role_code (Reports to) — must match an existing "
+                    "role's role_code for this tenant; resolved server-side to "
+                    "userrole_basic.parent_role_id.",
+    )
 
 
 class UserRoleBasicUpdate(BaseModel):
@@ -40,16 +67,31 @@ class UserRoleBasicUpdate(BaseModel):
     role_code: Optional[str] = Field(None, min_length=1, max_length=50, description="Role code")
     description: Optional[str] = Field(None, description="Role description")
     role_level: Optional[int] = Field(None, ge=1, description="Role hierarchy level")
-    parent_role_id: Optional[UUID] = Field(None, description="Parent role id (user_role.id)")
-    access_scope: Optional[str] = Field(None, max_length=50, description="Access scope")
+    parent_role: Optional[str] = Field(
+        None, max_length=50,
+        description="Parent role's role_code (Reports to) — must match an existing "
+                    "role's role_code for this tenant; resolved server-side to "
+                    "userrole_basic.parent_role_id.",
+    )
+    access_scope: Optional[str] = Field(
+        None, max_length=50,
+        description="Access scope: whole_organization, branch_entity, department, or division",
+    )
     is_admin: Optional[bool] = Field(None, description="Whether this is an admin role")
     default_for_new_users: Optional[bool] = Field(None, description="Default role for new users")
     active: Optional[bool] = Field(None, description="Whether the role is active")
+
+    @field_validator("access_scope")
+    @classmethod
+    def validate_access_scope(cls, v):
+        return _validate_access_scope(v)
 
 
 class UserRoleBasicResponse(UserRoleBasicBase):
     """Schema for user role response"""
     id: UUID
+    parent_role_id: Optional[UUID] = Field(None, description="Parent role id (user_role.id) — Reports to")
+    parent_role: Optional[str] = Field(None, description="Parent role's role_code (Reports to), resolved from parent_role_id for display")
     created_at: datetime
     updated_at: datetime
 
@@ -307,73 +349,20 @@ class UserRolePermissionResponse(BaseModel):
 
 
 # ============================================================================
-# UserRoleConditional Schemas
-# ============================================================================
-
-class UserRoleConditionalBase(BaseModel):
-    """Base schema for UserRoleConditional"""
-    enable_time: bool = Field(default=False, description="Enable time-based restrictions")
-    allowtime_start: Optional[time] = Field(None, description="Allowed start time")
-    allowtime_end: Optional[time] = Field(None, description="Allowed end time")
-    allow_days: Optional[List[str]] = Field(None, description="Allowed days of the week")
-    ip_restric: bool = Field(default=False, description="Enable IP-based restrictions")
-    aip: Optional[str] = Field(None, max_length=45, description="IP address A (or start of range)")
-    bip: Optional[str] = Field(None, max_length=45, description="IP address B (end of range)")
-    enable_restric: bool = Field(default=False, description="Enable general restrictions")
-    required_reg: bool = Field(default=False, description="Require registration")
-
-
-class UserRoleConditionalCreate(UserRoleConditionalBase):
-    """Schema for creating a new user role conditional"""
-    user_role_id: UUID = Field(..., description="User role ID this conditional belongs to")
-    userrole_permission_id: UUID = Field(..., description="User role permission ID this conditional belongs to")
-    userrole_basic_id: UUID = Field(..., description="User role basic ID this conditional belongs to")
-
-
-class UserRoleConditionalUpdate(BaseModel):
-    """Schema for updating a user role conditional"""
-    userrole_permission_id: Optional[UUID] = Field(None, description="User role permission ID this conditional belongs to")
-    userrole_basic_id: Optional[UUID] = Field(None, description="User role basic ID this conditional belongs to")
-    enable_time: Optional[bool] = Field(None, description="Enable time-based restrictions")
-    allowtime_start: Optional[time] = Field(None, description="Allowed start time")
-    allowtime_end: Optional[time] = Field(None, description="Allowed end time")
-    allow_days: Optional[List[str]] = Field(None, description="Allowed days of the week")
-    ip_restric: Optional[bool] = Field(None, description="Enable IP-based restrictions")
-    aip: Optional[str] = Field(None, max_length=45, description="IP address A")
-    bip: Optional[str] = Field(None, max_length=45, description="IP address B")
-    enable_restric: Optional[bool] = Field(None, description="Enable general restrictions")
-    required_reg: Optional[bool] = Field(None, description="Require registration")
-
-
-class UserRoleConditionalResponse(UserRoleConditionalBase):
-    """Schema for user role conditional response"""
-    id: UUID
-    user_role_id: UUID
-    userrole_permission_id: Optional[UUID] = None
-    userrole_basic_id: UUID
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ============================================================================
 # Combined/Nested Schemas
 # ============================================================================
 
 class UserRoleWithDetails(UserRoleBasicResponse):
-    """Schema for user role with all related permissions and conditionals"""
+    """Schema for user role with all related permissions"""
     permissions: List[UserRolePermissionResponse] = Field(default_factory=list, description="Role permissions")
-    conditionals: List[UserRoleConditionalResponse] = Field(default_factory=list, description="Role conditionals")
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class UserRoleCreateWithDetails(BaseModel):
-    """Schema for creating a user role with permissions and conditionals in one request"""
+    """Schema for creating a user role with permissions in one request"""
     basic: UserRoleBasicCreate
     permissions: Optional[List[UserRolePermissionBase]] = Field(default_factory=list, description="Initial permissions")
-    conditionals: Optional[List[UserRoleConditionalBase]] = Field(default_factory=list, description="Initial conditionals")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -383,7 +372,8 @@ class UserRoleCreateWithDetails(BaseModel):
                     "role_code": "MGR",
                     "description": "Manager role",
                     "role_level": 2,
-                    "access_scope": "tenant",
+                    "parent_role": "DIR",
+                    "access_scope": "whole_organization",
                     "is_admin": False,
                     "default_for_new_users": False,
                     "active": True
@@ -419,19 +409,6 @@ class UserRoleCreateWithDetails(BaseModel):
                             }
                         ]
                     }
-                ],
-                "conditionals": [
-                    {
-                        "enable_time": False,
-                        "allowtime_start": "05:09:04.700Z",
-                        "allowtime_end": "05:09:04.700Z",
-                        "allow_days": ["string"],
-                        "ip_restric": False,
-                        "aip": "string",
-                        "bip": "string",
-                        "enable_restric": False,
-                        "required_reg": False
-                    }
                 ]
             }
         }
@@ -439,10 +416,9 @@ class UserRoleCreateWithDetails(BaseModel):
 
 
 class UserRoleUpdateWithDetails(BaseModel):
-    """Schema for updating a user role with permissions and conditionals in one request"""
+    """Schema for updating a user role with permissions in one request"""
     basic: Optional[UserRoleBasicUpdate] = Field(None, description="Basic role information to update")
     permissions: Optional[List[UserRolePermissionBase]] = Field(None, description="Permissions to replace (replaces all existing)")
-    conditionals: Optional[List[UserRoleConditionalBase]] = Field(None, description="Conditionals to replace (replaces all existing)")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -461,14 +437,6 @@ class UserRoleUpdateWithDetails(BaseModel):
                         "form_permissions": [
                             {"id": "form-uuid-1", "form_access": ["write"]}
                         ]
-                    }
-                ],
-                "conditionals": [
-                    {
-                        "enable_time": True,
-                        "allowtime_start": "09:00:00",
-                        "allowtime_end": "17:00:00",
-                        "allow_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
                     }
                 ]
             }

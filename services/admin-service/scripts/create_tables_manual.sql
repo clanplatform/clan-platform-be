@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS clients (
     industry VARCHAR(100),
     company_size VARCHAR(50),
     subscription_plan VARCHAR(100),
-    onboarding_status VARCHAR(50),
+    initial_status VARCHAR(50),
     employees_count INTEGER,
     location VARCHAR(255),
     status VARCHAR(50),
@@ -341,35 +341,16 @@ CREATE TABLE IF NOT EXISTS jobcode_skills (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_code_id UUID UNIQUE NOT NULL REFERENCES job_codes(id) ON DELETE CASCADE,
     key_responsibilities TEXT,
-    requirements TEXT,
     required_skills TEXT,
-    education_level VARCHAR(100),
-    certifications TEXT,
-    performance_metrics TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobcode_skills_id ON jobcode_skills(id);
 CREATE INDEX IF NOT EXISTS idx_jobcode_skills_job_code_id ON jobcode_skills(job_code_id);
-CREATE INDEX IF NOT EXISTS idx_jobcode_skills_education_level ON jobcode_skills(education_level);
 
 -- ================================================================
--- 13. JOB CODE BENEFITS TABLE (Depends on: job_codes)
--- ================================================================
-CREATE TABLE IF NOT EXISTS jobcode_benefits (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    job_code_id UUID UNIQUE NOT NULL REFERENCES job_codes(id) ON DELETE CASCADE,
-    benefits_package TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_jobcode_benefits_id ON jobcode_benefits(id);
-CREATE INDEX IF NOT EXISTS idx_jobcode_benefits_job_code_id ON jobcode_benefits(job_code_id);
-
--- ================================================================
--- 14. AUDIT LOGS TABLE (Depends on: clients, entities)
+-- 13. AUDIT LOGS TABLE (Depends on: clients, entities)
 -- Note: user_id FK commented out (users table not in scope)
 -- ================================================================
 CREATE TABLE IF NOT EXISTS audit_logs (

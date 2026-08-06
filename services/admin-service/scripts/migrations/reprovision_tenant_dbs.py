@@ -41,7 +41,7 @@ from app.departments.models.departments import Department                       
 from app.divisions.models.divisions import Division                                   # noqa: F401
 from app.job_codes.models.job_codes import JobCode                                   # noqa: F401
 from app.user_role.models.user_role import (                                         # noqa: F401
-    UserRoleMain, UserRoleBasic, UserRolePermission, UserRoleConditional
+    UserRoleMain, UserRoleBasic, UserRolePermission
 )
 from app.user_setup.models.user_setup import (                                       # noqa: F401
     UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
@@ -53,11 +53,12 @@ from app.buttons.models.button import Button                                    
 from app.tenant_modules.models.tenant_module import TenantModule                     # noqa: F401
 from app.tenant_applications.models.tenant_application import TenantApplication      # noqa: F401
 
-from app.api.v1.routes.org_structure.tenants import _seed_tenant_db, _generate_temp_password
+from app.api.v1.routes.org_structure.tenants import _seed_tenant_db
+from app.core.security import generate_temp_password as _generate_temp_password
 
 # Tables the login/seeding flow depends on — always provisioned even when
 # the tenant's table_permission list doesn't mention them.
-REQUIRED_TABLES = ["tenants", "user_setup", "usersetup_basic"]
+REQUIRED_TABLES = ["tenants", "user_setup", "usersetup_basic", "audit_logs"]
 
 master = SessionLocal()
 tenants = master.query(Tenant).filter(Tenant.tenant_db_name.isnot(None)).all()

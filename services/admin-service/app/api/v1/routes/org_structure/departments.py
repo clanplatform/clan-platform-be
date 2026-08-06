@@ -9,6 +9,7 @@ from app.departments.exceptions import DepartmentNotFoundError
 from app.core.security import get_current_user  # Uses optional auth support
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_department_ids
 import uuid
 
 router = APIRouter()
@@ -24,12 +25,17 @@ def get_departments(
 ):
     """Get all departments with pagination and optional filtering"""
     try:
+        scope_filter = resolve_scope_filter(db, get_user_id(current_user))
+        scoped_ids = scoped_department_ids(db, scope_filter)
+
         if entity_id:
             departments = department_service.get_departments_by_entity(
-                db, entity_id=entity_id, skip=skip, limit=limit
+                db, entity_id=entity_id, skip=skip, limit=limit, scoped_ids=scoped_ids
             )
         else:
-            departments = department_service.get_all_departments(db, skip=skip, limit=limit)
+            departments = department_service.get_all_departments(
+                db, skip=skip, limit=limit, scoped_ids=scoped_ids
+            )
 
         try:
             tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))

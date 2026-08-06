@@ -18,10 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, generate_temp_password as _generate_temp_password
 from app.infrastructure.database.session import SessionLocal
 from app.infrastructure.database.tenant_db_manager import tenant_db_manager
-from app.api.v1.routes.org_structure.tenants import _generate_temp_password
 
 if len(sys.argv) < 2:
     print(__doc__)

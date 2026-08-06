@@ -4,14 +4,12 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 import asyncio
 import os
-import secrets
-import string
 import logging
 
 logger = logging.getLogger(__name__)
 
 from app.infrastructure.database.session import get_db
-from app.core.security import get_current_user  # Uses optional auth support
+from app.core.security import get_current_user, get_password_hash, generate_temp_password  # Uses optional auth support
 from app.core.config import settings
 from app.infrastructure.database.tenant_db_manager import tenant_db_manager
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
@@ -31,30 +29,6 @@ from app.tenants.schemas.tenants import (
 
 # Check if authentication is required
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
-
-
-def _generate_temp_password(length: int = 12) -> str:
-    """Generate a cryptographically secure temporary password.
-
-    Ambiguous characters are excluded so the password survives being read out of
-    an email and re-typed: no l/I/1, no o/O/0, and no '!' (easily mistaken for
-    l/I/1 in most fonts).
-    """
-    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"   # no I, O
-    lower = "abcdefghijkmnpqrstuvwxyz"   # no l, o
-    digits = "23456789"                  # no 0, 1
-    special = "@#$%*"                     # no ! (reads like l / I / 1)
-    alphabet = upper + lower + digits + special
-    # Guarantee at least one character from each required group
-    parts = [
-        secrets.choice(upper),
-        secrets.choice(lower),
-        secrets.choice(digits),
-        secrets.choice(special),
-    ]
-    parts += [secrets.choice(alphabet) for _ in range(length - 4)]
-    secrets.SystemRandom().shuffle(parts)
-    return "".join(parts)
 
 
 def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
@@ -142,8 +116,16 @@ async def create_tenant(
     if existing_email:
         raise HTTPException(status_code=400, detail="Tenant email already exists")
 
-    # Create new tenant
-    db_tenant = Tenant(**tenant_data.model_dump())
+    # Create new tenant. The owner's password is always server-generated
+    # (never accepted from the caller) — hashed into owner_password_hash,
+    # and the same value seeds the actual login + gets emailed below.
+    tenant_dict = tenant_data.model_dump()
+    db_tenant = Tenant(**tenant_dict)
+    temp_password = generate_temp_password()
+    db_tenant.owner_password_hash = get_password_hash(temp_password)
+    # is_active is backend-only (not on any schema) — derived from
+    # initial_status, same rule as onboarding's create_onboarding().
+    db_tenant.is_active = (tenant_data.initial_status or "Active").strip().lower() == "active"
     _creator_id = get_user_id(current_user)
     try:
         db_tenant.created_by = UUID(str(_creator_id)) if _creator_id else None
@@ -161,7 +143,7 @@ async def create_tenant(
     # created — but always include the tables the login/seeding flow needs.
     table_permission = db_tenant.table_permission or None
     if table_permission:
-        table_permission = list({*table_permission, "tenants", "user_setup", "usersetup_basic"})
+        table_permission = list({*table_permission, "tenants", "user_setup", "usersetup_basic", "audit_logs"})
     ok = tenant_db_manager.provision(
         db_tenant.tenant_db_name,
         settings.DATABASE_URL,
@@ -173,8 +155,8 @@ async def create_tenant(
             db_tenant.tenant_id, db_tenant.tenant_db_name
         )
 
-    # Seed the initial admin user into the tenant DB
-    temp_password = _generate_temp_password()
+    # Seed the initial admin user into the tenant DB with the generated
+    # temp_password (also emailed as the temporary login credential below).
     if ok:
         tenant_db = tenant_db_manager.get_session(db_tenant.tenant_db_name, settings.DATABASE_URL)
         try:
@@ -248,7 +230,7 @@ async def list_tenants(
     search: Optional[str] = Query(None),
     industry: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    onboarding_status: Optional[str] = Query(None),
+    initial_status: Optional[str] = Query(None),
     _t: Optional[str] = Query(None),  # Cache-busting parameter (ignored)
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)

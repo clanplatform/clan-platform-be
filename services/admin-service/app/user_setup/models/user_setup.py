@@ -43,6 +43,7 @@ class UserSetupBasic(Base):
     username = Column(String(100), nullable=False, unique=True)
     email = Column(String(255), nullable=False, unique=True)
     phone_number = Column(String(20), nullable=True)
+    profile_image_url = Column(String(500), nullable=True)  # Profile image URL / file reference
     password_hash = Column(String(255), nullable=False)  # Hashed password
     password_changed = Column(DateTime(timezone=True), nullable=True)  # Last password change timestamp
     is_password_change = Column(Boolean, default=False, nullable=False)  # Flag to indicate if user needs to change password
@@ -53,11 +54,25 @@ class UserSetupBasic(Base):
     # Employment Status
     status = Column(String(50), nullable=False, default='active')  # active, inactive, suspended, etc.
 
-    # Entity Access — entities is a backend fallback array read by audit context
-    # resolution (get_audit_org_context); default_entity ("Branch / location")
-    # is the single source of truth exposed via the schema.
-    entities = Column(ARRAY(UUID(as_uuid=True)), nullable=True)  # Array of entity IDs
-    default_entity = Column(UUID(as_uuid=True), ForeignKey("entities.entity_id"), nullable=True)
+    # Entity Access — entity_id ("Branch / location") holds the branches this
+    # user is assigned to; one user can belong to multiple entities. No FK
+    # constraint (Postgres can't enforce one on individual array elements);
+    # the first element is treated as the user's default/primary branch by
+    # audit context resolution.
+    entity_id = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
+
+    # Department / Division Access — same shape as entity_id: the specific
+    # departments/divisions this user is assigned to, for roles whose
+    # access_scope is "department" or "division" (see user_role's
+    # ACCESS_SCOPE_VALUES). One user can belong to multiple of each.
+    # Not exposed on the schema — backend-derived from job_code_id's
+    # jobcode_basicinfo.department_id/division_id (see user_setup service).
+    department_id = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
+    division_id = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
+
+    # Job code (job_codes.id) — department_id/division_id above are derived
+    # from this job code's jobcode_basicinfo row.
+    job_code_id = Column(UUID(as_uuid=True), ForeignKey("job_codes.id"), nullable=True)
 
     # Role assignment — single role (user_role.id), the source of truth for
     # this user's role. Replaces the old usersetup_roles_entity table.
@@ -82,7 +97,6 @@ class UserSetupBasic(Base):
     # Relationships
     user_setup = relationship("UserSetup", back_populates="basic")
     tenant = relationship("Tenant", foreign_keys=[tenant_id])
-    default_entity_rel = relationship("Entity", foreign_keys=[default_entity])
     role = relationship("UserRoleMain", foreign_keys=[role_id])
 
     def __repr__(self):
@@ -130,6 +144,8 @@ class UserSetupPreference(Base):
     theme = Column(String(20), nullable=False, default='light')  # e.g., 'light', 'dark', 'auto'
     accent_color = Column(String(50), nullable=False, default='blue', server_default='blue')  # e.g., 'blue'
     density = Column(String(20), nullable=False, default='comfortable', server_default='comfortable')  # compact | comfortable | spacious
+    # Derived from language (e.g. 'ar' -> rtl) but stored so it can be overridden.
+    text_direction = Column(String(3), nullable=False, default='ltr', server_default='ltr')  # ltr | rtl
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

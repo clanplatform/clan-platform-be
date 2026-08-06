@@ -6,6 +6,7 @@ from typing import Optional
 import hashlib
 import time
 import base64
+import secrets
 
 from jose import JWTError, jwt
 import bcrypt
@@ -86,6 +87,30 @@ def _get_rsa_key(token: str) -> str:
 
 # HTTP Bearer token scheme
 security = HTTPBearer(auto_error=False)
+
+
+def generate_temp_password(length: int = 12) -> str:
+    """Generate a cryptographically secure temporary password.
+
+    Ambiguous characters are excluded so the password survives being read out of
+    an email and re-typed: no l/I/1, no o/O/0, and no '!' (easily mistaken for
+    l/I/1 in most fonts).
+    """
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"   # no I, O
+    lower = "abcdefghijkmnpqrstuvwxyz"   # no l, o
+    digits = "23456789"                  # no 0, 1
+    special = "@#$%*"                     # no ! (reads like l / I / 1)
+    alphabet = upper + lower + digits + special
+    # Guarantee at least one character from each required group
+    parts = [
+        secrets.choice(upper),
+        secrets.choice(lower),
+        secrets.choice(digits),
+        secrets.choice(special),
+    ]
+    parts += [secrets.choice(alphabet) for _ in range(length - 4)]
+    secrets.SystemRandom().shuffle(parts)
+    return "".join(parts)
 
 
 def get_password_hash(password: str) -> str:

@@ -34,19 +34,15 @@ def get_audit_org_context(db: Session, user_id: Optional[str]) -> Tuple[Optional
         # schema (e.g. no allowed_origins), so a full-model SELECT can fail.
         row = db.query(
             UserSetupBasic.tenant_id,
-            UserSetupBasic.default_entity,
-            UserSetupBasic.entities,
+            UserSetupBasic.entity_id,
         ).filter(UserSetupBasic.id == user_id).first()
         if not row:
             return None, None
 
         tenant_id = str(row.tenant_id) if row.tenant_id else None
-
-        entity_id = None
-        if row.default_entity:
-            entity_id = str(row.default_entity)
-        elif row.entities:
-            entity_id = str(row.entities[0])
+        # entity_id holds every branch the user is assigned to; the first is
+        # treated as their default/primary branch for audit context.
+        entity_id = str(row.entity_id[0]) if row.entity_id else None
 
         return tenant_id, entity_id
     except Exception:

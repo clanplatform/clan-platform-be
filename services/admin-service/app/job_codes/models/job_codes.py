@@ -5,7 +5,6 @@ This module contains the SQLAlchemy models for the JobCode system:
 - JobCode: Main job codes table
 - JobCodeBasicInfo: Basic information (one-to-one with JobCode)
 - JobCodeSkills: Skills and requirements (one-to-one with JobCode)
-- JobCodeBenefits: Benefits package (one-to-one with JobCode)
 
 All models are optimized for PostgreSQL with proper relationships,
 foreign keys, indexes, and cascade delete functionality.
@@ -26,7 +25,6 @@ class JobCode(Base):
     This is the parent table with one-to-one relationships to:
     - JobCodeBasicInfo (detailed job information)
     - JobCodeSkills (skills and requirements)
-    - JobCodeBenefits (benefits package)
     """
     __tablename__ = "job_codes"
 
@@ -66,10 +64,6 @@ class JobCode(Base):
     skills = relationship("JobCodeSkills", back_populates="job_code", 
                          uselist=False, cascade="all, delete-orphan",
                          lazy="select")
-    benefits = relationship("JobCodeBenefits", back_populates="job_code",
-                           uselist=False, cascade="all, delete-orphan",
-                           lazy="select")
-
     # Relationship to owning tenant
     tenant = relationship("Tenant", foreign_keys=[tenant_id])
 
@@ -89,9 +83,9 @@ class JobCode(Base):
 class JobCodeBasicInfo(Base):
     """
     Basic information table for job codes (one-to-one with JobCode).
-    
-    Contains detailed job information such as category, level, department,
-    division, employment type, work mode, experience, and reporting manager.
+
+    Contains detailed job information such as department, division,
+    employment type, work mode, experience, and reporting manager.
     """
     __tablename__ = "jobcode_basicinfo"
 
@@ -102,12 +96,7 @@ class JobCodeBasicInfo(Base):
     job_code_id = Column(UUID(as_uuid=True), ForeignKey("job_codes.id", ondelete="CASCADE"),
                         unique=True, nullable=False, index=True,
                         comment="Foreign key to job_codes table")
-    
-    # Job classification fields
-    category = Column(String(100), comment="Job category (e.g., Engineering, Sales)")
-    level = Column(String(50), comment="Job level (e.g., Senior, Junior, Lead)")
-    description = Column(Text, comment="Job description")
-    
+
     # tenant_id is derived from the JWT (NULL = master-DB user) and never
     # returned in the CRUD schema; entity/department/division stay client-supplied.
     # Nullable so master-DB users can create rows in the master DB.
@@ -154,22 +143,20 @@ class JobCodeBasicInfo(Base):
     
     # Table indexes for performance
     __table_args__ = (
-        Index('ix_jobcode_basicinfo_category_level', 'category', 'level'),
         Index('ix_jobcode_basicinfo_department_division', 'department_id', 'division_id'),
         Index('ix_jobcode_basicinfo_employment_work', 'employment_type', 'work_mode'),
         {'comment': 'Basic information for job codes with organizational details'}
     )
-    
+
     def __repr__(self):
-        return f"<JobCodeBasicInfo(id={self.id}, job_code_id={self.job_code_id}, category='{self.category}')>"
+        return f"<JobCodeBasicInfo(id={self.id}, job_code_id={self.job_code_id})>"
 
 
 class JobCodeSkills(Base):
     """
     Skills and requirements table for job codes (one-to-one with JobCode).
-    
-    Contains information about responsibilities, requirements, skills, education,
-    certifications, and performance metrics.
+
+    Contains information about key responsibilities and required skills.
     """
     __tablename__ = "jobcode_skills"
 
@@ -180,75 +167,25 @@ class JobCodeSkills(Base):
     job_code_id = Column(UUID(as_uuid=True), ForeignKey("job_codes.id", ondelete="CASCADE"),
                         unique=True, nullable=False, index=True,
                         comment="Foreign key to job_codes table")
-    
-    # Responsibilities and requirements
+
+    # Responsibilities and skills
     key_responsibilities = Column(Text, comment="Key job responsibilities and duties")
-    requirements = Column(Text, comment="General job requirements")
-    
-    # Skills information
     required_skills = Column(Text, comment="Required technical and soft skills")
-    
-    # Education and certifications
-    education_level = Column(String(100),
-                           comment="Required education level (Bachelor's, Master's, etc.)")
-    certifications = Column(Text, comment="Required or preferred certifications")
-    
-    # Performance metrics
-    performance_metrics = Column(Text, comment="Key performance indicators and metrics")
-    
+
     # Audit fields with PostgreSQL timezone support
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False,
                        comment="Record creation timestamp")
-    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), 
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(),
                        onupdate=func.now(), nullable=False,
                        comment="Record last update timestamp")
-    
+
     # Relationship back to JobCode
     job_code = relationship("JobCode", back_populates="skills")
-    
+
     # Table indexes for performance
     __table_args__ = (
-        Index('ix_jobcode_skills_education_level', 'education_level'),
         {'comment': 'Skills and requirements for job codes'}
     )
-    
+
     def __repr__(self):
         return f"<JobCodeSkills(id={self.id}, job_code_id={self.job_code_id})>"
-
-
-class JobCodeBenefits(Base):
-    """
-    Benefits package table for job codes (one-to-one with JobCode).
-    
-    Contains information about the benefits package associated with the job position.
-    """
-    __tablename__ = "jobcode_benefits"
-
-    # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-
-    # Foreign key to JobCode (one-to-one relationship)
-    job_code_id = Column(UUID(as_uuid=True), ForeignKey("job_codes.id", ondelete="CASCADE"),
-                        unique=True, nullable=False, index=True,
-                        comment="Foreign key to job_codes table")
-    
-    # Overall benefits information
-    benefits_package = Column(Text, comment="Overall benefits package description")
-    
-    # Audit fields with PostgreSQL timezone support
-    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False,
-                       comment="Record creation timestamp")
-    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), 
-                       onupdate=func.now(), nullable=False,
-                       comment="Record last update timestamp")
-    
-    # Relationship back to JobCode
-    job_code = relationship("JobCode", back_populates="benefits")
-    
-    # Table indexes for performance
-    __table_args__ = (
-        {'comment': 'Benefits package information for job codes'}
-    )
-    
-    def __repr__(self):
-        return f"<JobCodeBenefits(id={self.id}, job_code_id={self.job_code_id})>"

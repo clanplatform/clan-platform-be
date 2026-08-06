@@ -19,9 +19,15 @@ class UserSetupBasicBase(BaseModel):
     flag (always True at creation — forces the first-login password-change
     flow, consumed by the auth-service login flow), not a form field.
 
-    entities (the array of assigned entity ids) is intentionally omitted: it is
-    a backend fallback column read by audit context resolution; default_entity
-    is the single source of truth exposed here ("Branch / location").
+    entity_id holds every branch/location this user is assigned to (a user can
+    belong to multiple entities). The first element is treated as the user's
+    default/primary branch by audit context resolution.
+
+    department_id / division_id are intentionally omitted here: they are
+    backend-derived from job_code_id (job_codes -> jobcode_basicinfo's
+    department_id/division_id), never accepted or returned directly. The
+    columns still exist on usersetup_basic (see the model) for the
+    access_scope filtering in scope_helpers.py.
     """
     firstname: str = Field(..., min_length=1, max_length=100, description="First name")
     lastname: str = Field(..., min_length=1, max_length=100, description="Last name")
@@ -29,17 +35,27 @@ class UserSetupBasicBase(BaseModel):
     username: str = Field(..., min_length=1, max_length=100, description="Username (unique)")
     email: EmailStr = Field(..., description="Email address (unique)")
     phone_number: Optional[str] = Field(None, max_length=20, description="Phone number")
+    profile_image_url: Optional[str] = Field(None, max_length=500, description="Profile image URL")
     status: str = Field(default='active', max_length=50, description="Employment status")
-    default_entity: Optional[UUID] = Field(None, description="Branch / location (entity) ID")
+    entity_id: Optional[List[UUID]] = Field(None, description="Branch(es) / location(s) this user belongs to (entities.entity_id); first is the default")
+    job_code_id: Optional[UUID] = Field(None, description="Job code assigned to this user (job_codes.id) — department_id/division_id are derived from it server-side")
     role_id: Optional[UUID] = Field(None, description="Role assigned to this user (user_role.id)")
     user_group_id: Optional[UUID] = Field(None, description="User group id (bare reference)")
     send_invite_email: bool = Field(default=False, description="Send an invite email to the user")
 
-    @field_validator('default_entity', 'user_group_id', 'role_id', mode='before')
+    @field_validator('user_group_id', 'role_id', 'job_code_id', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
         """Convert empty strings to None for UUID fields"""
         if v == '' or v == 'string':
+            return None
+        return v
+
+    @field_validator('entity_id', mode='before')
+    @classmethod
+    def empty_list_to_none(cls, v):
+        """Convert empty lists or lists with empty/placeholder strings to None"""
+        if v == [] or v == [''] or v == ['string']:
             return None
         return v
 
@@ -57,18 +73,28 @@ class UserSetupBasicUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=1, max_length=100)
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = Field(None, max_length=20)
+    profile_image_url: Optional[str] = Field(None, max_length=500)
     password: Optional[str] = Field(None, min_length=8, max_length=100, description="New password (will be hashed)")
     status: Optional[str] = Field(None, max_length=50)
-    default_entity: Optional[UUID] = None
+    entity_id: Optional[List[UUID]] = None
+    job_code_id: Optional[UUID] = Field(None, description="Job code assigned to this user (job_codes.id) — department_id/division_id are re-derived from it server-side when changed")
     role_id: Optional[UUID] = None
     user_group_id: Optional[UUID] = None
     send_invite_email: Optional[bool] = None
 
-    @field_validator('default_entity', 'user_group_id', 'role_id', mode='before')
+    @field_validator('user_group_id', 'role_id', 'job_code_id', mode='before')
     @classmethod
     def empty_str_to_none(cls, v):
         """Convert empty strings to None for UUID fields"""
         if v == '' or v == 'string':
+            return None
+        return v
+
+    @field_validator('entity_id', mode='before')
+    @classmethod
+    def empty_list_to_none(cls, v):
+        """Convert empty lists or lists with empty/placeholder strings to None"""
+        if v == [] or v == [''] or v == ['string']:
             return None
         return v
 
@@ -94,6 +120,7 @@ class UserSetupPreferenceBase(BaseModel):
     theme: str = Field(default='light', max_length=20, description="Theme preference")
     accent_color: str = Field(default='blue', max_length=50, description="Accent color preference")
     density: str = Field(default='comfortable', max_length=20, description="Density preference")
+    text_direction: str = Field(default='ltr', max_length=3, description="Text direction: ltr or rtl (follows language automatically)")
 
     @field_validator('language')
     @classmethod
@@ -113,6 +140,15 @@ class UserSetupPreferenceBase(BaseModel):
             raise ValueError(f"Theme must be one of: {', '.join(valid_themes)}")
         return v
 
+    @field_validator('text_direction')
+    @classmethod
+    def validate_text_direction(cls, v):
+        """Validate text direction"""
+        valid_directions = ['ltr', 'rtl']
+        if v not in valid_directions:
+            raise ValueError(f"Text direction must be one of: {', '.join(valid_directions)}")
+        return v
+
 
 class UserSetupPreferenceCreate(UserSetupPreferenceBase):
     """Schema for creating user preferences"""
@@ -128,6 +164,7 @@ class UserSetupPreferenceUpdate(BaseModel):
     theme: Optional[str] = Field(None, max_length=20)
     accent_color: Optional[str] = Field(None, max_length=50)
     density: Optional[str] = Field(None, max_length=20)
+    text_direction: Optional[str] = Field(None, max_length=3)
 
     @field_validator('language')
     @classmethod
@@ -147,6 +184,16 @@ class UserSetupPreferenceUpdate(BaseModel):
             valid_themes = ['light', 'dark', 'auto']
             if v not in valid_themes:
                 raise ValueError(f"Theme must be one of: {', '.join(valid_themes)}")
+        return v
+
+    @field_validator('text_direction')
+    @classmethod
+    def validate_text_direction(cls, v):
+        """Validate text direction"""
+        if v is not None:
+            valid_directions = ['ltr', 'rtl']
+            if v not in valid_directions:
+                raise ValueError(f"Text direction must be one of: {', '.join(valid_directions)}")
         return v
 
 

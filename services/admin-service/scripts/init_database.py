@@ -50,7 +50,6 @@ job_codes_models = importlib.import_module('app.job-codes.models.job_codes')
 JobCode = job_codes_models.JobCode
 JobCodeBasicInfo = job_codes_models.JobCodeBasicInfo
 JobCodeSkills = job_codes_models.JobCodeSkills
-JobCodeBenefits = job_codes_models.JobCodeBenefits
 
 
 def check_connection():

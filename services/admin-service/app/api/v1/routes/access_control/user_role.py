@@ -9,7 +9,7 @@ from app.core.security import get_current_user, get_current_user_id
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_session_id, get_user_id
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.user_role.services.user_role import UserRoleService
-from app.user_role.models.user_role import UserRoleBasic, UserRoleConditional, UserRoleMain, UserRolePermission
+from app.user_role.models.user_role import UserRoleBasic, UserRoleMain, UserRolePermission
 from app.user_role.schemas.user_role import (
     UserRoleBasicCreate,
     UserRoleBasicUpdate,
@@ -17,9 +17,6 @@ from app.user_role.schemas.user_role import (
     UserRolePermissionCreate,
     UserRolePermissionUpdate,
     UserRolePermissionResponse,
-    UserRoleConditionalCreate,
-    UserRoleConditionalUpdate,
-    UserRoleConditionalResponse,
     UserRoleWithDetails,
     UserRoleCreateWithDetails,
     UserRoleUpdateWithDetails,
@@ -51,7 +48,7 @@ async def create_user_role_with_details(
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Create a user role with permissions and conditionals in one request"""
+    """Create a user role with permissions in one request"""
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
     tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     role = UserRoleService.create_user_role_with_details(db, role_data, tenant_id=tenant_id)
@@ -134,7 +131,7 @@ async def get_user_role_with_details(
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Get a user role with all permissions and conditionals"""
+    """Get a user role with all permissions"""
     role = UserRoleService.get_user_role_with_details(db, role_id)
     if not role:
         raise HTTPException(
@@ -169,7 +166,7 @@ async def update_user_role_with_details(
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Update a user role with all permissions and conditionals in one request"""
+    """Update a user role with all permissions in one request"""
     role = UserRoleService.update_user_role_with_details(db, role_id, role_data)
     if not role:
         raise HTTPException(
@@ -224,7 +221,7 @@ async def delete_user_role(
     db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Delete a user role (cascades to permissions and conditionals)"""
+    """Delete a user role (cascades to permissions)"""
     success = UserRoleService.delete_user_role(db, role_id)
     if not success:
         raise HTTPException(

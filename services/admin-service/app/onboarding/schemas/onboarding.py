@@ -5,34 +5,60 @@ The onboarding POST accepts the entire step-form as one graph and creates, in a
 single sequence:
 
     tenant (client)  ->  branches (entities)  ->  departments  ->  divisions
-                     ->  job codes  ->  roles  ->  users
+                     ->  job codes  ->  roles  ->  users_groups  ->  users
 
-Every created record carries a **client-generated UUID** (branches[].entity_id,
-departments[].department_id, divisions[].id, roles[].id); each record is created
-with that id, so children reference their parents by the real UUID:
+branches[], departments[], divisions[] and roles[] carry a **client-generated
+UUID** (branches[].entity_id, departments[].department_id,
+divisions[].division_id, roles[].role_id) — same as the direct
+entities/departments/divisions/user_role modules' own primary keys — so
+departments, divisions, job codes AND users_groups reference their parent by
+that real UUID. roles[].role_code (already required and unique per tenant)
+also doubles as a natural key: a role's PARENT role is referenced by
+role_code rather than by role_id (see roles[i].parent_role below).
+users[] still references roles/users_groups/branches/job_codes by 0-based
+position in those arrays:
 
     departments[i].entity_id         -> branches[].entity_id            (UUID)
     divisions[i].entity_id           -> branches[].entity_id            (UUID)
     divisions[i].department_id       -> departments[].department_id     (UUID, optional)
     job_codes[i].entity_id           -> branches[].entity_id            (UUID)
     job_codes[i].department_id       -> departments[].department_id     (UUID)
-    job_codes[i].division_id         -> divisions[].id                  (UUID)
-    roles[i].parent_role_id          -> roles[].id                      (UUID, optional)
-    users[i].role_id                 -> roles[].id                      (UUID, optional)
-    users[i].entity_id               -> branches[].entity_id            (UUID, optional; stored as default_entity)
+    job_codes[i].division_id         -> divisions[].division_id         (UUID)
+    roles[i].parent_role            -> roles[].role_code               (role_code, optional; resolved to that
+                                                                           role's real id and stored as
+                                                                           user_role.parent_role_id — same
+                                                                           mechanism as the direct user_role
+                                                                           module's parent_role field)
+    users_groups[i].default_role_id  -> roles[].role_id                 (UUID, optional; stored as
+                                                                           users_group.default_role_id — same as
+                                                                           the direct users_groups module's
+                                                                           UserGroupCreate.default_role_id)
+    users[i].role_index              -> roles[]                         (0-based index, optional)
+    users[i].entity_indices          -> branches[]                      (list of 0-based indices, optional; resolved
+                                                                           entity_ids stored as usersetup_basic.entity_id)
+    users[i].job_code_index          -> job_codes[]                     (0-based index, optional; resolved id stored as
+                                                                           usersetup_basic.job_code_id — department_id/
+                                                                           division_id are derived from it server-side)
+    users[i].user_group_index        -> users_groups[]                  (0-based index, optional)
 
-All references are validated server-side by set membership; an unknown UUID
-(or a duplicate client-supplied id) returns 422.
+branches[].entity_id, departments[].department_id, divisions[].division_id,
+roles[].role_id and roles[].role_code must each be unique within the
+request. Every index is validated server-side as an in-bounds position into
+its target array (roles[i].parent_role may point at any other role,
+including one later in the array — roles are created in two passes so
+forward references resolve). An unknown UUID/role_code, a duplicate
+client-supplied id, or an out-of-range index returns 422.
 """
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.subscription.schemas.subscription import SubscriptionCreate
 from app.security.schemas.security import SecurityCreate
+from app.user_role.schemas.user_role import UserRolePermissionBase, _validate_access_scope
 
 
 # ============================================================================
@@ -83,16 +109,19 @@ class OnboardingCompany(BaseModel):
     week_starts_on: Optional[str] = Field(None, max_length=20)
 
     # Account status
-    status: Optional[str] = Field(
+    initial_status: Optional[str] = Field(
         "Active", max_length=50,
-        description="Initial status -> tenants.is_active ('Active' => true, anything else => false)",
+        description="Initial status (Active / Trial / Pending setup) -> tenants.initial_status "
+                    "directly, and tenants.is_active ('Active' => true, anything else => false)",
     )
     internal_notes: Optional[str] = Field(None, description="Notes visible to platform admins only")
 
     # Owner login — becomes the tenant's first admin user in the tenant DB.
+    # The password is never accepted here — it's always randomly generated
+    # server-side (see create_onboarding()) and returned once via
+    # OnboardingResult.temp_password.
     owner_name: Optional[str] = Field(None, max_length=200, description="Owner administrator full name")
     owner_email: str = Field(..., description="Account-admin (owner) login email; created as the first admin user")
-    owner_password: str = Field(..., min_length=6, description="Account-admin (owner) login password")
 
 
 # ============================================================================
@@ -103,9 +132,11 @@ class OnboardingBranch(BaseModel):
     """Step 2: a branch / legal entity (persisted to the entities table)."""
     entity_id: UUID = Field(
         ...,
-        description="Client-generated UUID (uuid4) for this branch/entity. The "
-                    "entity is created with this id, and departments/divisions/"
-                    "job_codes/users reference the branch by this same UUID.",
+        description="Client-generated UUID (uuid4) for this branch/entity — the "
+                    "entities table's real primary key. The entity is created with "
+                    "this id, and departments reference it by this same UUID "
+                    "(departments[].entity_id). divisions/job_codes/users still "
+                    "reference branches by 0-based index (entity_index/entity_indices).",
     )
     entity_name: str = Field(..., min_length=1, max_length=100, description="Branch / location name")
     entity_code: str = Field(..., min_length=1, max_length=20, description="Branch code")
@@ -145,15 +176,19 @@ class OnboardingDepartment(BaseModel):
     """Step 3: a department, under a branch (persisted to the departments table)."""
     department_id: UUID = Field(
         ...,
-        description="Client-generated UUID (uuid4) for this department. The "
-                    "department is created with this id, and divisions/job_codes "
-                    "reference it by this same UUID.",
+        description="Client-generated UUID (uuid4) for this department — the "
+                    "departments table's real primary key. The department is "
+                    "created with this id, and divisions reference it by this "
+                    "same UUID (divisions[].department_id). job_codes still "
+                    "reference departments by 0-based index (department_index).",
     )
     department_name: str = Field(..., min_length=1, max_length=100)
     entity_id: UUID = Field(
         ...,
-        description="UUID of the branch this department belongs to; must match a "
-                    "branches[].entity_id (stored as departments.entity_id)",
+        description="UUID of the branch this department belongs to (entities "
+                    "table primary key); must match a branches[].entity_id "
+                    "(stored as departments.entity_id) — same as the direct "
+                    "departments module's DepartmentCreate.entity_id.",
     )
     department_code: Optional[str] = Field(None, max_length=50)
     department_type: Optional[str] = Field(None, max_length=50, description="departments.department_type")
@@ -173,22 +208,28 @@ class OnboardingDepartment(BaseModel):
 
 class OnboardingDivision(BaseModel):
     """Step 4: a division, under a branch (and optionally a department)."""
-    id: UUID = Field(
+    division_id: UUID = Field(
         ...,
-        description="Client-generated UUID (uuid4) for this division (divisions.id). "
-                    "job_codes reference it by this same UUID.",
+        description="Client-generated UUID (uuid4) for this division — the "
+                    "divisions table's real primary key. The division is created "
+                    "with this id, and job_codes reference it by this same UUID "
+                    "(job_codes[].division_id).",
     )
     division_name: str = Field(..., min_length=1, max_length=100)
     division_code: str = Field(..., min_length=1, max_length=20)
     entity_id: UUID = Field(
         ...,
-        description="UUID of the branch this division belongs to; must match a "
-                    "branches[].entity_id (stored as divisions.entity_id)",
+        description="UUID of the branch this division belongs to (entities "
+                    "table primary key); must match a branches[].entity_id "
+                    "(stored as divisions.entity_id) — same as the direct "
+                    "divisions module's DivisionCreate.entity_id.",
     )
     department_id: Optional[UUID] = Field(
         None,
-        description="Optional UUID of the parent department; must match a "
-                    "departments[].department_id (stored as divisions.department_id)",
+        description="Optional UUID of the parent department (departments table "
+                    "primary key); must match a departments[].department_id "
+                    "(stored as divisions.department_id) — same as the direct "
+                    "divisions module's DivisionCreate.department_id.",
     )
     division_head: Optional[str] = Field(None, max_length=100, description="Head / lead")
     hierarchy_level: Optional[str] = Field("1", max_length=10)
@@ -203,24 +244,31 @@ class OnboardingJobCode(BaseModel):
     """Step 5: a job code / position.
 
     The jobcode_basicinfo table requires entity, department AND division, so all
-    three indices are mandatory here (unlike the looser-looking form).
+    three ids are mandatory here (unlike the looser-looking form).
+
+    Has no client-supplied id of its own — users reference a job code by its
+    0-based position in this job_codes[] array (job_code_index), not by UUID;
+    the job_codes table generates its own id.
     """
     job_code: str = Field(..., min_length=1, max_length=50)
     job_title: str = Field(..., min_length=1, max_length=150)
     entity_id: UUID = Field(
         ...,
-        description="UUID of the branch this job code belongs to; must match a "
-                    "branches[].entity_id (jobcode basic_info entity)",
+        description="UUID of the branch this job code belongs to (entities "
+                    "table primary key); must match a branches[].entity_id "
+                    "(stored as jobcode_basicinfo.entity_id).",
     )
     department_id: UUID = Field(
         ...,
-        description="UUID of the parent department; must match a "
-                    "departments[].department_id (jobcode basic_info department)",
+        description="UUID of the parent department (departments table primary "
+                    "key); must match a departments[].department_id (stored as "
+                    "jobcode_basicinfo.department_id).",
     )
     division_id: UUID = Field(
         ...,
-        description="UUID of the parent division; must match a divisions[].id "
-                    "(jobcode basic_info division)",
+        description="UUID of the parent division (divisions table primary key); "
+                    "must match a divisions[].division_id (stored as "
+                    "jobcode_basicinfo.division_id).",
     )
     employment_type: Optional[str] = Field(None, max_length=50)
     work_mode: Optional[str] = Field(None, max_length=50)
@@ -239,34 +287,135 @@ class OnboardingJobCode(BaseModel):
 # ============================================================================
 
 class OnboardingRole(BaseModel):
-    """Step 6: a role for this client (user_role + userrole_basic)."""
-    id: UUID = Field(
+    """Step 6: a role for this client (user_role + userrole_basic [+ userrole_permission]).
+
+    users_groups[].default_role_id references this role by role_id (a real,
+    client-generated UUID — same as branches/departments/divisions/job_codes).
+    users[].role_index still references a role by its 0-based position in
+    this roles[] array.
+    """
+    role_id: UUID = Field(
         ...,
-        description="Client-generated UUID (uuid4) for this role (user_role.id). "
-                    "Other roles (parent_role_id) and users (role_id) reference "
-                    "it by this same UUID.",
+        description="Client-generated UUID (uuid4) for this role — the user_role "
+                    "table's real primary key (UserRoleMain.id). The role is "
+                    "created with this id, and users_groups reference it by this "
+                    "same UUID (users_groups[].default_role_id).",
     )
     role_name: str = Field(..., min_length=1, max_length=100)
     role_code: str = Field(..., min_length=1, max_length=50)
     role_level: int = Field(default=1, description="userrole_basic.role_level")
-    parent_role_id: Optional[UUID] = Field(
-        None,
-        description="Optional UUID of the parent role; must match another "
-                    "roles[].id (stored as user_role.parent_role_id)",
+    parent_role: Optional[str] = Field(
+        None, max_length=50,
+        description="Parent role's role_code (may point at any other role, "
+                    "including one later in this array); must match a "
+                    "roles[].role_code in this same request. Resolved to that "
+                    "role's real id and stored as user_role.parent_role_id — "
+                    "same mechanism as the direct user_role module's "
+                    "UserRoleBasicCreate.parent_role.",
     )
-    access_scope: Optional[str] = Field(None, max_length=50)
+    access_scope: Optional[str] = Field(
+        None, max_length=50,
+        description="Access scope: whole_organization, branch_entity, department, or division",
+    )
     description: Optional[str] = None
     is_admin: bool = Field(default=False, description="Admin role flag")
     default_for_new_users: bool = Field(default=False)
     active: bool = Field(default=True)
+    permissions: Optional[List[UserRolePermissionBase]] = Field(
+        default_factory=list,
+        description="Menu / Form / Button access for this role (userrole_permission), "
+                    "same shape as the direct Roles screen's Access panel — each entry's "
+                    "menu_permissions/form_permissions/button_permissions holds "
+                    "PermissionItems keyed by menu/form/button id with an access level "
+                    "(read/write/disable). A child menu can never exceed its parent's access.",
+    )
+
+    @field_validator("access_scope")
+    @classmethod
+    def validate_access_scope(cls, v):
+        return _validate_access_scope(v)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "role_id": "44444444-4444-4444-4444-444444444444",
+                "role_name": "Manager",
+                "role_code": "MGR",
+                "role_level": 2,
+                "parent_role": None,
+                "access_scope": "whole_organization",
+                "description": "Manager role",
+                "is_admin": False,
+                "default_for_new_users": False,
+                "active": True,
+                "permissions": [
+                    {
+                        "menu_permissions": [
+                            {
+                                "id": "cd829d19-3ad4-4b43-93dc-855774e3afd0",
+                                "application_id": "app-uuid-123",
+                                "modules_id": "module-uuid-456",
+                                "menu_access": ["write"],
+                            },
+                            {
+                                "id": "c3101217-3fa8-4e5e-8762-92a306c3c7d6",
+                                "application_id": "app-uuid-789",
+                                "modules_id": "module-uuid-012",
+                                "menu_access": ["read"],
+                            },
+                        ],
+                        "button_permissions": [
+                            {"id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01", "button_access": ["write"]}
+                        ],
+                        "form_permissions": [
+                            {
+                                "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
+                                "application_id": "app-uuid-123",
+                                "modules_id": "module-uuid-456",
+                                "form_access": ["write"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    )
 
 
 # ============================================================================
-# Step 7 — Users
+# Step 7 — User groups
+# ============================================================================
+
+class OnboardingUserGroup(BaseModel):
+    """Step 7: a user group — bundles users under a shared default role
+    (users_group table). Optional; add before users so they can be assigned
+    to a group below.
+
+    Has no client-supplied id — users reference a group by its 0-based
+    position in this users_groups[] array (user_group_index), not by UUID;
+    the users_group table generates its own id.
+    """
+    group_name: str = Field(..., min_length=1, max_length=100)
+    group_code: Optional[str] = Field(None, max_length=50)
+    default_role_id: Optional[UUID] = Field(
+        None,
+        description="UUID of the default role for users in this group; must "
+                    "match a roles[].role_id (stored as users_group.default_role_id) "
+                    "— same as the direct users_groups module's "
+                    "UserGroupCreate.default_role_id.",
+    )
+    description: Optional[str] = None
+
+
+
+
+
+# ============================================================================
+# Step 8 — Users
 # ============================================================================
 
 class OnboardingUser(BaseModel):
-    """Step 7: a user (user_setup + usersetup_basic [+ role/entity assignment])."""
+    """Step 8: a user (user_setup + usersetup_basic [+ role/entity assignment])."""
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     employee_id: str = Field(..., min_length=1, max_length=50)
@@ -274,18 +423,36 @@ class OnboardingUser(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=6)
     phone: Optional[str] = Field(None, max_length=20)
+    profile_image_url: Optional[str] = Field(None, max_length=500, description="Profile image URL")
     status: Optional[str] = Field("active", max_length=50)
-    role_id: Optional[UUID] = Field(
-        None,
-        description="Optional UUID of the role to assign; must match a roles[].id",
+    role_index: Optional[int] = Field(
+        None, ge=0,
+        description="Optional 0-based index into roles[] for the role to assign; "
+                    "resolved to that role's real id and stored as "
+                    "usersetup_basic.role_id",
     )
-    entity_id: Optional[UUID] = Field(
+    entity_indices: Optional[List[int]] = Field(
         None,
-        description="Optional UUID of the branch to grant this user; must match a "
-                    "branches[].entity_id. Stored as the user's default_entity "
-                    "(and added to entities/assigned_entities).",
+        description="Optional list of 0-based indices into branches[] to grant "
+                    "this user (a user can belong to multiple entities); each "
+                    "resolved to that branch's real entity_id and stored as "
+                    "usersetup_basic.entity_id — the first is treated as the "
+                    "user's default branch.",
     )
-    user_group_id: Optional[UUID] = Field(None, description="Optional user group id (bare reference)")
+    job_code_index: Optional[int] = Field(
+        None, ge=0,
+        description="Optional 0-based index into job_codes[] for the job code to "
+                    "assign this user; resolved to that job code's real id and "
+                    "stored as usersetup_basic.job_code_id — department_id/"
+                    "division_id are derived from it server-side (not accepted "
+                    "directly here).",
+    )
+    user_group_index: Optional[int] = Field(
+        None, ge=0,
+        description="Optional 0-based index into users_groups[] for the group to "
+                    "place this user in; resolved to that group's real id and "
+                    "stored as usersetup_basic.user_group_id",
+    )
     send_invite_email: bool = Field(default=False, description="Send an invite email to the user")
 
 
@@ -294,22 +461,33 @@ class OnboardingUser(BaseModel):
 # ============================================================================
 
 class OnboardingRequest(BaseModel):
-    """The full step-form payload submitted by the 'Onboard client' button."""
+    """The full step-form payload submitted by the 'Onboard client' button.
+
+    Not part of the request: if a submission fails partway (validation
+    error, duplicate client, etc.), the server generates its own draft_id
+    and saves the submitted data under it — see GET/DELETE
+    /onboarding/drafts/{draft_id} (returned in the error response).
+    """
     company: OnboardingCompany
     branches: List[OnboardingBranch] = Field(default_factory=list)
     departments: List[OnboardingDepartment] = Field(default_factory=list)
     divisions: List[OnboardingDivision] = Field(default_factory=list)
     job_codes: List[OnboardingJobCode] = Field(default_factory=list)
     roles: List[OnboardingRole] = Field(default_factory=list)
+    users_groups: List[OnboardingUserGroup] = Field(default_factory=list)
     users: List[OnboardingUser] = Field(default_factory=list)
-    # Step 8 — Subscription plan (one per client; tenant_id is set from the new tenant)
+    # Step 9 — Subscription plan (one per client; tenant_id is set from the new tenant)
     subscription: Optional[SubscriptionCreate] = None
-    # Step 9 — Security settings (SSO / MFA / session & password policy)
+    # Step 10 — Security settings (SSO / MFA / session & password policy)
     security: Optional[SecurityCreate] = None
 
 
 class OnboardingCompanyUpdate(BaseModel):
-    """PUT body — updates the client/company (tenant) fields only."""
+    """PUT body — updates the client/company (tenant) fields only.
+
+    is_active is intentionally not here — same rule as TenantUpdate: it's
+    backend-derived from initial_status, never accepted directly.
+    """
     client_name: Optional[str] = Field(None, max_length=255)
     client_code: Optional[str] = Field(None, max_length=100)
     industry: Optional[str] = Field(None, max_length=100)
@@ -321,8 +499,30 @@ class OnboardingCompanyUpdate(BaseModel):
     city: Optional[str] = Field(None, max_length=100)
     state: Optional[str] = Field(None, max_length=100)
     country: Optional[str] = Field(None, max_length=100)
-    status: Optional[str] = Field(None, max_length=50)
-    is_active: Optional[bool] = None
+    postal_code: Optional[str] = Field(None, max_length=20)
+    description: Optional[str] = None
+    display_name: Optional[str] = Field(None, max_length=255)
+    registration_number: Optional[str] = Field(None, max_length=100)
+    tax_id: Optional[str] = Field(None, max_length=100)
+    founded_year: Optional[int] = None
+    website: Optional[str] = Field(None, max_length=255)
+    company_logo: Optional[str] = Field(None, max_length=500)
+    annual_revenue: Optional[str] = Field(None, max_length=100)
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_title: Optional[str] = Field(None, max_length=100)
+    primary_domain: Optional[str] = Field(None, max_length=100)
+    business_model: Optional[str] = Field(None, max_length=100)
+    organization_type: Optional[str] = Field(None, max_length=100)
+    default_language: Optional[str] = Field(None, max_length=50)
+    time_zone: Optional[str] = Field(None, max_length=50)
+    default_currency: Optional[str] = Field(None, max_length=10)
+    date_format: Optional[str] = Field(None, max_length=20)
+    fiscal_year_start: Optional[str] = Field(None, max_length=20)
+    week_starts_on: Optional[str] = Field(None, max_length=20)
+    initial_status: Optional[str] = Field(None, max_length=50)
+    internal_notes: Optional[str] = None
+    owner_name: Optional[str] = Field(None, max_length=200)
+    owner_email: Optional[str] = None
 
 
 # ============================================================================
@@ -335,6 +535,7 @@ class OnboardingCounts(BaseModel):
     divisions: int = 0
     job_codes: int = 0
     roles: int = 0
+    users_groups: int = 0
     users: int = 0
     subscription: int = 0
     security: int = 0
@@ -347,6 +548,11 @@ class OnboardingResult(BaseModel):
     tenant_id: UUID
     tenant_db_name: Optional[str] = None
     owner_email: str
+    temp_password: str = Field(
+        ...,
+        description="Owner's randomly generated temporary password. Returned once — "
+                    "must be changed on first login.",
+    )
     counts: OnboardingCounts
 
 
@@ -356,7 +562,7 @@ class OnboardingSummary(BaseModel):
     client_name: str = Field(..., validation_alias="tenant_name")
     client_code: Optional[str] = Field(None, validation_alias="tenant_code")
     contact_email: Optional[str] = None
-    onboarding_status: Optional[str] = None
+    initial_status: Optional[str] = None
     is_active: Optional[bool] = None
     created_at: Optional[datetime] = None
 
@@ -366,6 +572,35 @@ class OnboardingSummary(BaseModel):
 class OnboardingListResponse(BaseModel):
     success: bool = True
     data: List[OnboardingSummary]
+    total: int
+    page: int = 1
+    per_page: int = 10
+
+
+# ============================================================================
+# Drafts — auto-saved when POST /onboarding/ fails partway
+# ============================================================================
+
+class OnboardingDraftSummary(BaseModel):
+    """One row in the drafts list — no payload (use the detail endpoint for that)."""
+    draft_id: UUID
+    status: str = Field(..., description="'draft' (still incomplete) or 'completed' (this id went on to onboard successfully)")
+    error_message: Optional[str] = None
+    tenant_id: Optional[UUID] = Field(None, description="Set once this draft_id successfully onboards")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OnboardingDraftDetail(OnboardingDraftSummary):
+    """Returned by GET /onboarding/drafts/{draft_id} — includes the saved payload to resume the form."""
+    payload: dict
+
+
+class OnboardingDraftListResponse(BaseModel):
+    success: bool = True
+    data: List[OnboardingDraftSummary]
     total: int
     page: int = 1
     per_page: int = 10
@@ -385,7 +620,7 @@ class OnboardingDetail(BaseModel):
     client_name: str
     client_code: Optional[str] = None
     contact_email: Optional[str] = None
-    onboarding_status: Optional[str] = None
+    initial_status: Optional[str] = None
     is_active: Optional[bool] = None
     tenant_db_name: Optional[str] = None
     counts: OnboardingCounts
@@ -394,4 +629,49 @@ class OnboardingDetail(BaseModel):
     divisions: List[_NamedRef] = Field(default_factory=list)
     job_codes: List[_NamedRef] = Field(default_factory=list)
     roles: List[_NamedRef] = Field(default_factory=list)
+    users_groups: List[_NamedRef] = Field(default_factory=list)
     users: List[_NamedRef] = Field(default_factory=list)
+
+
+class OnboardingStepProgress(BaseModel):
+    """One of the 10 onboarding steps and whether it has any data yet."""
+    step: str = Field(..., description="Step key, e.g. 'branches'")
+    label: str = Field(..., description="Human-readable step name")
+    completed: bool = Field(..., description="True once this step's tenant-DB table has at least one row")
+    count: int = Field(..., description="How many records exist for this step")
+
+
+class OnboardingProgress(BaseModel):
+    """Returned by GET /{tenant_id}/progress — powers a 'resume onboarding'
+    wizard: which of the 10 steps (company, branches, departments, divisions,
+    job codes, roles, user groups, users, subscription, security) already
+    have data, and which to continue with next."""
+    tenant_id: Optional[UUID] = Field(
+        None,
+        description="Null when computed from a not-yet-created draft payload "
+                    "(see POST /onboarding/drafts) — set once a real tenant exists.",
+    )
+    steps: List[OnboardingStepProgress]
+    completed_steps: int
+    total_steps: int
+    next_step: Optional[str] = Field(None, description="Step key of the first incomplete step, or null once all 10 have data")
+
+
+class OnboardingDraftSaveResult(BaseModel):
+    """Returned by POST /onboarding/drafts.
+
+    While company/branches/departments/divisions/job_codes/roles/users_groups/
+    users don't all have data yet, the payload is just saved to
+    onboarding_drafts (status 'draft') — no tenant is created. Once all 8 are
+    present (subscription/security stay optional and never block this), the
+    real tenant is created immediately instead (status 'created'), exactly
+    like POST /onboarding/."""
+    status: str = Field(..., description="'draft' (saved, not yet complete) or 'created' (tenant created for real)")
+    draft_id: Optional[UUID] = Field(
+        None,
+        description="Set when status == 'draft' — pass it back as ?draft_id=... on "
+                    "the next save to keep updating the same draft instead of "
+                    "creating a new one.",
+    )
+    progress: Optional[OnboardingProgress] = Field(None, description="Set when status == 'draft' — which steps still need data")
+    result: Optional[OnboardingResult] = Field(None, description="Set when status == 'created' — the new tenant")

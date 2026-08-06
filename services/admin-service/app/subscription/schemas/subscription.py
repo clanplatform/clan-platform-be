@@ -30,7 +30,9 @@ class SubscriptionBase(BaseModel):
     sandbox_environment: bool = Field(default=False)
     white_label_branding: bool = Field(default=False)
 
-    is_active: bool = Field(default=True)
+    # is_active is intentionally NOT part of the schema — it is
+    # operational/backend-managed (defaulted True on create, toggled by
+    # delete/restore) and never accepted or returned here.
 
 
 class SubscriptionCreate(SubscriptionBase):
@@ -49,7 +51,6 @@ class SubscriptionUpdate(BaseModel):
     api_access: Optional[bool] = None
     sandbox_environment: Optional[bool] = None
     white_label_branding: Optional[bool] = None
-    is_active: Optional[bool] = None
 
 
 class SubscriptionResponse(SubscriptionBase):

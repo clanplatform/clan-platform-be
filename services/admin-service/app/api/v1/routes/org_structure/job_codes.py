@@ -38,7 +38,6 @@ async def get_job_codes(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
     search: Optional[str] = Query(None, description="Search term"),
-    category: Optional[str] = Query(None, description="Filter by category"),
     active_status: Optional[bool] = Query(None, description="Filter by active status"),
     db: Session = Depends(get_tenant_db),
     current_user = Depends(get_current_user)
@@ -46,7 +45,7 @@ async def get_job_codes(
     """Get paginated list of job codes with optional filtering and all nested relationships"""
 
     job_codes, total = job_code_service.get_job_codes_paginated(
-        db, page=page, size=size, search=search, category=category, active_status=active_status
+        db, page=page, size=size, search=search, active_status=active_status
     )
 
     # Build minimal response objects without nested relationships to avoid validation issues

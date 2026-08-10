@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from uuid import UUID
 import asyncio
@@ -115,6 +116,17 @@ async def create_tenant(
     existing_email = db.query(Tenant).filter(Tenant.contact_email == tenant_data.contact_email).first()
     if existing_email:
         raise HTTPException(status_code=400, detail="Tenant email already exists")
+
+    # tenant_db_name (and thus the whole per-tenant database) is derived from
+    # tenant_code alone, lowercased — a case-different duplicate code would
+    # silently reuse another tenant's database (see TenantDatabaseManager.
+    # make_db_name / _slugify), so this must be checked case-insensitively.
+    if tenant_data.tenant_code:
+        existing_code = db.query(Tenant).filter(
+            func.lower(Tenant.tenant_code) == tenant_data.tenant_code.lower()
+        ).first()
+        if existing_code:
+            raise HTTPException(status_code=400, detail="Tenant code already exists")
 
     # Create new tenant. The owner's password is always server-generated
     # (never accepted from the caller) — hashed into owner_password_hash,

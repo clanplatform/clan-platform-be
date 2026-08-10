@@ -85,6 +85,51 @@ class TenantDatabaseManager:
         """Derive a database name from a tenant code."""
         return f"clan_platform_{_slugify(tenant_code)}"
 
+    def deprovision(self, tenant_db_name: str, master_url: str) -> bool:
+        """
+        Drop a tenant database entirely — used to clean up after a failed
+        onboarding attempt so a retry with the same tenant_code isn't
+        blocked by leftover state. Terminates any active connections first
+        (Postgres refuses to drop a database that's still connected to),
+        then DROP DATABASE (AUTOCOMMIT, since it cannot run inside a
+        transaction).
+
+        Also disposes and forgets this tenant's cached engine/session
+        factory, if any, so a later provision() of the same name doesn't
+        reuse a connection pool pointing at a database that no longer
+        exists.
+
+        Returns True on success (including when the database didn't exist),
+        False on failure. Never raises.
+        """
+        try:
+            with self._lock:
+                engine = self._engines.pop(tenant_db_name, None)
+                self._factories.pop(tenant_db_name, None)
+            if engine is not None:
+                engine.dispose()
+
+            admin_url = _swap_db_name(master_url, "postgres")
+            admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+            try:
+                with admin_engine.connect() as conn:
+                    conn.execute(
+                        text(
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                            "WHERE datname = :n AND pid <> pg_backend_pid()"
+                        ),
+                        {"n": tenant_db_name},
+                    )
+                    # Identifier already slugified — safe to embed directly
+                    conn.execute(text(f'DROP DATABASE IF EXISTS "{tenant_db_name}"'))
+                    logger.info("Dropped tenant database: %s", tenant_db_name)
+            finally:
+                admin_engine.dispose()
+            return True
+        except Exception as exc:
+            logger.error("Failed to deprovision tenant database %s: %s", tenant_db_name, exc, exc_info=True)
+            return False
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

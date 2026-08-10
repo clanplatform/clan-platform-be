@@ -7,16 +7,17 @@ single sequence:
     tenant (client)  ->  branches (entities)  ->  departments  ->  divisions
                      ->  job codes  ->  roles  ->  users_groups  ->  users
 
-branches[], departments[], divisions[] and roles[] carry a **client-generated
-UUID** (branches[].entity_id, departments[].department_id,
-divisions[].division_id, roles[].role_id) — same as the direct
-entities/departments/divisions/user_role modules' own primary keys — so
-departments, divisions, job codes AND users_groups reference their parent by
-that real UUID. roles[].role_code (already required and unique per tenant)
-also doubles as a natural key: a role's PARENT role is referenced by
-role_code rather than by role_id (see roles[i].parent_role below).
-users[] still references roles/users_groups/branches/job_codes by 0-based
-position in those arrays:
+branches[], departments[], divisions[], job_codes[], roles[] and
+users_groups[] all carry a **client-generated UUID** (entity_id,
+department_id, division_id, job_code_id, role_id, group_id respectively) —
+same as the direct entities/departments/divisions/job_codes/user_role/
+users_groups modules' own primary keys — so every child references its
+parent(s) by that real UUID. roles[].role_code (already required and unique
+per tenant) also doubles as a natural key: a role's PARENT role is
+referenced by role_code rather than by role_id (see roles[i].parent_role
+below), since a role can't reference itself as its own parent by UUID before
+it exists in the same array. users[] references its role/branches/job_code/
+group the same way — by real UUID:
 
     departments[i].entity_id         -> branches[].entity_id            (UUID)
     divisions[i].entity_id           -> branches[].entity_id            (UUID)
@@ -33,21 +34,25 @@ position in those arrays:
                                                                            users_group.default_role_id — same as
                                                                            the direct users_groups module's
                                                                            UserGroupCreate.default_role_id)
-    users[i].role_index              -> roles[]                         (0-based index, optional)
-    users[i].entity_indices          -> branches[]                      (list of 0-based indices, optional; resolved
-                                                                           entity_ids stored as usersetup_basic.entity_id)
-    users[i].job_code_index          -> job_codes[]                     (0-based index, optional; resolved id stored as
-                                                                           usersetup_basic.job_code_id — department_id/
-                                                                           division_id are derived from it server-side)
-    users[i].user_group_index        -> users_groups[]                  (0-based index, optional)
+    users[i].role_id                 -> roles[].role_id                 (UUID, optional; stored as usersetup_basic.role_id)
+    users[i].entity_id               -> branches[].entity_id            (list of UUIDs, optional; the first is the
+                                                                           user's default branch; stored as
+                                                                           usersetup_basic.entity_id)
+    users[i].job_code_id             -> job_codes[].job_code_id         (UUID, optional; stored as
+                                                                           usersetup_basic.job_code_id —
+                                                                           department_id/division_id are derived
+                                                                           from it server-side)
+    users[i].user_group_id           -> users_groups[].group_id         (UUID, optional; stored as
+                                                                           usersetup_basic.user_group_id)
 
 branches[].entity_id, departments[].department_id, divisions[].division_id,
-roles[].role_id and roles[].role_code must each be unique within the
-request. Every index is validated server-side as an in-bounds position into
-its target array (roles[i].parent_role may point at any other role,
-including one later in the array — roles are created in two passes so
-forward references resolve). An unknown UUID/role_code, a duplicate
-client-supplied id, or an out-of-range index returns 422.
+job_codes[].job_code_id, roles[].role_id, roles[].role_code and
+users_groups[].group_id must each be unique within the request. Every
+reference is validated server-side by UUID set membership against its
+target array (roles[i].parent_role may point at any other role, including
+one later in the array — roles are created in two passes so forward
+references resolve). An unknown UUID/role_code or a duplicate
+client-supplied id returns 422.
 """
 from typing import List, Optional
 from decimal import Decimal
@@ -134,9 +139,9 @@ class OnboardingBranch(BaseModel):
         ...,
         description="Client-generated UUID (uuid4) for this branch/entity — the "
                     "entities table's real primary key. The entity is created with "
-                    "this id, and departments reference it by this same UUID "
-                    "(departments[].entity_id). divisions/job_codes/users still "
-                    "reference branches by 0-based index (entity_index/entity_indices).",
+                    "this id, and departments/divisions/job_codes/users all "
+                    "reference it by this same UUID (e.g. departments[].entity_id, "
+                    "users[].entity_id).",
     )
     entity_name: str = Field(..., min_length=1, max_length=100, description="Branch / location name")
     entity_code: str = Field(..., min_length=1, max_length=20, description="Branch code")
@@ -246,10 +251,16 @@ class OnboardingJobCode(BaseModel):
     The jobcode_basicinfo table requires entity, department AND division, so all
     three ids are mandatory here (unlike the looser-looking form).
 
-    Has no client-supplied id of its own — users reference a job code by its
-    0-based position in this job_codes[] array (job_code_index), not by UUID;
-    the job_codes table generates its own id.
+    users[].job_code_id references this job code by job_code_id (a real,
+    client-generated UUID — same as branches/departments/divisions/roles).
     """
+    job_code_id: UUID = Field(
+        ...,
+        description="Client-generated UUID (uuid4) for this job code — the "
+                    "job_codes table's real primary key. The job code is "
+                    "created with this id, and users reference it by this "
+                    "same UUID (users[].job_code_id).",
+    )
     job_code: str = Field(..., min_length=1, max_length=50)
     job_title: str = Field(..., min_length=1, max_length=150)
     entity_id: UUID = Field(
@@ -289,10 +300,9 @@ class OnboardingJobCode(BaseModel):
 class OnboardingRole(BaseModel):
     """Step 6: a role for this client (user_role + userrole_basic [+ userrole_permission]).
 
-    users_groups[].default_role_id references this role by role_id (a real,
-    client-generated UUID — same as branches/departments/divisions/job_codes).
-    users[].role_index still references a role by its 0-based position in
-    this roles[] array.
+    users_groups[].default_role_id and users[].role_id both reference this
+    role by role_id (a real, client-generated UUID — same as branches/
+    departments/divisions/job_codes).
     """
     role_id: UUID = Field(
         ...,
@@ -391,10 +401,17 @@ class OnboardingUserGroup(BaseModel):
     (users_group table). Optional; add before users so they can be assigned
     to a group below.
 
-    Has no client-supplied id — users reference a group by its 0-based
-    position in this users_groups[] array (user_group_index), not by UUID;
-    the users_group table generates its own id.
+    users[].user_group_id references this group by group_id (a real,
+    client-generated UUID — same as branches/departments/divisions/roles/
+    job_codes).
     """
+    group_id: UUID = Field(
+        ...,
+        description="Client-generated UUID (uuid4) for this user group — the "
+                    "users_group table's real primary key. The group is "
+                    "created with this id, and users reference it by this "
+                    "same UUID (users[].user_group_id).",
+    )
     group_name: str = Field(..., min_length=1, max_length=100)
     group_code: Optional[str] = Field(None, max_length=50)
     default_role_id: Optional[UUID] = Field(
@@ -425,33 +442,34 @@ class OnboardingUser(BaseModel):
     phone: Optional[str] = Field(None, max_length=20)
     profile_image_url: Optional[str] = Field(None, max_length=500, description="Profile image URL")
     status: Optional[str] = Field("active", max_length=50)
-    role_index: Optional[int] = Field(
-        None, ge=0,
-        description="Optional 0-based index into roles[] for the role to assign; "
-                    "resolved to that role's real id and stored as "
-                    "usersetup_basic.role_id",
-    )
-    entity_indices: Optional[List[int]] = Field(
+    role_id: Optional[UUID] = Field(
         None,
-        description="Optional list of 0-based indices into branches[] to grant "
-                    "this user (a user can belong to multiple entities); each "
-                    "resolved to that branch's real entity_id and stored as "
-                    "usersetup_basic.entity_id — the first is treated as the "
-                    "user's default branch.",
+        description="UUID of the role to assign; must match a roles[].role_id "
+                    "(stored as usersetup_basic.role_id) — same as the direct "
+                    "user_setup module's UserSetupBasicCreate.role_id.",
     )
-    job_code_index: Optional[int] = Field(
-        None, ge=0,
-        description="Optional 0-based index into job_codes[] for the job code to "
-                    "assign this user; resolved to that job code's real id and "
-                    "stored as usersetup_basic.job_code_id — department_id/"
-                    "division_id are derived from it server-side (not accepted "
-                    "directly here).",
+    entity_id: Optional[List[UUID]] = Field(
+        None,
+        description="List of branch UUIDs to grant this user (a user can belong "
+                    "to multiple entities); each must match a branches[].entity_id "
+                    "(stored as usersetup_basic.entity_id — the first is treated "
+                    "as the user's default branch) — same as the direct "
+                    "user_setup module's UserSetupBasicCreate.entity_id.",
     )
-    user_group_index: Optional[int] = Field(
-        None, ge=0,
-        description="Optional 0-based index into users_groups[] for the group to "
-                    "place this user in; resolved to that group's real id and "
-                    "stored as usersetup_basic.user_group_id",
+    job_code_id: Optional[UUID] = Field(
+        None,
+        description="UUID of the job code to assign this user; must match a "
+                    "job_codes[].job_code_id (stored as usersetup_basic.job_code_id "
+                    "— department_id/division_id are derived from it server-side, "
+                    "not accepted directly here) — same as the direct user_setup "
+                    "module's UserSetupBasicCreate.job_code_id.",
+    )
+    user_group_id: Optional[UUID] = Field(
+        None,
+        description="UUID of the user group to place this user in; must match a "
+                    "users_groups[].group_id (stored as usersetup_basic.user_group_id) "
+                    "— same as the direct user_setup module's "
+                    "UserSetupBasicCreate.user_group_id.",
     )
     send_invite_email: bool = Field(default=False, description="Send an invite email to the user")
 
@@ -649,7 +667,7 @@ class OnboardingProgress(BaseModel):
     tenant_id: Optional[UUID] = Field(
         None,
         description="Null when computed from a not-yet-created draft payload "
-                    "(see POST /onboarding/drafts) — set once a real tenant exists.",
+                    "(see POST /onboarding/) — set once a real tenant exists.",
     )
     steps: List[OnboardingStepProgress]
     completed_steps: int
@@ -658,14 +676,13 @@ class OnboardingProgress(BaseModel):
 
 
 class OnboardingDraftSaveResult(BaseModel):
-    """Returned by POST /onboarding/drafts.
+    """Returned by POST /onboarding/.
 
-    While company/branches/departments/divisions/job_codes/roles/users_groups/
-    users don't all have data yet, the payload is just saved to
-    onboarding_drafts (status 'draft') — no tenant is created. Once all 8 are
-    present (subscription/security stay optional and never block this), the
-    real tenant is created immediately instead (status 'created'), exactly
-    like POST /onboarding/."""
+    While company/branches/departments/divisions/job_codes/subscription/
+    roles/users_groups/users/security don't all have data yet, the payload
+    is just saved to onboarding_drafts (status 'draft') — no tenant is
+    created. Only once every one of the 10 steps is present is the real
+    tenant created instead (status 'created') — nothing is optional."""
     status: str = Field(..., description="'draft' (saved, not yet complete) or 'created' (tenant created for real)")
     draft_id: Optional[UUID] = Field(
         None,

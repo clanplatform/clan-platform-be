@@ -1,12 +1,17 @@
 """
 HTTP client for clan-communication-be email-service.
 
-Call send_tenant_invitation_email() after a tenant is created and its
-admin user is seeded into usersetup_basic. The email invites the tenant
-to the platform with a login link they click to sign in.
+Three emails, all fire-and-forget (asyncio.create_task(...)) after a tenant
+is created and its users are seeded:
+  - send_tenant_invitation_email() — the owner (owner_email), with their
+    temp login password.
+  - send_tenant_contact_notification() — the client's general contact
+    address (contact_email), only when it differs from owner_email; no
+    credentials, since contact_email isn't necessarily a login identity.
+  - send_user_invite_email() — any users[] entry with send_invite_email
+    true; no password (the user chose their own), just a login link.
 Failures are always swallowed — an email error must never roll back or
 fail the tenant-creation request.
-Use asyncio.create_task(send_tenant_invitation_email(...)) for fire-and-forget.
 """
 import logging
 import uuid
@@ -90,6 +95,139 @@ async def send_tenant_invitation_email(
         f"<a href=\"{website}\">{website}</a></p>"
     )
 
+    await _post_email(
+        to_email=to_email,
+        tenant_id=tenant_id,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        recipient_id=recipient_id,
+        log_label="tenant-invitation",
+    )
+
+
+async def send_tenant_contact_notification(
+    *,
+    to_email: str,
+    tenant_name: str,
+    tenant_id: str,
+    owner_email: str,
+) -> None:
+    """
+    Notify a client's general contact address that onboarding completed,
+    without login credentials (contact_email isn't necessarily a login
+    identity — only owner_email is seeded as the actual admin user). Only
+    call this when contact_email differs from owner_email, to avoid sending
+    two emails to the same inbox.
+    Fire-and-forget — never raises.
+    """
+    subject = f"{tenant_name} is now set up on Clan"
+    body_text = (
+        f"Hello,\n\n"
+        f"Your organization, {tenant_name}, has been successfully onboarded "
+        "to Clan.\n\n"
+        f"The account admin login is: {owner_email}\n"
+        "That admin received a separate email with login credentials.\n\n"
+        "If you did not request this, please contact the Clan support team "
+        "immediately.\n\n"
+        "Thank you,\n\n"
+        "Team Clan\n"
+        "clan.platform@gmail.com\n"
+        f"{settings.COMPANY_WEBSITE}"
+    )
+    body_html = (
+        "<p>Hello,</p>"
+        f"<p>Your organization, <strong>{tenant_name}</strong>, has been "
+        "successfully onboarded to Clan.</p>"
+        f"<p>The account admin login is: <strong>{owner_email}</strong><br>"
+        "That admin received a separate email with login credentials.</p>"
+        "<p>If you did not request this, please contact the Clan support "
+        "team immediately.</p>"
+        "<p>Thank you,</p>"
+        "<p><strong>Team Clan</strong><br>"
+        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
+        f"<a href=\"{settings.COMPANY_WEBSITE}\">{settings.COMPANY_WEBSITE}</a></p>"
+    )
+    await _post_email(
+        to_email=to_email,
+        tenant_id=tenant_id,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        log_label="tenant-contact-notification",
+    )
+
+
+async def send_user_invite_email(
+    *,
+    to_email: str,
+    first_name: Optional[str],
+    tenant_name: str,
+    tenant_id: str,
+    tenant_app_url: Optional[str] = None,
+) -> None:
+    """
+    Invite a user added during onboarding (users[] with send_invite_email
+    true) to log in. Unlike the owner's temp-password email, the user chose
+    their own password when the form was submitted, so it isn't repeated
+    here — just a login link.
+    Fire-and-forget — never raises.
+    """
+    subject = f"You've been added to {tenant_name} on Clan"
+    login_base = (tenant_app_url.rstrip("/") + "/login") if tenant_app_url else settings.FRONTEND_LOGIN_URL
+    login_url = f"{login_base}?email={quote(to_email)}&tenant_id={quote(tenant_id)}"
+    greeting = f"Hello {first_name}," if first_name else "Hello,"
+
+    body_text = (
+        f"{greeting}\n\n"
+        f"You've been added as a user of {tenant_name} on Clan. Use the "
+        f"email and password set for you to log in:\n\n"
+        f"Email: {to_email}\n"
+        f"Login URL: {login_url}\n\n"
+        "If you did not expect this invitation, please contact the Clan "
+        "support team immediately.\n\n"
+        "Thank you,\n\n"
+        "Team Clan\n"
+        "clan.platform@gmail.com\n"
+        f"{settings.COMPANY_WEBSITE}"
+    )
+    body_html = (
+        f"<p>{greeting}</p>"
+        f"<p>You've been added as a user of <strong>{tenant_name}</strong> "
+        "on Clan. Use the email and password set for you to log in:</p>"
+        f"<p><strong>Email:</strong> {to_email}</p>"
+        f"<p><a href=\"{login_url}\" "
+        "style=\"display:inline-block;padding:10px 24px;background:#2563eb;"
+        "color:#ffffff;text-decoration:none;border-radius:6px;\">Log In</a></p>"
+        f"<p><strong>Login URL:</strong> <a href=\"{login_url}\">{login_url}</a></p>"
+        "<p>If you did not expect this invitation, please contact the Clan "
+        "support team immediately.</p>"
+        "<p>Thank you,</p>"
+        "<p><strong>Team Clan</strong><br>"
+        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
+        f"<a href=\"{settings.COMPANY_WEBSITE}\">{settings.COMPANY_WEBSITE}</a></p>"
+    )
+    await _post_email(
+        to_email=to_email,
+        tenant_id=tenant_id,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        log_label="user-invitation",
+    )
+
+
+async def _post_email(
+    *,
+    to_email: str,
+    tenant_id: Optional[str],
+    subject: str,
+    body_text: str,
+    body_html: str,
+    recipient_id: Optional[str] = None,
+    log_label: str,
+) -> None:
+    """Shared HTTP call to the email-service /send endpoint. Never raises."""
     try:
         # Must exceed the email-service's own SMTP timeout (15s) plus its
         # SendGrid fallback — the /send endpoint blocks until delivery, and a
@@ -109,11 +247,11 @@ async def send_tenant_invitation_email(
                 },
             )
             if resp.status_code in (200, 201, 202):
-                logger.info("[email] tenant-invitation email accepted for %s", to_email)
+                logger.info("[email] %s email accepted for %s", log_label, to_email)
             else:
                 logger.warning(
-                    "[email] tenant-invitation email rejected for %s: %s %s",
-                    to_email, resp.status_code, resp.text[:200],
+                    "[email] %s email rejected for %s: %s %s",
+                    log_label, to_email, resp.status_code, resp.text[:200],
                 )
     except Exception as exc:
-        logger.error("[email] tenant-invitation email failed for %s: %s", to_email, exc)
+        logger.error("[email] %s email failed for %s: %s", log_label, to_email, exc)

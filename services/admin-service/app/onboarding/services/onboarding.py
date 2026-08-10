@@ -23,6 +23,8 @@ from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 from datetime import datetime, timezone
 
+from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -30,6 +32,13 @@ from app.core.security import get_password_hash, generate_temp_password
 from app.infrastructure.database.tenant_db_manager import tenant_db_manager
 
 from app.tenants.models.tenants import Tenant
+
+from app.domains.models.domain import Domain
+from app.applications.models.application import Application
+from app.modules.models.module import Module
+from app.menus.models.menu import Menu
+from app.forms.models.forms import Form
+from app.buttons.models.button import Button
 
 from app.entities.models.entity import Entity
 from app.entities.services.entity import create_entity
@@ -92,23 +101,118 @@ def _safe_uuid(value) -> Optional[UUID]:
         return None
 
 
-def _validate_indices(payload: OnboardingRequest) -> None:
-    """Fail fast (422) if any child references an out-of-range index into a
-    parent array.
+# ============================================================================
+# Menu/form/button catalog sync (master -> tenant)
+#
+# menus/forms/buttons are platform navigation catalog data, managed in the
+# master DB, but roles[].permissions in onboarding grant access against a
+# tenant's OWN menus/forms/buttons tables (each tenant DB gets its own copy —
+# there's no tenant_id column, isolation is per-database). A brand-new
+# tenant's copy starts empty, so any menu/form/button id referenced by a
+# role's permissions must be copied over from the master DB (preserving the
+# same primary key) before UserRoleService's existence checks — which run
+# against the tenant DB — can succeed. Tenants only ever get menus/forms/
+# buttons this way: copied from the master catalog, never created directly.
+# ============================================================================
 
-    branches[], departments[], divisions[] and roles[] carry a client-supplied
-    UUID (branches[].entity_id, departments[].department_id,
-    divisions[].division_id, roles[].role_id) — those must be unique within
-    their list, and departments[].entity_id / divisions[].entity_id /
-    divisions[].department_id / job_codes[].entity_id /
-    job_codes[].department_id / job_codes[].division_id /
-    users_groups[].default_role_id must point at one of them, validated here
-    by set membership. roles[].role_code also doubles as a natural key (also
-    validated for uniqueness here) so roles[].parent_role can reference a
-    sibling role by role_code instead of by role_id. users and users_groups
-    have no client-supplied id of their own; children reference a parent by
-    its 0-based position in that parent's array instead — every such index is
-    validated here as in-bounds.
+def _sync_domain(master_db: Session, tenant_db: Session, domain_id: UUID) -> None:
+    if tenant_db.query(Domain).filter(Domain.id == domain_id).first():
+        return
+    row = master_db.query(Domain).filter(Domain.id == domain_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Domain with ID {domain_id} not found")
+    tenant_db.add(Domain(**{c.name: getattr(row, c.name) for c in Domain.__table__.columns}))
+    tenant_db.flush()
+
+
+def _sync_application(master_db: Session, tenant_db: Session, application_id: UUID) -> None:
+    if tenant_db.query(Application).filter(Application.id == application_id).first():
+        return
+    row = master_db.query(Application).filter(Application.id == application_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
+    _sync_domain(master_db, tenant_db, row.domain_id)
+    tenant_db.add(Application(**{c.name: getattr(row, c.name) for c in Application.__table__.columns}))
+    tenant_db.flush()
+
+
+def _sync_module(master_db: Session, tenant_db: Session, module_id: UUID) -> None:
+    if tenant_db.query(Module).filter(Module.id == module_id).first():
+        return
+    row = master_db.query(Module).filter(Module.id == module_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Module with ID {module_id} not found")
+    _sync_application(master_db, tenant_db, row.application_id)
+    tenant_db.add(Module(**{c.name: getattr(row, c.name) for c in Module.__table__.columns}))
+    tenant_db.flush()
+
+
+def _sync_menu(master_db: Session, tenant_db: Session, menu_id: UUID) -> None:
+    if tenant_db.query(Menu).filter(Menu.id == menu_id).first():
+        return
+    row = master_db.query(Menu).filter(Menu.id == menu_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Menu with ID {menu_id} not found")
+    _sync_application(master_db, tenant_db, row.application_id)
+    if row.module_id:
+        _sync_module(master_db, tenant_db, row.module_id)
+    if row.parent_menu_id:
+        _sync_menu(master_db, tenant_db, row.parent_menu_id)
+    tenant_db.add(Menu(**{c.name: getattr(row, c.name) for c in Menu.__table__.columns}))
+    tenant_db.flush()
+
+
+def _sync_form(master_db: Session, tenant_db: Session, form_id: UUID) -> None:
+    if tenant_db.query(Form).filter(Form.id == form_id).first():
+        return
+    row = master_db.query(Form).filter(Form.id == form_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Form with ID {form_id} not found")
+    _sync_menu(master_db, tenant_db, row.menu_id)
+    tenant_db.add(Form(**{c.name: getattr(row, c.name) for c in Form.__table__.columns}))
+    tenant_db.flush()
+
+
+def _sync_button(master_db: Session, tenant_db: Session, button_id: UUID) -> None:
+    if tenant_db.query(Button).filter(Button.id == button_id).first():
+        return
+    row = master_db.query(Button).filter(Button.id == button_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Button with ID {button_id} not found")
+    _sync_menu(master_db, tenant_db, row.menu_id)
+    tenant_db.add(Button(**{c.name: getattr(row, c.name) for c in Button.__table__.columns}))
+    tenant_db.flush()
+
+
+def _sync_role_permission_catalog(master_db: Session, tenant_db: Session, payload: OnboardingRequest) -> None:
+    """Copy every menu/form/button (and their application/module/domain/
+    parent-menu dependencies) referenced anywhere in roles[].permissions[]
+    from the master DB into the tenant DB, preserving primary keys, so the
+    role-permission existence checks that run against the tenant DB during
+    role creation succeed."""
+    for i, r in enumerate(payload.roles):
+        for perm in (r.permissions or []):
+            for item in (perm.menu_permissions or []):
+                _sync_menu(master_db, tenant_db, _safe_uuid(item.id) or item.id)
+            for item in (perm.form_permissions or []):
+                _sync_form(master_db, tenant_db, _safe_uuid(item.id) or item.id)
+            for item in (perm.button_permissions or []):
+                _sync_button(master_db, tenant_db, _safe_uuid(item.id) or item.id)
+
+
+def _validate_indices(payload: OnboardingRequest) -> None:
+    """Fail fast (422) if any child references an unknown UUID.
+
+    branches[], departments[], divisions[], job_codes[], roles[] and
+    users_groups[] all carry a client-supplied UUID (entity_id,
+    department_id, division_id, job_code_id, role_id, group_id respectively)
+    — each must be unique within its list, and every reference a child makes
+    to a parent (departments/divisions/job_codes -> branches/departments/
+    divisions, users_groups -> roles, users -> roles/branches/job_codes/
+    users_groups) is validated here by UUID set membership. roles[].role_code
+    also doubles as a natural key (also validated for uniqueness here) so
+    roles[].parent_role can reference a sibling role by role_code instead of
+    by role_id.
     """
     branch_ids = [b.entity_id for b in payload.branches]
     branch_id_set = set(branch_ids)
@@ -125,6 +229,11 @@ def _validate_indices(payload: OnboardingRequest) -> None:
     if len(division_id_set) != len(division_ids):
         raise OnboardingDuplicateError("divisions[].division_id")
 
+    job_code_ids = [j.job_code_id for j in payload.job_codes]
+    job_code_id_set = set(job_code_ids)
+    if len(job_code_id_set) != len(job_code_ids):
+        raise OnboardingDuplicateError("job_codes[].job_code_id")
+
     role_ids = [r.role_id for r in payload.roles]
     role_id_set = set(role_ids)
     if len(role_id_set) != len(role_ids):
@@ -135,14 +244,10 @@ def _validate_indices(payload: OnboardingRequest) -> None:
     if len(role_code_set) != len(role_codes):
         raise OnboardingDuplicateError("roles[].role_code")
 
-    branch_count = len(payload.branches)
-    job_code_count = len(payload.job_codes)
-    role_count = len(payload.roles)
-    user_group_count = len(payload.users_groups)
-
-    def _check_index(where: str, index: Optional[int], count: int, target: str) -> None:
-        if index is not None and not (0 <= index < count):
-            raise OnboardingUnknownReferenceError(where, index, target)
+    group_ids = [g.group_id for g in payload.users_groups]
+    group_id_set = set(group_ids)
+    if len(group_id_set) != len(group_ids):
+        raise OnboardingDuplicateError("users_groups[].group_id")
 
     for i, d in enumerate(payload.departments):
         if d.entity_id not in branch_id_set:
@@ -166,11 +271,15 @@ def _validate_indices(payload: OnboardingRequest) -> None:
         if g.default_role_id is not None and g.default_role_id not in role_id_set:
             raise OnboardingUnknownReferenceError(f"users_groups[{i}]", g.default_role_id, "roles")
     for i, u in enumerate(payload.users):
-        _check_index(f"users[{i}]", u.role_index, role_count, "roles")
-        for eidx in (u.entity_indices or []):
-            _check_index(f"users[{i}]", eidx, branch_count, "branches")
-        _check_index(f"users[{i}]", u.job_code_index, job_code_count, "job_codes")
-        _check_index(f"users[{i}]", u.user_group_index, user_group_count, "users_groups")
+        if u.role_id is not None and u.role_id not in role_id_set:
+            raise OnboardingUnknownReferenceError(f"users[{i}]", u.role_id, "roles")
+        for eid in (u.entity_id or []):
+            if eid not in branch_id_set:
+                raise OnboardingUnknownReferenceError(f"users[{i}]", eid, "branches")
+        if u.job_code_id is not None and u.job_code_id not in job_code_id_set:
+            raise OnboardingUnknownReferenceError(f"users[{i}]", u.job_code_id, "job_codes")
+        if u.user_group_id is not None and u.user_group_id not in group_id_set:
+            raise OnboardingUnknownReferenceError(f"users[{i}]", u.user_group_id, "users_groups")
 
 
 def _split_full_name(full_name: Optional[str]) -> Tuple[str, str]:
@@ -181,6 +290,25 @@ def _split_full_name(full_name: Optional[str]) -> Tuple[str, str]:
     if len(parts) == 1:
         return parts[0], parts[0]
     return parts[0], " ".join(parts[1:])
+
+
+def _cleanup_failed_tenant(master_db: Session, tenant: Tenant) -> None:
+    """Best-effort cleanup after a failed onboarding attempt: drop the
+    (possibly partially-provisioned) tenant database and remove the
+    master-DB tenant row, so the same name/code can be retried cleanly
+    instead of being blocked by leftover state. Never raises — failures
+    here must not mask the original error the caller is already handling."""
+    if tenant.tenant_db_name:
+        tenant_db_manager.deprovision(tenant.tenant_db_name, settings.DATABASE_URL)
+    try:
+        master_db.delete(tenant)
+        master_db.commit()
+    except Exception:
+        master_db.rollback()
+        logger.warning(
+            "Failed to remove tenant row %s after a failed onboarding attempt",
+            tenant.tenant_id, exc_info=True,
+        )
 
 
 def _seed_tenant_row(tenant_db: Session, tenant: Tenant) -> None:
@@ -276,6 +404,14 @@ def create_onboarding(
         raise DuplicateTenantError("A client with this name already exists")
     if master_db.query(Tenant).filter(Tenant.contact_email == company.contact_email).first():
         raise DuplicateTenantError("A client with this contact email already exists")
+    # tenant_db_name (and thus the whole per-tenant database) is derived from
+    # tenant_code alone, lowercased — a case-different duplicate code would
+    # silently reuse another tenant's database (see TenantDatabaseManager.
+    # make_db_name / _slugify), so this must be checked case-insensitively.
+    if company.client_code and master_db.query(Tenant).filter(
+        func.lower(Tenant.tenant_code) == company.client_code.lower()
+    ).first():
+        raise DuplicateTenantError("A client with this code already exists")
 
     # Validate parent references before creating anything
     _validate_indices(payload)
@@ -329,20 +465,29 @@ def create_onboarding(
     # The DB name is derived from tenant_code (Tenant.tenant_db_name is a computed
     # property) — a client code is required to provision the dedicated database.
     if not tenant.tenant_db_name:
+        _cleanup_failed_tenant(master_db, tenant)
         raise TenantProvisioningError()
 
     # 2. Provision the tenant's dedicated database (CREATE DB + all tables)
     ok = tenant_db_manager.provision(tenant.tenant_db_name, settings.DATABASE_URL, None)
     if not ok:
+        _cleanup_failed_tenant(master_db, tenant)
         raise TenantProvisioningError(tenant.tenant_db_name)
 
     tenant_db = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
     counts = OnboardingCounts()
+    failed = False
     try:
         tenant_id = tenant.tenant_id
 
         # Seed the tenant row into the tenant DB
         _seed_tenant_row(tenant_db, tenant)
+
+        # Copy every menu/form/button (+ their application/module/domain/
+        # parent-menu dependencies) referenced by roles[].permissions[] from
+        # the master catalog into this tenant DB — done early so a bad
+        # reference fails before branches/departments/etc. are created.
+        _sync_role_permission_catalog(master_db, tenant_db, payload)
 
         # Owner admin user (step 1 "Owner login")
         code = (tenant.tenant_code or str(tenant_id)[:8]).upper()
@@ -360,10 +505,8 @@ def create_onboarding(
         counts.users += 1
 
         # 3. Branches (entities) — created with the client-supplied entity_id so
-        #    departments/divisions/job_codes can reference them by that UUID
-        #    directly; users[].entity_indices still resolves via
-        #    branch_ids[index], which this same list also serves (in
-        #    payload.branches order).
+        #    departments/divisions/job_codes/users can all reference them by
+        #    that UUID directly.
         branch_ids: List[UUID] = []
         for b in payload.branches:
             entity = create_entity(
@@ -489,6 +632,7 @@ def create_onboarding(
                 ),
                 tenant_id=tenant_id,
                 user_id=_safe_uuid(created_by_user_id),
+                job_code_id=j.job_code_id,
             )
             job_code_ids.append(job_code.id)
         counts.job_codes = len(job_code_ids)
@@ -568,6 +712,7 @@ def create_onboarding(
                 ),
                 tenant_id=tenant_id,
                 user_id=_safe_uuid(created_by_user_id),
+                group_id=g.group_id,
             )
             user_group_ids.append(group.id)
         counts.users_groups = len(user_group_ids)
@@ -586,10 +731,14 @@ def create_onboarding(
                 phone=u.phone,
                 profile_image_url=u.profile_image_url,
                 status=u.status or "active",
-                role_id=role_ids[u.role_index] if u.role_index is not None else None,
-                entity_id=[branch_ids[idx] for idx in u.entity_indices] if u.entity_indices else None,
-                job_code_id=job_code_ids[u.job_code_index] if u.job_code_index is not None else None,
-                user_group_id=user_group_ids[u.user_group_index] if u.user_group_index is not None else None,
+                # u.role_id / u.entity_id / u.job_code_id / u.user_group_id are
+                # the role's, branches', job code's and group's client-supplied
+                # UUIDs (validated to exist among roles/branches/job_codes/
+                # users_groups) — used directly.
+                role_id=u.role_id,
+                entity_id=u.entity_id,
+                job_code_id=u.job_code_id,
+                user_group_id=u.user_group_id,
                 send_invite_email=u.send_invite_email,
             )
             counts.users += 1
@@ -616,9 +765,16 @@ def create_onboarding(
 
     except Exception:
         tenant_db.rollback()
+        failed = True
         raise
     finally:
         tenant_db.close()
+        if failed:
+            # A failed attempt must not leave a half-created tenant behind —
+            # branches/departments/divisions/job_codes etc. commit as they
+            # go (see module docstring), so a late failure (e.g. roles)
+            # still leaves real data sitting in the tenant DB otherwise.
+            _cleanup_failed_tenant(master_db, tenant)
 
     master_db.refresh(tenant)
     return tenant, counts, temp_password
@@ -740,10 +896,6 @@ _PROGRESS_STEPS = [
     ("security", "Security"),
 ]
 
-# The subset of steps required before a draft auto-finalizes into a real
-# tenant (see save_or_create_onboarding). subscription/security are
-# deliberately excluded — they stay optional and never block finalizing.
-_REQUIRED_FOR_FINALIZE = {"company", "branches", "departments", "divisions", "job_codes", "roles", "users_groups", "users"}
 
 
 def _build_progress(step_counts: Dict[str, int], tenant_id: Optional[UUID]) -> OnboardingProgress:
@@ -822,8 +974,12 @@ def compute_payload_progress(payload: OnboardingRequest) -> OnboardingProgress:
 
 
 def is_progress_complete(progress: OnboardingProgress) -> bool:
-    """True once every step in _REQUIRED_FOR_FINALIZE has data."""
-    return all(s.completed for s in progress.steps if s.step in _REQUIRED_FOR_FINALIZE)
+    """True once all 10 onboarding steps have data — matches the wizard's own
+    step list (Client, Organization, Structure, Job codes, Subscription,
+    Roles, Users, Security; Review is just the confirm screen, not a data
+    step). Nothing is optional: the tenant + its database are only created
+    once every step is complete."""
+    return progress.completed_steps == progress.total_steps
 
 
 # Map OnboardingCompanyUpdate field -> Tenant column

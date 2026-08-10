@@ -1,9 +1,15 @@
 """
 Onboarding API — step-form driven client (tenant) creation.
 
-One POST creates the client and every branch, department, division, job code,
-role and user, resolving each record to its parent by array index. GET / PUT /
-DELETE manage the onboarded client (company-level).
+POST / is called repeatedly as the step form progresses, resending the
+accumulated payload each time (pass back ?draft_id=... from a previous
+'draft' response after the first call). While company/branches/departments/
+divisions/job_codes/subscription/roles/users_groups/users/security don't
+all have data yet, the payload is just saved to onboarding_drafts (status
+'draft', no tenant created) so it can be resumed later. Only once every one
+of the 10 steps is present — matching the wizard's own step list, nothing
+optional — is the real tenant + its dedicated database created (status
+'created'). GET / PUT / DELETE manage the onboarded client (company-level).
 
 All endpoints are restricted to master-DB platform users (JWT tenant_id NULL);
 tenant users cannot onboard clients.
@@ -14,7 +20,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database.session import get_db
@@ -25,6 +31,11 @@ from app.infrastructure.audit_helpers import (
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
 from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
+from app.infrastructure.email_tenant import (
+    send_tenant_invitation_email,
+    send_tenant_contact_notification,
+    send_user_invite_email,
+)
 
 from app.onboarding.services import onboarding as onboarding_service
 from app.onboarding.exceptions import MasterUserRequiredError
@@ -72,6 +83,40 @@ def _sync_tenant(tenant) -> None:
     ))
 
 
+def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: str) -> None:
+    """Fire-and-forget: owner welcome (credentials), contact notification
+    (only if contact_email differs from owner_email — avoids duplicate
+    emails to the same inbox), and per-user invites for users[] entries
+    with send_invite_email true."""
+    tenant_app_url = tenant.allowed_origins[0] if tenant.allowed_origins else None
+
+    asyncio.create_task(send_tenant_invitation_email(
+        to_email=payload.company.owner_email,
+        tenant_name=tenant.tenant_name,
+        tenant_id=str(tenant.tenant_id),
+        temp_password=temp_password,
+        tenant_app_url=tenant_app_url,
+    ))
+
+    if payload.company.contact_email and payload.company.contact_email != payload.company.owner_email:
+        asyncio.create_task(send_tenant_contact_notification(
+            to_email=payload.company.contact_email,
+            tenant_name=tenant.tenant_name,
+            tenant_id=str(tenant.tenant_id),
+            owner_email=payload.company.owner_email,
+        ))
+
+    for u in payload.users:
+        if u.send_invite_email:
+            asyncio.create_task(send_user_invite_email(
+                to_email=u.email,
+                first_name=u.first_name,
+                tenant_name=tenant.tenant_name,
+                tenant_id=str(tenant.tenant_id),
+                tenant_app_url=tenant_app_url,
+            ))
+
+
 async def _create_and_finalize(
     request: Request,
     payload: OnboardingRequest,
@@ -79,10 +124,10 @@ async def _create_and_finalize(
     current_user,
     draft_id: uuid.UUID,
 ) -> OnboardingResult:
-    """Shared by POST / and POST /drafts (once a draft is complete): create
-    the tenant, save a draft on failure (with draft_id attached to the error),
-    mark the draft completed on success, fire the audit log + sync, and
-    return the OnboardingResult."""
+    """Called once POST /'s payload is complete: create the tenant, save a
+    draft on failure (with draft_id attached to the error), mark the draft
+    completed on success, fire the audit log + sync, and return the
+    OnboardingResult."""
     try:
         tenant, counts, temp_password = onboarding_service.create_onboarding(
             db, payload, created_by_user_id=get_user_id(current_user)
@@ -128,6 +173,7 @@ async def _create_and_finalize(
         pass
 
     _sync_tenant(tenant)
+    _send_onboarding_emails(tenant, payload, temp_password)
 
     return OnboardingResult(
         tenant_id=tenant.tenant_id,
@@ -140,28 +186,57 @@ async def _create_and_finalize(
 
 @router.post(
     "/",
-    response_model=OnboardingResult,
+    response_model=OnboardingDraftSaveResult,
     status_code=status.HTTP_201_CREATED,
     summary="Onboard a client",
     description=(
-        "Creates the client (tenant) + its dedicated database, then creates every "
-        "branch, department, division, job code, role, user, the subscription and "
-        "the security settings in one sequence. Children reference parents by "
-        "0-based array index (see the schema). Master-DB users only."
+        "Call this repeatedly as the step form progresses, resending the "
+        "accumulated payload each time — pass back ?draft_id=... from a "
+        "previous 'draft' response to keep updating the same draft (omit it "
+        "on the first call). While company/branches/departments/divisions/"
+        "job_codes/subscription/roles/users_groups/users/security don't all "
+        "have data yet, the payload is just saved to onboarding_drafts "
+        "(status 'draft', HTTP 200, no tenant created) so it can be resumed "
+        "later via GET /onboarding/drafts/{draft_id}. Only once every one of "
+        "the 10 steps is present — matching the wizard's own step list, "
+        "nothing optional — is the client (tenant) + its dedicated database "
+        "created (status 'created', HTTP 201): every branch, department, "
+        "division, job code, role, user, the subscription and the security "
+        "settings in one sequence. Children reference parents by the "
+        "client-supplied UUIDs carried in the payload (see the schema). "
+        "Master-DB users only."
     ),
 )
 async def onboard_client(
     request: Request,
+    response: Response,
     payload: OnboardingRequest,
+    draft_id: Optional[UUID] = Query(
+        None, description="From a previous 'draft' response, to keep updating the same draft"
+    ),
     db: Session = Depends(get_db),
     current_user=Depends(require_master_user),
 ):
-    # draft_id is not part of the request — generated here so a failed
-    # attempt can still be saved (see save_onboarding_draft below). Since
-    # it's server-generated, the caller can't resume by re-sending a known
-    # id; they'd look it up via GET /onboarding/drafts.
-    draft_id = uuid.uuid4()
-    return await _create_and_finalize(request, payload, db, current_user, draft_id)
+    # draft_id is generated here on the first call so a not-yet-complete or
+    # failed attempt can still be saved (see save_onboarding_draft below);
+    # pass it back on later calls to keep updating the same draft instead of
+    # creating a new one.
+    effective_draft_id = draft_id or uuid.uuid4()
+    progress = onboarding_service.compute_payload_progress(payload)
+
+    if not onboarding_service.is_progress_complete(progress):
+        onboarding_service.save_onboarding_draft(
+            db,
+            draft_id=effective_draft_id,
+            payload_dict=payload.model_dump(mode="json"),
+            error_message=None,
+            created_by=get_user_id(current_user),
+        )
+        response.status_code = status.HTTP_200_OK
+        return OnboardingDraftSaveResult(status="draft", draft_id=effective_draft_id, progress=progress)
+
+    result = await _create_and_finalize(request, payload, db, current_user, effective_draft_id)
+    return OnboardingDraftSaveResult(status="created", result=result)
 
 
 @router.get(
@@ -184,58 +259,14 @@ async def list_clients(
 # Drafts — registered before /{tenant_id} so "drafts" is matched literally
 # ============================================================================
 
-@router.post(
-    "/drafts",
-    response_model=OnboardingDraftSaveResult,
-    summary="Save onboarding progress",
-    description=(
-        "Call this repeatedly as the step form progresses, resending the "
-        "accumulated payload each time — pass back ?draft_id=... from a "
-        "previous 'draft' response to keep updating the same draft (omit it "
-        "on the first save). While company/branches/departments/divisions/"
-        "job_codes/roles/users_groups/users don't all have data yet, the "
-        "payload is just saved to onboarding_drafts (status 'draft', no "
-        "tenant created). Once all 8 are present — subscription/security "
-        "stay optional and never block this — the real tenant is created "
-        "immediately instead (status 'created'), exactly like POST "
-        "/onboarding/. Master-DB users only."
-    ),
-)
-async def save_onboarding_progress(
-    request: Request,
-    payload: OnboardingRequest,
-    draft_id: Optional[UUID] = Query(
-        None, description="From a previous 'draft' response, to keep updating the same draft"
-    ),
-    db: Session = Depends(get_db),
-    current_user=Depends(require_master_user),
-):
-    effective_draft_id = draft_id or uuid.uuid4()
-    progress = onboarding_service.compute_payload_progress(payload)
-
-    if not onboarding_service.is_progress_complete(progress):
-        onboarding_service.save_onboarding_draft(
-            db,
-            draft_id=effective_draft_id,
-            payload_dict=payload.model_dump(mode="json"),
-            error_message=None,
-            created_by=get_user_id(current_user),
-        )
-        return OnboardingDraftSaveResult(status="draft", draft_id=effective_draft_id, progress=progress)
-
-    result = await _create_and_finalize(request, payload, db, current_user, effective_draft_id)
-    return OnboardingDraftSaveResult(status="created", result=result)
-
-
 @router.get(
     "/drafts",
     response_model=OnboardingDraftListResponse,
     summary="List saved onboarding drafts",
     description=(
-        "Paginated list of saved onboarding drafts — either from a failed "
-        "attempt (see POST /onboarding/) or in-progress saves that don't yet "
-        "have all required steps (see POST /onboarding/drafts). Master-DB "
-        "users only."
+        "Paginated list of saved onboarding drafts — step-form submissions "
+        "that don't yet have all 10 required steps, saved automatically by "
+        "POST /onboarding/. Master-DB users only."
     ),
 )
 async def list_drafts(

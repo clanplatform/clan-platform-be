@@ -4,12 +4,51 @@ from typing import List, Optional
 from uuid import UUID
 import logging
 
+from fastapi import HTTPException, status
+
 from app.subscription.models.subscription import Subscription
 from app.subscription.schemas.subscription import SubscriptionCreate, SubscriptionUpdate
 from app.subscription.exceptions import SubscriptionNotFoundError
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.database.session import SessionLocal
+from app.modules.models.module import Module
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_grants(application_ids: Optional[List[UUID]], module_ids: Optional[List[UUID]]) -> None:
+    """Every id in modules_to_grant must belong to one of applications_to_grant.
+
+    applications/modules are master-catalog data (app.applications /
+    app.modules), so this always checks against the master DB regardless of
+    which DB the subscription row itself is being written to (a tenant-DB
+    caller's own copy of these tables may only hold whatever's been synced
+    on demand elsewhere — not the full catalog)."""
+    if not module_ids:
+        return
+    application_id_set = set(application_ids or [])
+    master_db = SessionLocal()
+    try:
+        modules = master_db.query(Module).filter(Module.id.in_(module_ids)).all()
+        found_ids = {m.id for m in modules}
+        missing = set(module_ids) - found_ids
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Module(s) not found: {', '.join(str(m) for m in missing)}",
+            )
+        mismatched = [m for m in modules if m.application_id not in application_id_set]
+        if mismatched:
+            names = ", ".join(f"{m.name} ({m.id})" for m in mismatched)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "modules_to_grant contains module(s) that don't belong to any "
+                    f"application in applications_to_grant: {names}"
+                ),
+            )
+    finally:
+        master_db.close()
 
 
 def _audit(action: str, sub: Subscription, user_id: Optional[UUID], **kw) -> None:
@@ -60,6 +99,7 @@ def create_subscription(
     tenant_id is not part of the request body — it is derived from the caller's
     JWT (None for master-DB users, a tenant UUID for tenant-DB users).
     """
+    _validate_grants(subscription.applications_to_grant, subscription.modules_to_grant)
     db_sub = Subscription(
         **subscription.model_dump(),
         tenant_id=tenant_id,
@@ -84,6 +124,12 @@ def update_subscription(
         raise SubscriptionNotFoundError()
 
     update_data = subscription.model_dump(exclude_unset=True)
+    # Validate against the EFFECTIVE grants (this update merged onto whatever
+    # wasn't touched), not just whatever happens to be in this partial payload.
+    effective_apps = update_data.get("applications_to_grant", db_sub.applications_to_grant)
+    effective_modules = update_data.get("modules_to_grant", db_sub.modules_to_grant)
+    _validate_grants(effective_apps, effective_modules)
+
     for field, value in update_data.items():
         setattr(db_sub, field, value)
 

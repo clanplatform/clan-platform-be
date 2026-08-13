@@ -479,7 +479,12 @@ class OnboardingUser(BaseModel):
 # ============================================================================
 
 class OnboardingRequest(BaseModel):
-    """The full step-form payload submitted by the 'Onboard client' button.
+    """The full, complete step-form payload — every one of the 10 steps
+    present. Not the POST /onboarding/ request body itself (see
+    OnboardingStepRequest for that): this is what the server assembles by
+    merging the step(s) sent across one or more POST calls onto the saved
+    draft, and only constructs (re-validating strictly) once that merged
+    result is complete, right before actually creating the tenant.
 
     Not part of the request: if a submission fails partway (validation
     error, duplicate client, etc.), the server generates its own draft_id
@@ -497,6 +502,37 @@ class OnboardingRequest(BaseModel):
     # Step 9 — Subscription plan (one per client; tenant_id is set from the new tenant)
     subscription: Optional[SubscriptionCreate] = None
     # Step 10 — Security settings (SSO / MFA / session & password policy)
+    security: Optional[SecurityCreate] = None
+
+
+class OnboardingStepRequest(BaseModel):
+    """POST /onboarding/ request body.
+
+    Every field is optional here, unlike OnboardingRequest — a resumed
+    submission only needs to include the step(s) being added or changed on
+    THIS call. The server merges whichever fields ARE included onto the
+    payload already saved under draft_id (see GET /onboarding/drafts/
+    {draft_id}); a step left out keeps whatever value an earlier call saved
+    for it. Only once the merged result covers all 10 steps is it strictly
+    re-validated as a full OnboardingRequest and the tenant actually
+    created — so a step that IS included must still be complete on its own
+    (e.g. job_codes[] here still requires entity_id/department_id/
+    division_id per item); merging only spares you from resending OTHER,
+    already-completed steps.
+
+    Note this is step-level, not item-level: resending a step's array
+    replaces the previously saved array for that step outright (it does not
+    append to it) — a single step's items must all be submitted together.
+    """
+    company: Optional[OnboardingCompany] = None
+    branches: Optional[List[OnboardingBranch]] = None
+    departments: Optional[List[OnboardingDepartment]] = None
+    divisions: Optional[List[OnboardingDivision]] = None
+    job_codes: Optional[List[OnboardingJobCode]] = None
+    roles: Optional[List[OnboardingRole]] = None
+    users_groups: Optional[List[OnboardingUserGroup]] = None
+    users: Optional[List[OnboardingUser]] = None
+    subscription: Optional[SubscriptionCreate] = None
     security: Optional[SecurityCreate] = None
 
 

@@ -6,6 +6,7 @@ Failures are always swallowed — a logging error must never roll back the calle
 """
 import httpx
 from typing import Optional, Dict, Any
+from fastapi.encoders import jsonable_encoder
 from app.core.config import settings
 
 
@@ -31,9 +32,14 @@ def fire_audit_log(
         CREATE | UPDATE | DELETE | RESTORE | LOGIN | LOGOUT
     """
     try:
+        # old_values/new_values are frequently a raw model_dump() from callers
+        # (UUID/Decimal/datetime fields, not the JSON-safe str/float/isoformat
+        # forms) — jsonable_encoder normalizes the whole payload so a type
+        # httpx's json= can't natively serialize doesn't silently drop the
+        # entire audit entry.
         httpx.post(
             f"{settings.AUDIT_SERVICE_URL}/api/v1/logs",
-            json={
+            json=jsonable_encoder({
                 "action": action,
                 "object_type": object_type,
                 "object_id": object_id,
@@ -46,7 +52,7 @@ def fire_audit_log(
                 "user_agent": user_agent,
                 "session_id": session_id,
                 "risk_score": risk_score,
-            },
+            }),
             timeout=2.0,
         )
     except Exception as exc:

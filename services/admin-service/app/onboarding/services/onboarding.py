@@ -898,16 +898,21 @@ _PROGRESS_STEPS = [
 
 
 
-def _build_progress(step_counts: Dict[str, int], tenant_id: Optional[UUID]) -> OnboardingProgress:
+def _build_progress(
+    step_counts: Dict[str, int], tenant_id: Optional[UUID], company_present: bool = True
+) -> OnboardingProgress:
     """Shared step/completed/next_step assembly for both the DB-backed
-    (get_onboarding_progress) and payload-based (compute_payload_progress)
-    progress views."""
+    (get_onboarding_progress) and merged-draft-based (compute_dict_progress)
+    progress views. company_present defaults True because a real tenant row
+    (the DB-backed path) always has company data by construction; the
+    merged-draft path passes the actual presence check since company may
+    still be unset there."""
     steps: List[OnboardingStepProgress] = []
     next_step: Optional[str] = None
     completed_steps = 0
     for key, label in _PROGRESS_STEPS:
         if key == "company":
-            completed, count = True, 1
+            completed, count = company_present, (1 if company_present else 0)
         else:
             count = step_counts[key]
             completed = count > 0
@@ -956,21 +961,40 @@ def get_onboarding_progress(master_db: Session, tenant_id: UUID) -> OnboardingPr
     return _build_progress(step_counts, tenant.tenant_id)
 
 
-def compute_payload_progress(payload: OnboardingRequest) -> OnboardingProgress:
+def merge_onboarding_payload(master_db: Session, draft_id: UUID, incoming: dict) -> dict:
+    """Merge the step keys present in `incoming` (only the fields THIS POST
+    call actually included — see OnboardingStepRequest, built via
+    payload.model_dump(exclude_unset=True)) onto the payload already saved
+    under draft_id, if any.
+
+    Step-level granularity: a step present in `incoming` replaces the saved
+    value for that step outright; a step absent from `incoming` keeps
+    whatever an earlier call saved for it. This is what lets a resumed
+    submission include only the new/changed steps instead of resending
+    everything collected so far.
+    """
+    draft = master_db.query(OnboardingDraft).filter(OnboardingDraft.draft_id == draft_id).first()
+    merged = dict(draft.payload) if draft is not None and draft.payload else {}
+    merged.update(incoming)
+    return merged
+
+
+def compute_dict_progress(merged: dict) -> OnboardingProgress:
     """Same 10-step shape as get_onboarding_progress(), computed directly
-    from a submitted (not-yet-created) payload — no tenant/DB lookup."""
+    from a merged (possibly still partial, accumulated across POST calls)
+    draft payload dict — no tenant/DB lookup, no OnboardingRequest validation."""
     step_counts = {
-        "branches": len(payload.branches),
-        "departments": len(payload.departments),
-        "divisions": len(payload.divisions),
-        "job_codes": len(payload.job_codes),
-        "roles": len(payload.roles),
-        "users_groups": len(payload.users_groups),
-        "users": len(payload.users),
-        "subscription": 1 if payload.subscription is not None else 0,
-        "security": 1 if payload.security is not None else 0,
+        "branches": len(merged.get("branches") or []),
+        "departments": len(merged.get("departments") or []),
+        "divisions": len(merged.get("divisions") or []),
+        "job_codes": len(merged.get("job_codes") or []),
+        "roles": len(merged.get("roles") or []),
+        "users_groups": len(merged.get("users_groups") or []),
+        "users": len(merged.get("users") or []),
+        "subscription": 1 if merged.get("subscription") else 0,
+        "security": 1 if merged.get("security") else 0,
     }
-    return _build_progress(step_counts, tenant_id=None)
+    return _build_progress(step_counts, tenant_id=None, company_present=bool(merged.get("company")))
 
 
 def is_progress_complete(progress: OnboardingProgress) -> bool:

@@ -1,15 +1,19 @@
 """
 Onboarding API — step-form driven client (tenant) creation.
 
-POST / is called repeatedly as the step form progresses, resending the
-accumulated payload each time (pass back ?draft_id=... from a previous
-'draft' response after the first call). While company/branches/departments/
-divisions/job_codes/subscription/roles/users_groups/users/security don't
-all have data yet, the payload is just saved to onboarding_drafts (status
-'draft', no tenant created) so it can be resumed later. Only once every one
-of the 10 steps is present — matching the wizard's own step list, nothing
-optional — is the real tenant + its dedicated database created (status
-'created'). GET / PUT / DELETE manage the onboarded client (company-level).
+POST / is called repeatedly as the step form progresses. Each call only
+needs to include the step(s) being added or changed THIS time (pass back
+?draft_id=... from a previous 'draft' response after the first call) — the
+server merges those step(s) onto whatever was saved under that draft_id
+earlier, so already-completed steps don't need to be resent. While
+company/branches/departments/divisions/job_codes/subscription/roles/
+users_groups/users/security don't all have data yet (after merging), the
+merged payload is just saved to onboarding_drafts (status 'draft', no
+tenant created) so it can be resumed later. Only once every one of the 10
+steps is present — matching the wizard's own step list, nothing optional —
+is the merged payload strictly validated and the real tenant + its
+dedicated database created (status 'created'). GET / PUT / DELETE manage
+the onboarded client (company-level).
 
 All endpoints are restricted to master-DB platform users (JWT tenant_id NULL);
 tenant users cannot onboard clients.
@@ -21,6 +25,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database.session import get_db
@@ -41,6 +46,7 @@ from app.onboarding.services import onboarding as onboarding_service
 from app.onboarding.exceptions import MasterUserRequiredError
 from app.onboarding.schemas.onboarding import (
     OnboardingRequest,
+    OnboardingStepRequest,
     OnboardingCompanyUpdate,
     OnboardingResult,
     OnboardingListResponse,
@@ -190,27 +196,35 @@ async def _create_and_finalize(
     status_code=status.HTTP_201_CREATED,
     summary="Onboard a client",
     description=(
-        "Call this repeatedly as the step form progresses, resending the "
-        "accumulated payload each time — pass back ?draft_id=... from a "
-        "previous 'draft' response to keep updating the same draft (omit it "
-        "on the first call). While company/branches/departments/divisions/"
-        "job_codes/subscription/roles/users_groups/users/security don't all "
-        "have data yet, the payload is just saved to onboarding_drafts "
-        "(status 'draft', HTTP 200, no tenant created) so it can be resumed "
-        "later via GET /onboarding/drafts/{draft_id}. Only once every one of "
-        "the 10 steps is present — matching the wizard's own step list, "
-        "nothing optional — is the client (tenant) + its dedicated database "
-        "created (status 'created', HTTP 201): every branch, department, "
-        "division, job code, role, user, the subscription and the security "
-        "settings in one sequence. Children reference parents by the "
-        "client-supplied UUIDs carried in the payload (see the schema). "
-        "Master-DB users only."
+        "Call this repeatedly as the step form progresses — each call only "
+        "needs to include the step(s) being added or changed THIS time (pass "
+        "back ?draft_id=... from a previous 'draft' response to keep updating "
+        "the same draft; omit it on the first call). The server merges "
+        "whichever step(s) you send onto whatever was saved under that "
+        "draft_id earlier, so already-completed steps don't need to be "
+        "resent — e.g. once company/branches/departments/divisions are saved, "
+        "a later call can send just job_codes/roles/users_groups/users/"
+        "subscription/security. Note this merge is step-level, not item-"
+        "level: resending a step's array replaces the previously saved array "
+        "for that step outright, so a single step's items must all be sent "
+        "together. While company/branches/departments/divisions/job_codes/"
+        "subscription/roles/users_groups/users/security don't all have data "
+        "yet (after merging), the merged payload is just saved to "
+        "onboarding_drafts (status 'draft', HTTP 200, no tenant created) so "
+        "it can be resumed later via GET /onboarding/drafts/{draft_id}. Only "
+        "once every one of the 10 steps is present — matching the wizard's "
+        "own step list, nothing optional — is the client (tenant) + its "
+        "dedicated database created (status 'created', HTTP 201): every "
+        "branch, department, division, job code, role, user, the "
+        "subscription and the security settings in one sequence. Children "
+        "reference parents by the client-supplied UUIDs carried in the "
+        "payload (see the schema). Master-DB users only."
     ),
 )
 async def onboard_client(
     request: Request,
     response: Response,
-    payload: OnboardingRequest,
+    payload: OnboardingStepRequest,
     draft_id: Optional[UUID] = Query(
         None, description="From a previous 'draft' response, to keep updating the same draft"
     ),
@@ -219,23 +233,49 @@ async def onboard_client(
 ):
     # draft_id is generated here on the first call so a not-yet-complete or
     # failed attempt can still be saved (see save_onboarding_draft below);
-    # pass it back on later calls to keep updating the same draft instead of
-    # creating a new one.
+    # pass it back on later calls to keep updating (merging onto) the same
+    # draft instead of creating a new one.
     effective_draft_id = draft_id or uuid.uuid4()
-    progress = onboarding_service.compute_payload_progress(payload)
+
+    # Only the fields THIS call actually included (exclude_unset) are merged
+    # onto the previously saved draft — an omitted field keeps its earlier
+    # saved value instead of being wiped out.
+    incoming = payload.model_dump(exclude_unset=True, mode="json")
+    merged = onboarding_service.merge_onboarding_payload(db, effective_draft_id, incoming)
+    progress = onboarding_service.compute_dict_progress(merged)
 
     if not onboarding_service.is_progress_complete(progress):
         onboarding_service.save_onboarding_draft(
             db,
             draft_id=effective_draft_id,
-            payload_dict=payload.model_dump(mode="json"),
+            payload_dict=merged,
             error_message=None,
             created_by=get_user_id(current_user),
         )
         response.status_code = status.HTTP_200_OK
         return OnboardingDraftSaveResult(status="draft", draft_id=effective_draft_id, progress=progress)
 
-    result = await _create_and_finalize(request, payload, db, current_user, effective_draft_id)
+    # All 10 steps are present in the merged payload — now strictly
+    # re-validate it as a full OnboardingRequest (a step merged in on an
+    # earlier call may still be incomplete on its own, e.g. a job_code
+    # missing division_id) before actually creating anything.
+    try:
+        full_payload = OnboardingRequest(**merged)
+    except ValidationError as exc:
+        detail_msg = str(exc)
+        onboarding_service.save_onboarding_draft(
+            db,
+            draft_id=effective_draft_id,
+            payload_dict=merged,
+            error_message=detail_msg,
+            created_by=get_user_id(current_user),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": detail_msg, "draft_id": str(effective_draft_id), "draft_saved": True},
+        )
+
+    result = await _create_and_finalize(request, full_payload, db, current_user, effective_draft_id)
     return OnboardingDraftSaveResult(status="created", result=result)
 
 

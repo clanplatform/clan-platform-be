@@ -1296,8 +1296,8 @@ _UPDATE_FIELD_MAP = {
     "client_code": "tenant_code",
 }
 
-# The 9 non-company steps OnboardingUpdate carries — excluded from the
-# company-fields pass and iterated separately against the tenant DB.
+# The 9 non-company steps OnboardingUpdate carries — iterated separately
+# against the tenant DB ("company" is handled on its own, see below).
 _UPDATE_STEP_FIELDS = (
     "branches", "departments", "divisions", "job_codes", "roles",
     "users_groups", "users", "subscription", "security",
@@ -1327,7 +1327,7 @@ def update_onboarding(
     if not tenant:
         raise OnboardingNotFoundError()
 
-    company_data = update.model_dump(exclude_unset=True, exclude=set(_UPDATE_STEP_FIELDS))
+    company_data = update.company.model_dump(exclude_unset=True) if update.company is not None else {}
     if company_data:
         for field, value in company_data.items():
             setattr(tenant, _UPDATE_FIELD_MAP.get(field, field), value)

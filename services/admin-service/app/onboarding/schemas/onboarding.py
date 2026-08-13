@@ -536,46 +536,13 @@ class OnboardingStepRequest(BaseModel):
     security: Optional[SecurityCreate] = None
 
 
-class OnboardingUpdate(BaseModel):
-    """PUT body — upserts any of the 10 onboarding steps against an already
-    -onboarded client. Every field is optional and independent: a step left
-    unset (not present in the request JSON) is left untouched; a step that
-    IS present is processed as a list of upserts against the tenant's own
-    database, keyed by the same id each step already carries in
-    OnboardingRequest — an item whose key matches an existing record
-    updates it in place, an unmatched key creates a new record, and
-    existing records simply not mentioned in this call are left alone
-    (no deletes). Company fields are the one exception: they merge onto
-    the tenants row field-by-field (exclude_unset), same as before.
+class OnboardingCompanyUpdate(BaseModel):
+    """PUT body's "company" step — partial patch onto the tenants row
+    (exclude_unset field-by-field merge, unlike every other step below,
+    which is a full-record upsert — see OnboardingUpdate's docstring).
 
-    Upsert key per step:
-        branches      -> entity_id
-        departments   -> department_id
-        divisions     -> division_id
-        job_codes     -> job_code_id
-        roles         -> role_code (NOT role_id — role_code is the tenant
-                         -unique natural key; if a role_code in this
-                         request already exists under a different role_id,
-                         the EXISTING role is updated and its real id is
-                         used for any users_groups[]/users[] reference in
-                         this same call that pointed at the payload's
-                         role_id)
-        users_groups  -> group_id
-        users         -> email (OnboardingUser has no client-generated id,
-                         unlike every other step; usersetup_basic.email is
-                         unique per tenant DB)
-
-    Since each step's item is the exact same schema used to CREATE that
-    record (OnboardingBranch, OnboardingDepartment, ... OnboardingUser),
-    every field the item schema carries is always overwritten on update —
-    this is a full-record PUT per item, not a partial per-field patch.
-    Notably, users[].password is required, so re-sending an existing user
-    always resets their password; roles[].permissions defaults to an empty
-    list when omitted, so a role item without permissions clears them.
-
-    is_active is intentionally not here for company fields — same rule as
-    TenantUpdate: it's backend-derived from initial_status, never accepted
-    directly.
+    is_active is intentionally not here — same rule as TenantUpdate: it's
+    backend-derived from initial_status, never accepted directly.
     """
     client_name: Optional[str] = Field(None, max_length=255)
     client_code: Optional[str] = Field(None, max_length=100)
@@ -612,6 +579,52 @@ class OnboardingUpdate(BaseModel):
     internal_notes: Optional[str] = None
     owner_name: Optional[str] = Field(None, max_length=200)
     owner_email: Optional[str] = None
+
+
+class OnboardingUpdate(BaseModel):
+    """PUT body — upserts any of the 10 onboarding steps against an already
+    -onboarded client. Every field is optional and independent: a step left
+    unset (not present in the request JSON) is left untouched; a step that
+    IS present is processed as a list of upserts against the tenant's own
+    database, keyed by the same id each step already carries in
+    OnboardingRequest — an item whose key matches an existing record
+    updates it in place, an unmatched key creates a new record, and
+    existing records simply not mentioned in this call are left alone
+    (no deletes). "company" is the one exception: its fields merge onto
+    the tenants row field-by-field (exclude_unset), same as before —
+    nested under "company" (see OnboardingCompanyUpdate) rather than
+    flattened onto this object, matching OnboardingRequest's own shape.
+
+    Upsert key per step:
+        branches      -> entity_id
+        departments   -> department_id
+        divisions     -> division_id
+        job_codes     -> job_code_id
+        roles         -> role_code (NOT role_id — role_code is the tenant
+                         -unique natural key; if a role_code in this
+                         request already exists under a different role_id,
+                         the EXISTING role is updated and its real id is
+                         used for any users_groups[]/users[] reference in
+                         this same call that pointed at the payload's
+                         role_id)
+        users_groups  -> group_id
+        users         -> email (OnboardingUser has no client-generated id,
+                         unlike every other step; usersetup_basic.email is
+                         unique per tenant DB)
+
+    Since each step's item is the exact same schema used to CREATE that
+    record (OnboardingBranch, OnboardingDepartment, ... OnboardingUser),
+    every field the item schema carries is always overwritten on update —
+    this is a full-record PUT per item, not a partial per-field patch.
+    Notably, users[].password is required, so re-sending an existing user
+    always resets their password; roles[].permissions defaults to an empty
+    list when omitted, so a role item without permissions clears them.
+
+    is_active is intentionally not here for company fields — same rule as
+    TenantUpdate: it's backend-derived from initial_status, never accepted
+    directly.
+    """
+    company: Optional[OnboardingCompanyUpdate] = None
 
     # Remaining 9 steps — see the class docstring for the upsert key each
     # one uses. Unset (field absent from the request JSON) = don't touch

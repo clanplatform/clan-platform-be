@@ -47,11 +47,10 @@ from app.onboarding.exceptions import MasterUserRequiredError
 from app.onboarding.schemas.onboarding import (
     OnboardingRequest,
     OnboardingStepRequest,
-    OnboardingCompanyUpdate,
+    OnboardingUpdate,
     OnboardingResult,
     OnboardingListResponse,
     OnboardingDetail,
-    OnboardingSummary,
     OnboardingDraftListResponse,
     OnboardingDraftDetail,
     OnboardingProgress,
@@ -92,8 +91,9 @@ def _sync_tenant(tenant) -> None:
 def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: str) -> None:
     """Fire-and-forget: owner welcome (credentials), contact notification
     (only if contact_email differs from owner_email — avoids duplicate
-    emails to the same inbox), and per-user invites for users[] entries
-    with send_invite_email true."""
+    emails to the same inbox; also carries the owner's temp password), and
+    per-user invites (with each user's own step-form password) for users[]
+    entries with send_invite_email true."""
     tenant_app_url = tenant.allowed_origins[0] if tenant.allowed_origins else None
 
     asyncio.create_task(send_tenant_invitation_email(
@@ -110,6 +110,7 @@ def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: s
             tenant_name=tenant.tenant_name,
             tenant_id=str(tenant.tenant_id),
             owner_email=payload.company.owner_email,
+            temp_password=temp_password,
         ))
 
     for u in payload.users:
@@ -120,6 +121,7 @@ def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: s
                 tenant_name=tenant.tenant_name,
                 tenant_id=str(tenant.tenant_id),
                 tenant_app_url=tenant_app_url,
+                password=u.password,
             ))
 
 
@@ -384,23 +386,39 @@ async def get_client_progress(
 
 @router.put(
     "/{tenant_id}",
-    response_model=OnboardingSummary,
-    summary="Update an onboarded client (company fields)",
+    response_model=OnboardingDetail,
+    summary="Update an onboarded client",
     description=(
-        "Updates the client/company (tenant) fields only. Branches, departments, "
-        "divisions, job codes, roles and users are edited via their own module "
-        "endpoints."
+        "Updates company/tenant fields and/or upserts any of the other 9 "
+        "onboarding steps (branches, departments, divisions, job codes, "
+        "roles, user groups, users, subscription, security) against the "
+        "tenant's own database — same shape as OnboardingRequest, but every "
+        "field is optional and independent: a step left out of the request "
+        "is left untouched. Within a step that IS included, each item is "
+        "upserted by the same id that step already carries (branches by "
+        "entity_id, ... roles by role_code, users by email — see "
+        "OnboardingUpdate's docstring) — an unmatched id creates a new "
+        "record, a matching id updates it in place, nothing already in the "
+        "tenant DB is ever deleted by this endpoint. Returns the same shape "
+        "as GET /{tenant_id}."
     ),
 )
 async def update_client(
     request: Request,
     tenant_id: UUID,
-    payload: OnboardingCompanyUpdate,
+    payload: OnboardingUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(require_master_user),
 ):
     before = payload.model_dump(exclude_unset=True)
-    tenant = onboarding_service.update_onboarding(db, tenant_id, payload)
+    # users[].password (if the users step was included) is plaintext in the
+    # request — never let it land in the audit log.
+    if before.get("users"):
+        before["users"] = [{**u, "password": "***"} for u in before["users"]]
+
+    tenant, detail = onboarding_service.update_onboarding(
+        db, tenant_id, payload, updated_by_user_id=get_user_id(current_user)
+    )
 
     try:
         tenant_id_audit, entity_id = get_audit_org_context(db, get_user_id(current_user))
@@ -421,7 +439,7 @@ async def update_client(
         pass
 
     _sync_tenant(tenant)
-    return OnboardingSummary.model_validate(tenant)
+    return detail
 
 
 @router.delete(

@@ -10,6 +10,7 @@ from app.applications.services.application import ensure_application_writable
 from app.core.access import is_active_from_access, is_write_locked
 from app.modules.models.module import Module
 from app.modules.services.module import ensure_module_writable
+from app.menus.services.menu_access import cascade_menu_active_state_to_forms
 from app.menus.schemas.menu import MenuCreate, MenuUpdate, MenuResponse, MenuBatchCreate
 from app.menu_reorder.schemas.menu_reorder import (
     MenuReorderRequest,
@@ -2734,6 +2735,14 @@ async def update_menu(
     db.commit()
     db.refresh(menu)
     print(f"[Menu Update] ✅ Updated PostgreSQL for menu_id: {menu.id}")
+
+    # Cascade the menu's access-derived active state to its forms: disabling
+    # a menu (access -> "disable") hides its forms too, and re-enabling it
+    # (access -> "write"/"read") shows them again.
+    if 'access' in update_data and derived_active is not None:
+        forms_changed = cascade_menu_active_state_to_forms(db, menu.id, derived_active)
+        if forms_changed:
+            print(f"[Menu Update] 🔁 Cascaded is_active={derived_active} to {forms_changed} form(s) under menu_id: {menu.id}")
 
     try:
         _uid = get_user_id(current_user)

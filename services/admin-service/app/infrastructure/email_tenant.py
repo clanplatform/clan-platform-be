@@ -6,10 +6,12 @@ is created and its users are seeded:
   - send_tenant_invitation_email() — the owner (owner_email), with their
     temp login password.
   - send_tenant_contact_notification() — the client's general contact
-    address (contact_email), only when it differs from owner_email; no
-    credentials, since contact_email isn't necessarily a login identity.
+    address (contact_email), only when it differs from owner_email; includes
+    the owner's temp password too, even though contact_email isn't itself a
+    login identity, so the contact can relay it.
   - send_user_invite_email() — any users[] entry with send_invite_email
-    true; no password (the user chose their own), just a login link.
+    true; includes the password set for them on the step form (an admin set
+    it on their behalf), plus a login link.
 Failures are always swallowed — an email error must never roll back or
 fail the tenant-creation request.
 """
@@ -112,11 +114,14 @@ async def send_tenant_contact_notification(
     tenant_name: str,
     tenant_id: str,
     owner_email: str,
+    temp_password: Optional[str] = None,
 ) -> None:
     """
-    Notify a client's general contact address that onboarding completed,
-    without login credentials (contact_email isn't necessarily a login
-    identity — only owner_email is seeded as the actual admin user). Only
+    Notify a client's general contact address that onboarding completed.
+    Includes the owner's temp login credentials (same owner_password_hash
+    seeded for owner_email — temp_password is its plaintext, generated once
+    in create_onboarding() and never persisted) so the contact can pass them
+    along even though contact_email itself isn't a login identity. Only
     call this when contact_email differs from owner_email, to avoid sending
     two emails to the same inbox.
     Fire-and-forget — never raises.
@@ -127,7 +132,9 @@ async def send_tenant_contact_notification(
         f"Your organization, {tenant_name}, has been successfully onboarded "
         "to Clan.\n\n"
         f"The account admin login is: {owner_email}\n"
-        "That admin received a separate email with login credentials.\n\n"
+        f"Temporary Password: {temp_password}\n\n"
+        "That admin also received a separate email with these login "
+        "credentials.\n\n"
         "If you did not request this, please contact the Clan support team "
         "immediately.\n\n"
         "Thank you,\n\n"
@@ -140,7 +147,9 @@ async def send_tenant_contact_notification(
         f"<p>Your organization, <strong>{tenant_name}</strong>, has been "
         "successfully onboarded to Clan.</p>"
         f"<p>The account admin login is: <strong>{owner_email}</strong><br>"
-        "That admin received a separate email with login credentials.</p>"
+        f"<strong>Temporary Password:</strong> {temp_password}</p>"
+        "<p>That admin also received a separate email with these login "
+        "credentials.</p>"
         "<p>If you did not request this, please contact the Clan support "
         "team immediately.</p>"
         "<p>Thank you,</p>"
@@ -165,12 +174,14 @@ async def send_user_invite_email(
     tenant_name: str,
     tenant_id: str,
     tenant_app_url: Optional[str] = None,
+    password: Optional[str] = None,
 ) -> None:
     """
     Invite a user added during onboarding (users[] with send_invite_email
-    true) to log in. Unlike the owner's temp-password email, the user chose
-    their own password when the form was submitted, so it isn't repeated
-    here — just a login link.
+    true) to log in. The password set for them on the step form
+    (users[].password, plaintext — only usersetup_basic.password_hash is
+    ever persisted) is included here since the user themself didn't choose
+    it; an admin set it on their behalf during onboarding.
     Fire-and-forget — never raises.
     """
     subject = f"You've been added to {tenant_name} on Clan"
@@ -181,9 +192,12 @@ async def send_user_invite_email(
     body_text = (
         f"{greeting}\n\n"
         f"You've been added as a user of {tenant_name} on Clan. Use the "
-        f"email and password set for you to log in:\n\n"
+        f"email and password below to log in:\n\n"
         f"Email: {to_email}\n"
+        f"Password: {password}\n\n"
         f"Login URL: {login_url}\n\n"
+        "For your security, please change your password after your first "
+        "login.\n\n"
         "If you did not expect this invitation, please contact the Clan "
         "support team immediately.\n\n"
         "Thank you,\n\n"
@@ -194,12 +208,15 @@ async def send_user_invite_email(
     body_html = (
         f"<p>{greeting}</p>"
         f"<p>You've been added as a user of <strong>{tenant_name}</strong> "
-        "on Clan. Use the email and password set for you to log in:</p>"
-        f"<p><strong>Email:</strong> {to_email}</p>"
+        "on Clan. Use the email and password below to log in:</p>"
+        f"<p><strong>Email:</strong> {to_email}<br>"
+        f"<strong>Password:</strong> {password}</p>"
         f"<p><a href=\"{login_url}\" "
         "style=\"display:inline-block;padding:10px 24px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;border-radius:6px;\">Log In</a></p>"
         f"<p><strong>Login URL:</strong> <a href=\"{login_url}\">{login_url}</a></p>"
+        "<p>For your security, please change your password after your "
+        "first login.</p>"
         "<p>If you did not expect this invitation, please contact the Clan "
         "support team immediately.</p>"
         "<p>Thank you,</p>"

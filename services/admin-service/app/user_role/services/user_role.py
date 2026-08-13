@@ -776,8 +776,9 @@ class UserRoleService:
             for menu in menus
         ]
 
-        # Fetch forms
-        forms = db.query(Form).all()
+        # Fetch forms (excludes forms hidden via a disabled parent menu, same
+        # as the is_active filter on menus above, and soft-deleted forms)
+        forms = db.query(Form).filter(Form.is_active == True, Form.is_deleted == False).all()
         form_refs = [
             EntityReference(
                 entity_type="form",

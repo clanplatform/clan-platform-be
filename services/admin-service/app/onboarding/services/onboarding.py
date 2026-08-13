@@ -41,36 +41,48 @@ from app.forms.models.forms import Form
 from app.buttons.models.button import Button
 
 from app.entities.models.entity import Entity
-from app.entities.services.entity import create_entity
-from app.entities.schemas.entity import EntityCreate
+from app.entities.services.entity import create_entity, update_entity
+from app.entities.schemas.entity import EntityCreate, EntityUpdate
 from app.departments.models.departments import Department
-from app.departments.services.departments import create_department
-from app.departments.schemas.departments import DepartmentCreate
+from app.departments.services.departments import create_department, update_department
+from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate
 from app.divisions.models.divisions import Division
-from app.divisions.services.divisions import create_division
-from app.divisions.schemas.divisions import DivisionCreate
+from app.divisions.services.divisions import create_division, update_division
+from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate
 from app.job_codes.models.job_codes import JobCode
-from app.job_codes.services.job_codes import create_job_code
+from app.job_codes.services.job_codes import create_job_code, update_job_code
 from app.job_codes.schemas.job_codes import (
     JobCodeCreate,
+    JobCodeUpdate,
     JobCodeBasicInfoCreate,
+    JobCodeBasicInfoUpdate,
     JobCodeSkillsCreate,
+    JobCodeSkillsUpdate,
 )
-from app.user_role.models.user_role import UserRoleMain, UserRoleBasic
+from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 from app.user_role.services.user_role import UserRoleService
 from app.users_groups.models.users_groups import UserGroup
-from app.users_groups.services.users_groups import create_user_group
-from app.users_groups.schemas.users_groups import UserGroupCreate
+from app.users_groups.services.users_groups import create_user_group, update_user_group
+from app.users_groups.schemas.users_groups import UserGroupCreate, UserGroupUpdate
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic
 from app.subscription.models.subscription import Subscription
-from app.subscription.services.subscription import create_subscription
+from app.subscription.services.subscription import create_subscription, update_subscription
+from app.subscription.schemas.subscription import SubscriptionCreate, SubscriptionUpdate
 from app.security.models.security import Security
-from app.security.services.security import create_security
+from app.security.services.security import create_security, update_security
+from app.security.schemas.security import SecurityCreate, SecurityUpdate
 
 from app.onboarding.models.onboarding import OnboardingDraft
 from app.onboarding.schemas.onboarding import (
     OnboardingRequest,
-    OnboardingCompanyUpdate,
+    OnboardingUpdate,
+    OnboardingBranch,
+    OnboardingDepartment,
+    OnboardingDivision,
+    OnboardingJobCode,
+    OnboardingRole,
+    OnboardingUserGroup,
+    OnboardingUser,
     OnboardingCounts,
     OnboardingDetail,
     OnboardingSummary,
@@ -99,6 +111,17 @@ def _safe_uuid(value) -> Optional[UUID]:
         return UUID(str(value)) if value else None
     except (ValueError, TypeError):
         return None
+
+
+def _filter_fields(schema_cls, source) -> dict:
+    """Build a dict of only the fields schema_cls actually declares, pulled
+    from a flat Onboarding* item (e.g. OnboardingBranch -> EntityUpdate).
+    Safe wherever the target *Create/*Update schema's fields are a strict
+    subset of the source item's fields by name (true for entities/
+    departments/divisions/user_groups — verified by reading each schema);
+    job codes and roles have their own bespoke construction instead (nested
+    shape / natural-key + two-table upsert)."""
+    return {k: v for k, v in source.model_dump().items() if k in schema_cls.model_fields}
 
 
 # ============================================================================
@@ -184,13 +207,15 @@ def _sync_button(master_db: Session, tenant_db: Session, button_id: UUID) -> Non
     tenant_db.flush()
 
 
-def _sync_role_permission_catalog(master_db: Session, tenant_db: Session, payload: OnboardingRequest) -> None:
+def _sync_role_permission_catalog(master_db: Session, tenant_db: Session, roles: List[OnboardingRole]) -> None:
     """Copy every menu/form/button (and their application/module/domain/
     parent-menu dependencies) referenced anywhere in roles[].permissions[]
     from the master DB into the tenant DB, preserving primary keys, so the
     role-permission existence checks that run against the tenant DB during
-    role creation succeed."""
-    for i, r in enumerate(payload.roles):
+    role creation succeed. Shared by onboarding creation and the PUT
+    upsert path (see update_onboarding), both of which only ever need
+    this against their own roles[] list."""
+    for i, r in enumerate(roles):
         for perm in (r.permissions or []):
             for item in (perm.menu_permissions or []):
                 _sync_menu(master_db, tenant_db, _safe_uuid(item.id) or item.id)
@@ -282,6 +307,39 @@ def _validate_indices(payload: OnboardingRequest) -> None:
             raise OnboardingUnknownReferenceError(f"users[{i}]", u.user_group_id, "users_groups")
 
 
+def _build_job_code_basic_info_and_skills(
+    j: OnboardingJobCode,
+) -> Tuple[JobCodeBasicInfoCreate, Optional[JobCodeSkillsCreate]]:
+    """Reshape a flat OnboardingJobCode item into the nested basic_info/
+    skills JobCodeCreate expects. Shared by create_onboarding's job_codes
+    step and the PUT upsert path (JobCodeUpdate's basic_info/skills are
+    field-identical to JobCodeCreate's, so the *Update variants are built
+    by re-dumping these same objects — see update_onboarding)."""
+    basic_info = JobCodeBasicInfoCreate(
+        # j.entity_id / j.department_id / j.division_id are the branch's,
+        # department's and division's client-supplied UUIDs — used directly.
+        entity_id=j.entity_id,
+        department_id=j.department_id,
+        division_id=j.division_id,
+        employment_type=j.employment_type,
+        work_mode=j.work_mode,
+        grade_band=j.grade_band,
+        minimum_salary=j.minimum_salary,
+        maximum_salary=j.maximum_salary,
+        salary_currency=j.salary_currency,
+        experience_years=j.experience_years,
+        reports_to=j.reports_to,
+    )
+    skills = (
+        JobCodeSkillsCreate(
+            required_skills=j.required_skills,
+            key_responsibilities=j.key_responsibilities,
+        )
+        if (j.required_skills or j.key_responsibilities) else None
+    )
+    return basic_info, skills
+
+
 def _split_full_name(full_name: Optional[str]) -> Tuple[str, str]:
     """Split 'Owner full name' into (first, last); defaults to Account / Owner."""
     parts = (full_name or "").strip().split()
@@ -319,6 +377,27 @@ def _seed_tenant_row(tenant_db: Session, tenant: Tenant) -> None:
     tenant_db.commit()
 
 
+def _derive_dept_division_from_job_code(
+    tenant_db: Session, job_code_id: Optional[UUID]
+) -> Tuple[Optional[List[UUID]], Optional[List[UUID]]]:
+    """usersetup_basic.department_id/division_id are never accepted directly
+    — they're derived from job_code_id's jobcode_basicinfo row (same rule as
+    the direct user_setup CRUD's
+    UserSetupService._derive_dept_division_from_job_code). Shared by
+    _create_user_row and _update_user_row."""
+    if job_code_id is None:
+        return None, None
+    from app.job_codes.models.job_codes import JobCodeBasicInfo
+    info = tenant_db.query(
+        JobCodeBasicInfo.department_id, JobCodeBasicInfo.division_id
+    ).filter(JobCodeBasicInfo.job_code_id == job_code_id).first()
+    if not info:
+        return None, None
+    department_id = [info.department_id] if info.department_id else None
+    division_id = [info.division_id] if info.division_id else None
+    return department_id, division_id
+
+
 def _create_user_row(
     tenant_db: Session,
     *,
@@ -340,25 +419,15 @@ def _create_user_row(
 ) -> Tuple[UUID, UUID]:
     """Create user_setup + usersetup_basic (+ optional role/entity/job code assignment).
 
-    department_id/division_id are not accepted directly — they're derived
-    from job_code_id's jobcode_basicinfo row here (same rule as the direct
-    user_setup CRUD's UserSetupService._derive_dept_division_from_job_code).
     By this point in the onboarding sequence, job_codes have already been
-    created (step 5, before users at step 8), so the lookup resolves.
+    created (step 5, before users at step 8), so the department/division
+    lookup below resolves.
     """
     user_setup = UserSetup()
     tenant_db.add(user_setup)
     tenant_db.flush()
 
-    department_id, division_id = None, None
-    if job_code_id is not None:
-        from app.job_codes.models.job_codes import JobCodeBasicInfo
-        info = tenant_db.query(
-            JobCodeBasicInfo.department_id, JobCodeBasicInfo.division_id
-        ).filter(JobCodeBasicInfo.job_code_id == job_code_id).first()
-        if info:
-            department_id = [info.department_id] if info.department_id else None
-            division_id = [info.division_id] if info.division_id else None
+    department_id, division_id = _derive_dept_division_from_job_code(tenant_db, job_code_id)
 
     basic = UserSetupBasic(
         user_setup_id=user_setup.id,
@@ -385,6 +454,36 @@ def _create_user_row(
     tenant_db.add(basic)
     tenant_db.commit()
     return user_setup.id, basic.id
+
+
+def _update_user_row(
+    tenant_db: Session,
+    existing: UserSetupBasic,
+    u: OnboardingUser,
+    role_id: Optional[UUID],
+) -> None:
+    """Update-in-place counterpart to _create_user_row, used when a PUT
+    users[] item's email matches an existing usersetup_basic row. Every
+    field OnboardingUser carries is overwritten (including password, which
+    is a required field on that schema — see OnboardingUpdate's docstring)."""
+    department_id, division_id = _derive_dept_division_from_job_code(tenant_db, u.job_code_id)
+    existing.firstname = u.first_name
+    existing.lastname = u.last_name
+    existing.employee_id = u.employee_id
+    existing.username = u.username
+    existing.password_hash = get_password_hash(u.password)
+    existing.phone_number = u.phone
+    existing.profile_image_url = u.profile_image_url
+    existing.status = u.status or "active"
+    existing.entity_id = u.entity_id
+    existing.department_id = department_id
+    existing.division_id = division_id
+    existing.job_code_id = u.job_code_id
+    existing.role_id = role_id
+    existing.user_group_id = u.user_group_id
+    existing.send_invite_email = u.send_invite_email
+    tenant_db.add(existing)
+    tenant_db.commit()
 
 
 def create_onboarding(
@@ -487,7 +586,7 @@ def create_onboarding(
         # parent-menu dependencies) referenced by roles[].permissions[] from
         # the master catalog into this tenant DB — done early so a bad
         # reference fails before branches/departments/etc. are created.
-        _sync_role_permission_catalog(master_db, tenant_db, payload)
+        _sync_role_permission_catalog(master_db, tenant_db, payload.roles)
 
         # Owner admin user (step 1 "Owner login")
         code = (tenant.tenant_code or str(tenant_id)[:8]).upper()
@@ -600,36 +699,10 @@ def create_onboarding(
         # 6. Job codes
         job_code_ids: List[UUID] = []
         for j in payload.job_codes:
+            basic_info, skills = _build_job_code_basic_info_and_skills(j)
             job_code = create_job_code(
                 tenant_db,
-                JobCodeCreate(
-                    job_code=j.job_code,
-                    job_title=j.job_title,
-                    basic_info=JobCodeBasicInfoCreate(
-                        # j.entity_id / j.department_id / j.division_id are the
-                        # branch's, department's and division's client-supplied
-                        # UUIDs (validated to exist among branches/departments/
-                        # divisions) — used directly.
-                        entity_id=j.entity_id,
-                        department_id=j.department_id,
-                        division_id=j.division_id,
-                        employment_type=j.employment_type,
-                        work_mode=j.work_mode,
-                        grade_band=j.grade_band,
-                        minimum_salary=j.minimum_salary,
-                        maximum_salary=j.maximum_salary,
-                        salary_currency=j.salary_currency,
-                        experience_years=j.experience_years,
-                        reports_to=j.reports_to,
-                    ),
-                    skills=(
-                        JobCodeSkillsCreate(
-                            required_skills=j.required_skills,
-                            key_responsibilities=j.key_responsibilities,
-                        )
-                        if (j.required_skills or j.key_responsibilities) else None
-                    ),
-                ),
+                JobCodeCreate(job_code=j.job_code, job_title=j.job_title, basic_info=basic_info, skills=skills),
                 tenant_id=tenant_id,
                 user_id=_safe_uuid(created_by_user_id),
                 job_code_id=j.job_code_id,
@@ -778,6 +851,217 @@ def create_onboarding(
 
     master_db.refresh(tenant)
     return tenant, counts, temp_password
+
+
+# ============================================================================
+# PUT /{tenant_id} — per-step upsert helpers
+#
+# Each helper below upserts one onboarding step's array against an already
+# -provisioned tenant DB: an item whose key matches an existing record
+# updates it in place (via that module's own update_* service — same
+# validation the direct CRUD endpoint runs), an unmatched key creates a new
+# record (via create_*, honoring the client-supplied UUID exactly like
+# create_onboarding does). No deletes. See OnboardingUpdate's docstring for
+# the upsert key per step.
+# ============================================================================
+
+def _upsert_branches(tenant_db: Session, tenant_id: UUID, branches: List[OnboardingBranch], user_id: Optional[UUID]) -> None:
+    for b in branches:
+        existing = tenant_db.query(Entity).filter(Entity.entity_id == b.entity_id).first()
+        if existing:
+            update_entity(tenant_db, b.entity_id, EntityUpdate(**_filter_fields(EntityUpdate, b)), user_id)
+        else:
+            create_entity(
+                tenant_db, EntityCreate(**_filter_fields(EntityCreate, b)),
+                tenant_id=tenant_id, user_id=user_id, entity_id=b.entity_id,
+            )
+
+
+def _upsert_departments(tenant_db: Session, tenant_id: UUID, departments: List[OnboardingDepartment], user_id: Optional[UUID]) -> None:
+    for d in departments:
+        existing = tenant_db.query(Department).filter(Department.department_id == d.department_id).first()
+        if existing:
+            update_department(tenant_db, d.department_id, DepartmentUpdate(**_filter_fields(DepartmentUpdate, d)), user_id)
+        else:
+            create_department(
+                tenant_db, DepartmentCreate(**_filter_fields(DepartmentCreate, d)),
+                tenant_id=tenant_id, user_id=user_id, department_id=d.department_id,
+            )
+
+
+def _upsert_divisions(tenant_db: Session, tenant_id: UUID, divisions: List[OnboardingDivision], user_id: Optional[UUID]) -> None:
+    for dv in divisions:
+        existing = tenant_db.query(Division).filter(Division.id == dv.division_id).first()
+        if existing:
+            update_division(tenant_db, dv.division_id, DivisionUpdate(**_filter_fields(DivisionUpdate, dv)), user_id)
+        else:
+            create_division(
+                tenant_db, DivisionCreate(**_filter_fields(DivisionCreate, dv)),
+                tenant_id=tenant_id, user_id=user_id, division_id=dv.division_id,
+            )
+
+
+def _upsert_job_codes(tenant_db: Session, tenant_id: UUID, job_codes: List[OnboardingJobCode], user_id: Optional[UUID]) -> None:
+    for j in job_codes:
+        basic_info, skills = _build_job_code_basic_info_and_skills(j)
+        existing = tenant_db.query(JobCode).filter(JobCode.id == j.job_code_id).first()
+        if existing:
+            update_job_code(
+                tenant_db, j.job_code_id,
+                JobCodeUpdate(
+                    job_code=j.job_code, job_title=j.job_title,
+                    basic_info=JobCodeBasicInfoUpdate(**basic_info.model_dump()),
+                    skills=JobCodeSkillsUpdate(**skills.model_dump()) if skills else None,
+                ),
+                user_id,
+            )
+        else:
+            create_job_code(
+                tenant_db,
+                JobCodeCreate(job_code=j.job_code, job_title=j.job_title, basic_info=basic_info, skills=skills),
+                tenant_id=tenant_id, user_id=user_id, job_code_id=j.job_code_id,
+            )
+
+
+def _upsert_roles(tenant_db: Session, tenant_id: UUID, roles: List[OnboardingRole]) -> Dict[UUID, UUID]:
+    """Upsert roles keyed by role_code (the tenant-unique natural key — see
+    OnboardingUpdate's docstring), two passes exactly like create_onboarding's
+    role step: pass 1 resolves/creates/updates each role's own fields
+    (deferring parent_role_id and permissions), pass 2 resolves
+    parent_role_id (via UserRoleService._resolve_parent_role_id, which
+    queries the tenant DB directly by role_code — so it transparently covers
+    both a sibling role created earlier in pass 1 of THIS call and a
+    pre-existing parent not included in this call at all) and replaces
+    permissions wholesale.
+
+    Returns submitted_to_real: payload role_id -> the role's real
+    user_role_id. Identical for every role unless this call matched an
+    existing role by role_code under a DIFFERENT id than the payload
+    supplied — callers MUST translate users_groups[].default_role_id /
+    users[].role_id through this map (`.get(id, id)`) before writing them,
+    since those fields reference role_id, not role_code.
+    """
+    role_code_to_id: Dict[str, UUID] = {}
+    submitted_to_real: Dict[UUID, UUID] = {}
+    basic_rows: Dict[str, UserRoleBasic] = {}
+
+    for r in roles:
+        existing_basic = tenant_db.query(UserRoleBasic).filter(
+            UserRoleBasic.tenant_id == tenant_id, UserRoleBasic.role_code == r.role_code
+        ).first()
+        if existing_basic:
+            real_id = existing_basic.user_role_id
+            existing_basic.role_name = r.role_name
+            existing_basic.role_level = r.role_level
+            existing_basic.description = r.description
+            existing_basic.access_scope = r.access_scope
+            existing_basic.is_admin = r.is_admin
+            existing_basic.default_for_new_users = r.default_for_new_users
+            existing_basic.active = r.active
+            basic_row = existing_basic
+        else:
+            real_id = r.role_id
+            main = UserRoleMain(id=real_id)
+            tenant_db.add(main)
+            tenant_db.flush()
+            basic_row = UserRoleBasic(
+                user_role_id=main.id,
+                tenant_id=tenant_id,
+                role_name=r.role_name,
+                role_code=r.role_code,
+                description=r.description,
+                role_level=r.role_level,
+                access_scope=r.access_scope,
+                is_admin=r.is_admin,
+                default_for_new_users=r.default_for_new_users,
+                active=r.active,
+            )
+            tenant_db.add(basic_row)
+        tenant_db.flush()
+        role_code_to_id[r.role_code] = real_id
+        submitted_to_real[r.role_id] = real_id
+        basic_rows[r.role_code] = basic_row
+
+    for r in roles:
+        basic_row = basic_rows[r.role_code]
+        basic_row.parent_role_id = (
+            UserRoleService._resolve_parent_role_id(tenant_db, tenant_id, r.parent_role)
+            if r.parent_role is not None else None
+        )
+        tenant_db.query(UserRolePermission).filter(
+            UserRolePermission.user_role_id == role_code_to_id[r.role_code]
+        ).delete()
+        for perm_data in (r.permissions or []):
+            tenant_db.add(
+                UserRoleService.build_permission_row(tenant_db, perm_data, role_code_to_id[r.role_code], basic_row.id)
+            )
+
+    tenant_db.commit()
+    return submitted_to_real
+
+
+def _upsert_user_groups(
+    tenant_db: Session, tenant_id: UUID, groups: List[OnboardingUserGroup],
+    role_translation: Dict[UUID, UUID], user_id: Optional[UUID],
+) -> None:
+    for g in groups:
+        default_role_id = role_translation.get(g.default_role_id, g.default_role_id) if g.default_role_id else None
+        existing = tenant_db.query(UserGroup).filter(UserGroup.id == g.group_id).first()
+        if existing:
+            update_user_group(
+                tenant_db, g.group_id,
+                UserGroupUpdate(group_name=g.group_name, group_code=g.group_code,
+                                 default_role_id=default_role_id, description=g.description),
+                user_id,
+            )
+        else:
+            create_user_group(
+                tenant_db,
+                UserGroupCreate(group_name=g.group_name, group_code=g.group_code,
+                                 default_role_id=default_role_id, description=g.description),
+                tenant_id=tenant_id, user_id=user_id, group_id=g.group_id,
+            )
+
+
+def _upsert_users(
+    tenant_db: Session, tenant_id: UUID, users: List[OnboardingUser], role_translation: Dict[UUID, UUID],
+) -> None:
+    """Keyed by email — OnboardingUser has no client-generated id, unlike
+    every other step (see OnboardingUpdate's docstring); usersetup_basic
+    .email is unique per tenant DB."""
+    for u in users:
+        role_id = role_translation.get(u.role_id, u.role_id) if u.role_id else None
+        existing = tenant_db.query(UserSetupBasic).filter(UserSetupBasic.email == u.email).first()
+        if existing:
+            _update_user_row(tenant_db, existing, u, role_id)
+        else:
+            _create_user_row(
+                tenant_db,
+                firstname=u.first_name, lastname=u.last_name, employee_id=u.employee_id,
+                username=u.username, email=u.email, password=u.password, tenant_id=tenant_id,
+                phone=u.phone, profile_image_url=u.profile_image_url, status=u.status or "active",
+                role_id=role_id, entity_id=u.entity_id, job_code_id=u.job_code_id,
+                user_group_id=u.user_group_id, send_invite_email=u.send_invite_email,
+            )
+
+
+def _upsert_subscription(tenant_db: Session, tenant_id: UUID, subscription: SubscriptionCreate, user_id: Optional[UUID]) -> None:
+    """One row per tenant DB by convention (no DB-level unique constraint —
+    same convention create_onboarding/get_onboarding already rely on)."""
+    existing = tenant_db.query(Subscription).first()
+    if existing:
+        update_subscription(tenant_db, existing.subscription_id, SubscriptionUpdate(**subscription.model_dump()), user_id)
+    else:
+        create_subscription(tenant_db, subscription, tenant_id=tenant_id, user_id=user_id)
+
+
+def _upsert_security(tenant_db: Session, tenant_id: UUID, security: SecurityCreate, user_id: Optional[UUID]) -> None:
+    """One row per tenant DB by convention — same as _upsert_subscription."""
+    existing = tenant_db.query(Security).first()
+    if existing:
+        update_security(tenant_db, existing.security_id, SecurityUpdate(**security.model_dump()), user_id)
+    else:
+        create_security(tenant_db, security, tenant_id=tenant_id, user_id=user_id)
 
 
 def list_onboardings(
@@ -1006,31 +1290,85 @@ def is_progress_complete(progress: OnboardingProgress) -> bool:
     return progress.completed_steps == progress.total_steps
 
 
-# Map OnboardingCompanyUpdate field -> Tenant column
+# Map OnboardingUpdate field -> Tenant column
 _UPDATE_FIELD_MAP = {
     "client_name": "tenant_name",
     "client_code": "tenant_code",
 }
 
+# The 9 non-company steps OnboardingUpdate carries — excluded from the
+# company-fields pass and iterated separately against the tenant DB.
+_UPDATE_STEP_FIELDS = (
+    "branches", "departments", "divisions", "job_codes", "roles",
+    "users_groups", "users", "subscription", "security",
+)
+
 
 def update_onboarding(
     master_db: Session,
     tenant_id: UUID,
-    update: OnboardingCompanyUpdate,
-) -> Tenant:
-    """Update the client/company (tenant) fields only, and mirror to the tenant DB."""
+    update: OnboardingUpdate,
+    updated_by_user_id: Optional[str] = None,
+) -> Tuple[Tenant, OnboardingDetail]:
+    """Update an onboarded client: company/tenant fields (as before) plus,
+    now, any of the other 9 onboarding steps — each upserted against the
+    tenant's own database via the _upsert_* helpers above (see
+    OnboardingUpdate's docstring for the exact semantics: upsert by key,
+    no deletes, every item is a full-record replace).
+
+    Same non-atomicity caveat as create_onboarding: the per-record services
+    each commit internally, so a failure partway through the tenant-DB step
+    processing leaves whatever ran before it committed — this is an update
+    to an already-provisioned tenant, so (unlike create_onboarding) nothing
+    here rolls back or drops the tenant database on failure; the error is
+    simply raised for the caller to retry.
+    """
     tenant = master_db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise OnboardingNotFoundError()
 
-    data = update.model_dump(exclude_unset=True)
-    for field, value in data.items():
-        setattr(tenant, _UPDATE_FIELD_MAP.get(field, field), value)
-    master_db.commit()
-    master_db.refresh(tenant)
+    company_data = update.model_dump(exclude_unset=True, exclude=set(_UPDATE_STEP_FIELDS))
+    if company_data:
+        for field, value in company_data.items():
+            setattr(tenant, _UPDATE_FIELD_MAP.get(field, field), value)
+        master_db.commit()
+        master_db.refresh(tenant)
+
+    if tenant.tenant_db_name and any(getattr(update, f) is not None for f in _UPDATE_STEP_FIELDS):
+        user_id = _safe_uuid(updated_by_user_id)
+        tenant_db = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
+        try:
+            if update.branches is not None:
+                _upsert_branches(tenant_db, tenant_id, update.branches, user_id)
+            if update.departments is not None:
+                _upsert_departments(tenant_db, tenant_id, update.departments, user_id)
+            if update.divisions is not None:
+                _upsert_divisions(tenant_db, tenant_id, update.divisions, user_id)
+            if update.job_codes is not None:
+                _upsert_job_codes(tenant_db, tenant_id, update.job_codes, user_id)
+
+            role_translation: Dict[UUID, UUID] = {}
+            if update.roles is not None:
+                _sync_role_permission_catalog(master_db, tenant_db, update.roles)
+                role_translation = _upsert_roles(tenant_db, tenant_id, update.roles)
+
+            if update.users_groups is not None:
+                _upsert_user_groups(tenant_db, tenant_id, update.users_groups, role_translation, user_id)
+            if update.users is not None:
+                _upsert_users(tenant_db, tenant_id, update.users, role_translation)
+            if update.subscription is not None:
+                _upsert_subscription(tenant_db, tenant_id, update.subscription, user_id)
+            if update.security is not None:
+                _upsert_security(tenant_db, tenant_id, update.security, user_id)
+        except Exception:
+            tenant_db.rollback()
+            raise
+        finally:
+            tenant_db.close()
 
     # Best-effort: keep the tenant DB's copy of the tenants row in sync
-    if tenant.tenant_db_name:
+    # (only meaningful when company fields actually changed).
+    if company_data and tenant.tenant_db_name:
         try:
             tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
             try:
@@ -1045,7 +1383,8 @@ def update_onboarding(
         except Exception as exc:
             logger.warning("Onboarding update: tenant DB sync failed for %s: %s", tenant_id, exc)
 
-    return tenant
+    master_db.refresh(tenant)
+    return tenant, get_onboarding(master_db, tenant_id)
 
 
 def delete_onboarding(master_db: Session, tenant_id: UUID) -> bool:

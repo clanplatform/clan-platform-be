@@ -63,6 +63,33 @@ class TenantProvisioningError(HTTPException):
         )
 
 
+class OnboardingCreationFailedError(HTTPException):
+    """An unexpected (e.g. database-level) error interrupted the org-structure
+    build — branches/departments/.../users — partway through. Raised instead
+    of letting the underlying exception (which may carry raw SQL and bound
+    parameters) propagate as-is."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create client — an unexpected error occurred while "
+                   "setting up the organization. The submission was saved as a "
+                   "draft; please retry.",
+        )
+
+
+class OnboardingUpdateFailedError(HTTPException):
+    """An unexpected (e.g. database-level) error interrupted a PUT's per-step
+    upserts partway through. Same rationale as OnboardingCreationFailedError."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update client — an unexpected error occurred while "
+                   "applying the changes. Please retry.",
+        )
+
+
 class OnboardingNotFoundError(HTTPException):
     """No onboarded client (tenant) with the given id."""
 

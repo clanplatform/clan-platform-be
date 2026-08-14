@@ -42,13 +42,13 @@ from app.buttons.models.button import Button
 
 from app.entities.models.entity import Entity
 from app.entities.services.entity import create_entity, update_entity
-from app.entities.schemas.entity import EntityCreate, EntityUpdate
+from app.entities.schemas.entity import EntityCreate, EntityUpdate, EntityResponse
 from app.departments.models.departments import Department
 from app.departments.services.departments import create_department, update_department
-from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate
+from app.departments.schemas.departments import DepartmentCreate, DepartmentUpdate, DepartmentResponse
 from app.divisions.models.divisions import Division
 from app.divisions.services.divisions import create_division, update_division
-from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate
+from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate, DivisionResponse
 from app.job_codes.models.job_codes import JobCode
 from app.job_codes.services.job_codes import create_job_code, update_job_code
 from app.job_codes.schemas.job_codes import (
@@ -58,24 +58,28 @@ from app.job_codes.schemas.job_codes import (
     JobCodeBasicInfoUpdate,
     JobCodeSkillsCreate,
     JobCodeSkillsUpdate,
+    JobCodeRead,
 )
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 from app.user_role.services.user_role import UserRoleService
+from app.user_role.schemas.user_role import UserRoleWithDetails
 from app.users_groups.models.users_groups import UserGroup
 from app.users_groups.services.users_groups import create_user_group, update_user_group
-from app.users_groups.schemas.users_groups import UserGroupCreate, UserGroupUpdate
+from app.users_groups.schemas.users_groups import UserGroupCreate, UserGroupUpdate, UserGroupResponse
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic
+from app.user_setup.schemas.user_setup import UserSetupBasicResponse
 from app.subscription.models.subscription import Subscription
 from app.subscription.services.subscription import create_subscription, update_subscription
-from app.subscription.schemas.subscription import SubscriptionCreate, SubscriptionUpdate
+from app.subscription.schemas.subscription import SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse
 from app.security.models.security import Security
 from app.security.services.security import create_security, update_security
-from app.security.schemas.security import SecurityCreate, SecurityUpdate
+from app.security.schemas.security import SecurityCreate, SecurityUpdate, SecurityResponse
 
 from app.onboarding.models.onboarding import OnboardingDraft
 from app.onboarding.schemas.onboarding import (
     OnboardingRequest,
     OnboardingUpdate,
+    OnboardingCompany,
     OnboardingBranch,
     OnboardingDepartment,
     OnboardingDivision,
@@ -92,7 +96,6 @@ from app.onboarding.schemas.onboarding import (
     OnboardingDraftListResponse,
     OnboardingStepProgress,
     OnboardingProgress,
-    _NamedRef,
 )
 from app.onboarding.exceptions import (
     DuplicateTenantError,
@@ -101,6 +104,8 @@ from app.onboarding.exceptions import (
     TenantProvisioningError,
     OnboardingNotFoundError,
     OnboardingDraftNotFoundError,
+    OnboardingCreationFailedError,
+    OnboardingUpdateFailedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -535,6 +540,7 @@ def create_onboarding(
         tax_id=company.tax_id,
         founded_year=company.founded_year,
         website=company.website,
+        deployed_url=company.deployed_url,
         annual_revenue=company.annual_revenue,
         contact_name=company.contact_name,
         contact_title=company.contact_title,
@@ -836,10 +842,21 @@ def create_onboarding(
             )
             counts.security = 1
 
-    except Exception:
+    except HTTPException:
         tenant_db.rollback()
         failed = True
         raise
+    except Exception as exc:
+        # Anything that isn't already a clean HTTPException here is a
+        # database-level failure (e.g. a stale owner row from a previously
+        # deleted tenant colliding on employee_id) — its str() carries the
+        # raw SQL + bound parameters, which must not reach the client as-is.
+        tenant_db.rollback()
+        failed = True
+        logger.error(
+            "Unexpected error onboarding tenant %s: %s", tenant.tenant_id, exc, exc_info=True
+        )
+        raise OnboardingCreationFailedError() from exc
     finally:
         tenant_db.close()
         if failed:
@@ -1085,55 +1102,64 @@ def list_onboardings(
 
 
 def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
-    """Return the tenant plus a summary of everything in its tenant DB."""
+    """Return the tenant's full profile plus every record in its tenant DB,
+    each in the same shape that domain's own GET endpoint returns."""
     tenant = master_db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise OnboardingNotFoundError()
 
     counts = OnboardingCounts()
-    branches: List[_NamedRef] = []
-    departments: List[_NamedRef] = []
-    divisions: List[_NamedRef] = []
-    job_codes: List[_NamedRef] = []
-    roles: List[_NamedRef] = []
-    users_groups: List[_NamedRef] = []
-    users: List[_NamedRef] = []
-    subscription_count = 0
-    security_count = 0
+    branches: List[EntityResponse] = []
+    departments: List[DepartmentResponse] = []
+    divisions: List[DivisionResponse] = []
+    job_codes: List[JobCodeRead] = []
+    roles: List[UserRoleWithDetails] = []
+    users_groups: List[UserGroupResponse] = []
+    users: List[UserSetupBasicResponse] = []
+    subscription: Optional[SubscriptionResponse] = None
+    security: Optional[SecurityResponse] = None
 
     if tenant.tenant_db_name:
         tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
         try:
             branches = [
-                _NamedRef(id=e.entity_id, name=e.entity_name, code=e.entity_code)
+                EntityResponse.model_validate(e)
                 for e in tdb.query(Entity).filter(Entity.deleted == False).all()  # noqa: E712
             ]
             departments = [
-                _NamedRef(id=d.department_id, name=d.department_name, code=d.department_code)
+                DepartmentResponse.model_validate(d)
                 for d in tdb.query(Department).filter(Department.is_deleted == False).all()  # noqa: E712
             ]
             divisions = [
-                _NamedRef(id=dv.id, name=dv.division_name, code=dv.division_code)
+                DivisionResponse.model_validate(dv)
                 for dv in tdb.query(Division).filter(Division.deleted_at.is_(None)).all()
             ]
             job_codes = [
-                _NamedRef(id=j.id, name=j.job_title, code=j.job_code)
+                JobCodeRead.model_validate(j)
                 for j in tdb.query(JobCode).filter(JobCode.deleted_at.is_(None)).all()
             ]
-            roles = [
-                _NamedRef(id=r.id, name=r.role_name, code=r.role_code)
-                for r in tdb.query(UserRoleBasic).all()
-            ]
+            role_rows = tdb.query(UserRoleBasic).all()
+            # parent_role (role_code) is resolved and stashed onto each row in
+            # memory here — same trick UserRoleService's own list/get use — so
+            # UserRoleWithDetails.model_validate(from_attributes) can pick it
+            # up alongside the real parent_role_id column.
+            UserRoleService._attach_parent_role_codes(tdb, role_rows)
+            roles = [UserRoleWithDetails.model_validate(r) for r in role_rows]
             users_groups = [
-                _NamedRef(id=g.id, name=g.group_name, code=g.group_code)
+                UserGroupResponse.model_validate(g)
                 for g in tdb.query(UserGroup).filter(UserGroup.deleted_at.is_(None)).all()
             ]
             users = [
-                _NamedRef(id=u.id, name=f"{u.firstname} {u.lastname}".strip(), code=u.email)
+                UserSetupBasicResponse.model_validate(u)
                 for u in tdb.query(UserSetupBasic).all()
             ]
-            subscription_count = tdb.query(Subscription).count()
-            security_count = tdb.query(Security).count()
+            # One row per tenant DB by convention (no DB-level unique
+            # constraint — same convention _upsert_subscription/_upsert_security
+            # already rely on).
+            subscription_row = tdb.query(Subscription).first()
+            security_row = tdb.query(Security).first()
+            subscription = SubscriptionResponse.model_validate(subscription_row) if subscription_row else None
+            security = SecurityResponse.model_validate(security_row) if security_row else None
         finally:
             tdb.close()
 
@@ -1144,15 +1170,49 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
     counts.roles = len(roles)
     counts.users_groups = len(users_groups)
     counts.users = len(users)
-    counts.subscription = subscription_count
-    counts.security = security_count
+    counts.subscription = 1 if subscription else 0
+    counts.security = 1 if security else 0
 
     return OnboardingDetail(
         tenant_id=tenant.tenant_id,
-        client_name=tenant.tenant_name,
-        client_code=tenant.tenant_code,
-        contact_email=tenant.contact_email,
-        initial_status=tenant.initial_status,
+        company=OnboardingCompany(
+            client_name=tenant.tenant_name,
+            client_code=tenant.tenant_code,
+            industry=tenant.industry,
+            company_size=tenant.company_size,
+            employees_count=tenant.employees_count,
+            contact_email=tenant.contact_email,
+            contact_phone=tenant.contact_phone,
+            address=tenant.address,
+            city=tenant.city,
+            state=tenant.state,
+            country=tenant.country,
+            postal_code=tenant.postal_code,
+            description=tenant.description,
+            display_name=tenant.display_name,
+            registration_number=tenant.registration_number,
+            tax_id=tenant.tax_id,
+            founded_year=tenant.founded_year,
+            website=tenant.website,
+            deployed_url=tenant.deployed_url,
+            annual_revenue=tenant.annual_revenue,
+            company_logo=tenant.company_logo,
+            contact_name=tenant.contact_name,
+            contact_title=tenant.contact_title,
+            primary_domain=tenant.primary_domain,
+            business_model=tenant.business_model,
+            organization_type=tenant.organization_type,
+            default_language=tenant.default_language,
+            time_zone=tenant.time_zone,
+            default_currency=tenant.default_currency,
+            date_format=tenant.date_format,
+            fiscal_year_start=tenant.fiscal_year_start,
+            week_starts_on=tenant.week_starts_on,
+            internal_notes=tenant.internal_notes,
+            owner_name=tenant.owner_name,
+            owner_email=tenant.owner_email,
+            initial_status=tenant.initial_status,
+        ),
         is_active=tenant.is_active,
         tenant_db_name=tenant.tenant_db_name,
         counts=counts,
@@ -1163,6 +1223,8 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
         roles=roles,
         users_groups=users_groups,
         users=users,
+        subscription=subscription,
+        security=security,
     )
 
 
@@ -1360,9 +1422,17 @@ def update_onboarding(
                 _upsert_subscription(tenant_db, tenant_id, update.subscription, user_id)
             if update.security is not None:
                 _upsert_security(tenant_db, tenant_id, update.security, user_id)
-        except Exception:
+        except HTTPException:
             tenant_db.rollback()
             raise
+        except Exception as exc:
+            # Same rationale as create_onboarding's except block — don't let
+            # a raw database exception (SQL + bound params) reach the client.
+            tenant_db.rollback()
+            logger.error(
+                "Unexpected error updating tenant %s: %s", tenant_id, exc, exc_info=True
+            )
+            raise OnboardingUpdateFailedError() from exc
         finally:
             tenant_db.close()
 
@@ -1450,6 +1520,18 @@ def mark_draft_completed(master_db: Session, draft_id: UUID, tenant_id: UUID) ->
         master_db.rollback()
 
 
+def _draft_company_fields(payload: Optional[dict]) -> dict:
+    """Pull client_name/client_code/contact_email out of a draft's saved
+    payload (the company step), so the drafts list can show which client
+    each draft belongs to without a separate lookup per row."""
+    company = (payload or {}).get("company") or {}
+    return {
+        "client_name": company.get("client_name"),
+        "client_code": company.get("client_code"),
+        "contact_email": company.get("contact_email"),
+    }
+
+
 def list_drafts(
     master_db: Session,
     page: int = 1,
@@ -1463,7 +1545,18 @@ def list_drafts(
     total = query.count()
     rows = query.order_by(OnboardingDraft.updated_at.desc()).offset((page - 1) * size).limit(size).all()
     return OnboardingDraftListResponse(
-        data=[OnboardingDraftSummary.model_validate(r) for r in rows],
+        data=[
+            OnboardingDraftSummary(
+                draft_id=r.draft_id,
+                status=r.status,
+                error_message=r.error_message,
+                tenant_id=r.tenant_id,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
+                **_draft_company_fields(r.payload),
+            )
+            for r in rows
+        ],
         total=total,
         page=page,
         per_page=size,
@@ -1475,7 +1568,16 @@ def get_draft(master_db: Session, draft_id: UUID) -> OnboardingDraftDetail:
     draft = master_db.query(OnboardingDraft).filter(OnboardingDraft.draft_id == draft_id).first()
     if not draft:
         raise OnboardingDraftNotFoundError()
-    return OnboardingDraftDetail.model_validate(draft)
+    return OnboardingDraftDetail(
+        draft_id=draft.draft_id,
+        status=draft.status,
+        error_message=draft.error_message,
+        tenant_id=draft.tenant_id,
+        created_at=draft.created_at,
+        updated_at=draft.updated_at,
+        payload=draft.payload,
+        **_draft_company_fields(draft.payload),
+    )
 
 
 def delete_draft(master_db: Session, draft_id: UUID) -> bool:

@@ -31,6 +31,7 @@ class Tenant(Base):
     tax_id = Column(String(100), nullable=True)                 # Tax / VAT / GST ID
     founded_year = Column(Integer, nullable=True)
     website = Column(String(255), nullable=True)
+    deployed_url = Column(String(500), nullable=True)           # URL of the tenant's deployed application instance
     company_logo = Column(String(500), nullable=True)           # Logo URL / file reference
     company_size = Column(String(50), nullable=True)
     employees_count = Column(Integer, nullable=True)

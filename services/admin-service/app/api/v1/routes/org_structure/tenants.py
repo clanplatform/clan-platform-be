@@ -179,8 +179,11 @@ async def create_tenant(
                 tenant_name=db_tenant.tenant_name,
                 tenant_id=str(db_tenant.tenant_id),
                 temp_password=temp_password,
-                # Login link points at the tenant's own frontend (first allowed origin)
-                tenant_app_url=(db_tenant.allowed_origins[0] if db_tenant.allowed_origins else None),
+                # Login link points at the tenant's deployed app instance
+                # (tenants.deployed_url). allowed_origins is a separate
+                # concept (usersetup_basic.allowed_origins — the master-DB
+                # user's own post-login redirect target) and isn't used here.
+                tenant_app_url=db_tenant.deployed_url,
             ))
         except Exception as seed_exc:
             logger.warning(

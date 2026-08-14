@@ -5,15 +5,20 @@ POST / is called repeatedly as the step form progresses. Each call only
 needs to include the step(s) being added or changed THIS time (pass back
 ?draft_id=... from a previous 'draft' response after the first call) — the
 server merges those step(s) onto whatever was saved under that draft_id
-earlier, so already-completed steps don't need to be resent. While
-company/branches/departments/divisions/job_codes/subscription/roles/
-users_groups/users/security don't all have data yet (after merging), the
-merged payload is just saved to onboarding_drafts (status 'draft', no
-tenant created) so it can be resumed later. Only once every one of the 10
-steps is present — matching the wizard's own step list, nothing optional —
-is the merged payload strictly validated and the real tenant + its
-dedicated database created (status 'created'). GET / PUT / DELETE manage
-the onboarded client (company-level).
+earlier, so already-completed steps don't need to be resent.
+
+?finalize=true|false (default false) controls whether the call may actually
+provision:
+  - finalize=false — the merged payload is always just saved to
+    onboarding_drafts (status 'draft', HTTP 200, no tenant created), even
+    once every step happens to have data.
+  - finalize=true — the merged payload is strictly validated; if every one
+    of the 10 steps (matching the wizard's own step list, nothing optional)
+    is present and valid, the real tenant + its dedicated database is
+    created (status 'created', HTTP 201). Otherwise HTTP 422 listing which
+    step(s) are still missing.
+
+GET / PUT / DELETE manage the onboarded client (company-level).
 
 All endpoints are restricted to master-DB platform users (JWT tenant_id NULL);
 tenant users cannot onboard clients.
@@ -94,7 +99,11 @@ def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: s
     emails to the same inbox; also carries the owner's temp password), and
     per-user invites (with each user's own step-form password) for users[]
     entries with send_invite_email true."""
-    tenant_app_url = tenant.allowed_origins[0] if tenant.allowed_origins else None
+    # tenants.deployed_url is the login link's source of truth (falls back to
+    # settings.FRONTEND_LOGIN_URL inside email_tenant.py when unset).
+    # allowed_origins is a separate concept (usersetup_basic.allowed_origins —
+    # the master-DB user's own post-login redirect target) and isn't used here.
+    tenant_app_url = tenant.deployed_url
 
     asyncio.create_task(send_tenant_invitation_email(
         to_email=payload.company.owner_email,
@@ -183,13 +192,11 @@ async def _create_and_finalize(
     _sync_tenant(tenant)
     _send_onboarding_emails(tenant, payload, temp_password)
 
-    return OnboardingResult(
-        tenant_id=tenant.tenant_id,
-        tenant_db_name=tenant.tenant_db_name,
-        owner_email=payload.company.owner_email,
-        temp_password=temp_password,
-        counts=counts,
-    )
+    # Full detail — same query GET /{tenant_id} runs — so the creation
+    # response carries every record actually written (company, branches,
+    # ... subscription, security), not just counts.
+    detail = onboarding_service.get_onboarding(db, tenant.tenant_id)
+    return OnboardingResult(**detail.model_dump(), temp_password=temp_password)
 
 
 @router.post(
@@ -209,18 +216,23 @@ async def _create_and_finalize(
         "subscription/security. Note this merge is step-level, not item-"
         "level: resending a step's array replaces the previously saved array "
         "for that step outright, so a single step's items must all be sent "
-        "together. While company/branches/departments/divisions/job_codes/"
-        "subscription/roles/users_groups/users/security don't all have data "
-        "yet (after merging), the merged payload is just saved to "
-        "onboarding_drafts (status 'draft', HTTP 200, no tenant created) so "
-        "it can be resumed later via GET /onboarding/drafts/{draft_id}. Only "
-        "once every one of the 10 steps is present — matching the wizard's "
-        "own step list, nothing optional — is the client (tenant) + its "
-        "dedicated database created (status 'created', HTTP 201): every "
+        "together.\n\n"
+        "?finalize=true|false (default false) controls whether this call may "
+        "actually provision:\n"
+        "- finalize=false — the merged payload is always just saved to "
+        "onboarding_drafts (status 'draft', HTTP 200), so it can be resumed "
+        "later via GET /onboarding/drafts/{draft_id}. Never provisions, even "
+        "when all 10 steps happen to be present already.\n"
+        "- finalize=true — the merged payload is strictly validated and, if "
+        "every one of the 10 steps (matching the wizard's own step list, "
+        "nothing optional) is present and valid, the client (tenant) + its "
+        "dedicated database is created (status 'created', HTTP 201): every "
         "branch, department, division, job code, role, user, the "
-        "subscription and the security settings in one sequence. Children "
-        "reference parents by the client-supplied UUIDs carried in the "
-        "payload (see the schema). Master-DB users only."
+        "subscription and the security settings in one sequence. Otherwise "
+        "422, listing which step(s) are still missing (and the payload is "
+        "still saved as a draft, resumable the same way).\n\n"
+        "Children reference parents by the client-supplied UUIDs carried in "
+        "the payload (see the schema). Master-DB users only."
     ),
 )
 async def onboard_client(
@@ -229,6 +241,15 @@ async def onboard_client(
     payload: OnboardingStepRequest,
     draft_id: Optional[UUID] = Query(
         None, description="From a previous 'draft' response, to keep updating the same draft"
+    ),
+    finalize: bool = Query(
+        False,
+        description=(
+            "False (default): always saved as a draft — 200 status:'draft'. Never "
+            "provisions, even when all 10 steps are present. True: validate + "
+            "provision — 201 status:'created' when all 10 steps are present and "
+            "valid, 422 listing which steps are missing otherwise."
+        ),
     ),
     db: Session = Depends(get_db),
     current_user=Depends(require_master_user),
@@ -246,7 +267,10 @@ async def onboard_client(
     merged = onboarding_service.merge_onboarding_payload(db, effective_draft_id, incoming)
     progress = onboarding_service.compute_dict_progress(merged)
 
-    if not onboarding_service.is_progress_complete(progress):
+    if not finalize:
+        # finalize=false (the default): always just save the draft, even if
+        # every step happens to already be present — the caller must pass
+        # finalize=true to actually provision.
         onboarding_service.save_onboarding_draft(
             db,
             draft_id=effective_draft_id,
@@ -256,6 +280,26 @@ async def onboard_client(
         )
         response.status_code = status.HTTP_200_OK
         return OnboardingDraftSaveResult(status="draft", draft_id=effective_draft_id, progress=progress)
+
+    if not onboarding_service.is_progress_complete(progress):
+        missing_steps = [s.step for s in progress.steps if not s.completed]
+        detail_msg = f"Missing required step(s): {', '.join(missing_steps)}"
+        onboarding_service.save_onboarding_draft(
+            db,
+            draft_id=effective_draft_id,
+            payload_dict=merged,
+            error_message=detail_msg,
+            created_by=get_user_id(current_user),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": detail_msg,
+                "missing_steps": missing_steps,
+                "draft_id": str(effective_draft_id),
+                "draft_saved": True,
+            },
+        )
 
     # All 10 steps are present in the merged payload — now strictly
     # re-validate it as a full OnboardingRequest (a step merged in on an

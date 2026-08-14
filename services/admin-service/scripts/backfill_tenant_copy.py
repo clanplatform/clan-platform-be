@@ -31,10 +31,7 @@ from app.user_role.models.user_role import (                                    
     UserRoleMain, UserRoleBasic, UserRolePermission
 )
 from app.user_setup.models.user_setup import (                                       # noqa: F401
-    UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
-)
-from app.user_role_form_permission.models.user_role_form_permission import (         # noqa: F401
-    RoleFormPermission
+    UserSetup, UserSetupBasic, UserSetupPreference
 )
 from app.buttons.models.button import Button                                         # noqa: F401
 from app.tenant_modules.models.tenant_module import TenantModule                     # noqa: F401
@@ -65,7 +62,12 @@ def ensure_tenant_table_columns(tdb) -> None:
 
 
 master = SessionLocal()
-tenants = master.query(Tenant).filter(Tenant.tenant_db_name.isnot(None)).all()
+# tenant_db_name is a computed @property (derived from tenant_code), not a
+# mapped column, so the SQL-level filter has to go through tenant_code.
+tenants = [
+    t for t in master.query(Tenant).filter(Tenant.tenant_code.isnot(None)).all()
+    if t.tenant_db_name
+]
 print(f"Found {len(tenants)} tenants with a dedicated DB")
 
 for t in tenants:

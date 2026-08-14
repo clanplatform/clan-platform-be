@@ -61,9 +61,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from app.subscription.schemas.subscription import SubscriptionCreate
-from app.security.schemas.security import SecurityCreate
-from app.user_role.schemas.user_role import UserRolePermissionBase, _validate_access_scope
+from app.subscription.schemas.subscription import SubscriptionCreate, SubscriptionResponse
+from app.security.schemas.security import SecurityCreate, SecurityResponse
+from app.user_role.schemas.user_role import (
+    UserRolePermissionBase,
+    UserRoleWithDetails,
+    _validate_access_scope,
+)
+from app.entities.schemas.entity import EntityResponse
+from app.departments.schemas.departments import DepartmentResponse
+from app.divisions.schemas.divisions import DivisionResponse
+from app.job_codes.schemas.job_codes import JobCodeRead
+from app.users_groups.schemas.users_groups import UserGroupResponse
+from app.user_setup.schemas.user_setup import UserSetupBasicResponse
 
 
 # ============================================================================
@@ -93,6 +103,7 @@ class OnboardingCompany(BaseModel):
     tax_id: Optional[str] = Field(None, max_length=100, description="Tax / VAT / GST ID")
     founded_year: Optional[int] = Field(None)
     website: Optional[str] = Field(None, max_length=255)
+    deployed_url: Optional[str] = Field(None, max_length=500, description="URL of the tenant's deployed application instance (tenants.deployed_url)")
     annual_revenue: Optional[str] = Field(None, max_length=100)
     company_logo: Optional[str] = Field(None, max_length=500, description="Logo URL / file reference")
 
@@ -562,6 +573,7 @@ class OnboardingCompanyUpdate(BaseModel):
     tax_id: Optional[str] = Field(None, max_length=100)
     founded_year: Optional[int] = None
     website: Optional[str] = Field(None, max_length=255)
+    deployed_url: Optional[str] = Field(None, max_length=500)
     company_logo: Optional[str] = Field(None, max_length=500)
     annual_revenue: Optional[str] = Field(None, max_length=100)
     contact_name: Optional[str] = Field(None, max_length=255)
@@ -656,21 +668,6 @@ class OnboardingCounts(BaseModel):
     security: int = 0
 
 
-class OnboardingResult(BaseModel):
-    """Returned by POST — what was created."""
-    success: bool = True
-    message: str = "Client onboarded successfully"
-    tenant_id: UUID
-    tenant_db_name: Optional[str] = None
-    owner_email: str
-    temp_password: str = Field(
-        ...,
-        description="Owner's randomly generated temporary password. Returned once — "
-                    "must be changed on first login.",
-    )
-    counts: OnboardingCounts
-
-
 class OnboardingSummary(BaseModel):
     """One row in the onboarding list."""
     tenant_id: UUID
@@ -697,9 +694,12 @@ class OnboardingListResponse(BaseModel):
 # ============================================================================
 
 class OnboardingDraftSummary(BaseModel):
-    """One row in the drafts list — no payload (use the detail endpoint for that)."""
+    """One row in the drafts list — no full payload (use the detail endpoint for that)."""
     draft_id: UUID
     status: str = Field(..., description="'draft' (still incomplete) or 'completed' (this id went on to onboard successfully)")
+    client_name: Optional[str] = Field(None, description="From payload.company.client_name, once the company step has been saved")
+    client_code: Optional[str] = Field(None, description="From payload.company.client_code, once the company step has been saved")
+    contact_email: Optional[str] = Field(None, description="From payload.company.contact_email, once the company step has been saved")
     error_message: Optional[str] = None
     tenant_id: Optional[UUID] = Field(None, description="Set once this draft_id successfully onboards")
     created_at: datetime
@@ -721,31 +721,45 @@ class OnboardingDraftListResponse(BaseModel):
     per_page: int = 10
 
 
-class _NamedRef(BaseModel):
-    id: UUID
-    name: str
-    code: Optional[str] = None
-    model_config = ConfigDict(from_attributes=True)
-
-
 class OnboardingDetail(BaseModel):
-    """Returned by GET /{tenant_id} — the tenant plus its tenant-DB records."""
+    """Returned by GET /{tenant_id} (and as PUT /{tenant_id}'s response) — the
+    full tenant profile, nested under "company" in the same shape as
+    OnboardingRequest's own step 1 (every field OnboardingCompany/
+    OnboardingCompanyUpdate can set, echoed back — not just the handful
+    surfaced by OnboardingSummary), plus every record actually in its tenant
+    DB, in the same shape each domain's own GET endpoint returns (not just
+    {id, name, code})."""
     success: bool = True
     tenant_id: UUID
-    client_name: str
-    client_code: Optional[str] = None
-    contact_email: Optional[str] = None
-    initial_status: Optional[str] = None
+    company: OnboardingCompany
+    # is_active is intentionally outside "company" — same rule as
+    # OnboardingCompanyUpdate: it's backend-derived from company.initial_status,
+    # never accepted directly.
     is_active: Optional[bool] = None
     tenant_db_name: Optional[str] = None
     counts: OnboardingCounts
-    branches: List[_NamedRef] = Field(default_factory=list)
-    departments: List[_NamedRef] = Field(default_factory=list)
-    divisions: List[_NamedRef] = Field(default_factory=list)
-    job_codes: List[_NamedRef] = Field(default_factory=list)
-    roles: List[_NamedRef] = Field(default_factory=list)
-    users_groups: List[_NamedRef] = Field(default_factory=list)
-    users: List[_NamedRef] = Field(default_factory=list)
+    branches: List[EntityResponse] = Field(default_factory=list)
+    departments: List[DepartmentResponse] = Field(default_factory=list)
+    divisions: List[DivisionResponse] = Field(default_factory=list)
+    job_codes: List[JobCodeRead] = Field(default_factory=list)
+    roles: List[UserRoleWithDetails] = Field(default_factory=list)
+    users_groups: List[UserGroupResponse] = Field(default_factory=list)
+    users: List[UserSetupBasicResponse] = Field(default_factory=list)
+    subscription: Optional[SubscriptionResponse] = None
+    security: Optional[SecurityResponse] = None
+
+
+class OnboardingResult(OnboardingDetail):
+    """Returned by POST once the client is actually created (status ==
+    'created') — same full shape as GET /{tenant_id} (OnboardingDetail:
+    company, branches, departments, ... subscription, security), plus
+    temp_password, which only ever appears here."""
+    message: str = "Client onboarded successfully"
+    temp_password: str = Field(
+        ...,
+        description="Owner's randomly generated temporary password (also company.owner_email's "
+                    "login). Returned once — must be changed on first login.",
+    )
 
 
 class OnboardingStepProgress(BaseModel):
@@ -775,11 +789,12 @@ class OnboardingProgress(BaseModel):
 class OnboardingDraftSaveResult(BaseModel):
     """Returned by POST /onboarding/.
 
-    While company/branches/departments/divisions/job_codes/subscription/
-    roles/users_groups/users/security don't all have data yet, the payload
-    is just saved to onboarding_drafts (status 'draft') — no tenant is
-    created. Only once every one of the 10 steps is present is the real
-    tenant created instead (status 'created') — nothing is optional."""
+    With ?finalize=false (the default), the payload is always just saved to
+    onboarding_drafts (status 'draft') — no tenant is created, even once
+    every step has data. With ?finalize=true, the real tenant is created
+    instead (status 'created') once every one of the 10 steps is present
+    and valid — nothing is optional; otherwise a 422 lists which step(s)
+    are still missing."""
     status: str = Field(..., description="'draft' (saved, not yet complete) or 'created' (tenant created for real)")
     draft_id: Optional[UUID] = Field(
         None,

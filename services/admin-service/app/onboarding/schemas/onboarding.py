@@ -721,6 +721,33 @@ class OnboardingDraftListResponse(BaseModel):
     per_page: int = 10
 
 
+class OnboardingRoleDetail(UserRoleWithDetails):
+    """UserRoleWithDetails plus role_id — the direct user_role CRUD module's
+    `id` field is userrole_basic.id (that table's own primary key), but every
+    onboarding reference to a role (OnboardingRole.role_id itself, users[]
+    .role_id, users_groups[].default_role_id) is by user_role.id
+    (UserRoleMain.id, stored on userrole_basic as user_role_id) — a
+    different value. Without this, roles[].id can never be matched against
+    users[].role_id (same basic-id vs role-id duality as the direct Roles
+    screen)."""
+    role_id: UUID = Field(
+        ...,
+        validation_alias="user_role_id",
+        description="The role's real id (user_role.id / UserRoleMain.id) — matches "
+                    "OnboardingRole.role_id, users[].role_id and users_groups[]"
+                    ".default_role_id. NOT the same as `id` (userrole_basic's own "
+                    "primary key).",
+    )
+
+    # populate_by_name lets `role_id` also be read back under its own field
+    # name — needed because validation_alias is input-only: model_dump()
+    # always serializes under the field name, so re-validating an already-
+    # built OnboardingRoleDetail from its own .model_dump() (as
+    # OnboardingResult(**detail.model_dump(), ...) does) would otherwise
+    # fail to find "user_role_id" and raise "Field required".
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
 class OnboardingDetail(BaseModel):
     """Returned by GET /{tenant_id} (and as PUT /{tenant_id}'s response) — the
     full tenant profile, nested under "company" in the same shape as
@@ -742,7 +769,7 @@ class OnboardingDetail(BaseModel):
     departments: List[DepartmentResponse] = Field(default_factory=list)
     divisions: List[DivisionResponse] = Field(default_factory=list)
     job_codes: List[JobCodeRead] = Field(default_factory=list)
-    roles: List[UserRoleWithDetails] = Field(default_factory=list)
+    roles: List[OnboardingRoleDetail] = Field(default_factory=list)
     users_groups: List[UserGroupResponse] = Field(default_factory=list)
     users: List[UserSetupBasicResponse] = Field(default_factory=list)
     subscription: Optional[SubscriptionResponse] = None

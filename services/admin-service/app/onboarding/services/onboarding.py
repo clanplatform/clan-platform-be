@@ -62,7 +62,6 @@ from app.job_codes.schemas.job_codes import (
 )
 from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
 from app.user_role.services.user_role import UserRoleService
-from app.user_role.schemas.user_role import UserRoleWithDetails
 from app.users_groups.models.users_groups import UserGroup
 from app.users_groups.services.users_groups import create_user_group, update_user_group
 from app.users_groups.schemas.users_groups import UserGroupCreate, UserGroupUpdate, UserGroupResponse
@@ -89,6 +88,7 @@ from app.onboarding.schemas.onboarding import (
     OnboardingUser,
     OnboardingCounts,
     OnboardingDetail,
+    OnboardingRoleDetail,
     OnboardingSummary,
     OnboardingListResponse,
     OnboardingDraftSummary,
@@ -1113,7 +1113,7 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
     departments: List[DepartmentResponse] = []
     divisions: List[DivisionResponse] = []
     job_codes: List[JobCodeRead] = []
-    roles: List[UserRoleWithDetails] = []
+    roles: List[OnboardingRoleDetail] = []
     users_groups: List[UserGroupResponse] = []
     users: List[UserSetupBasicResponse] = []
     subscription: Optional[SubscriptionResponse] = None
@@ -1141,10 +1141,13 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
             role_rows = tdb.query(UserRoleBasic).all()
             # parent_role (role_code) is resolved and stashed onto each row in
             # memory here — same trick UserRoleService's own list/get use — so
-            # UserRoleWithDetails.model_validate(from_attributes) can pick it
-            # up alongside the real parent_role_id column.
+            # OnboardingRoleDetail.model_validate(from_attributes) can pick it
+            # up alongside the real parent_role_id column. role_id comes
+            # straight off the row's own user_role_id column (see
+            # OnboardingRoleDetail's docstring for why that, not id, is what
+            # users[].role_id / users_groups[].default_role_id match against).
             UserRoleService._attach_parent_role_codes(tdb, role_rows)
-            roles = [UserRoleWithDetails.model_validate(r) for r in role_rows]
+            roles = [OnboardingRoleDetail.model_validate(r) for r in role_rows]
             users_groups = [
                 UserGroupResponse.model_validate(g)
                 for g in tdb.query(UserGroup).filter(UserGroup.deleted_at.is_(None)).all()

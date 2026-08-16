@@ -48,7 +48,7 @@ from app.infrastructure.email_tenant import (
 )
 
 from app.onboarding.services import onboarding as onboarding_service
-from app.onboarding.exceptions import MasterUserRequiredError
+from app.onboarding.exceptions import MasterUserRequiredError, OnboardingDetailFailedError
 from app.onboarding.schemas.onboarding import (
     OnboardingRequest,
     OnboardingStepRequest,
@@ -194,9 +194,27 @@ async def _create_and_finalize(
 
     # Full detail — same query GET /{tenant_id} runs — so the creation
     # response carries every record actually written (company, branches,
-    # ... subscription, security), not just counts.
-    detail = onboarding_service.get_onboarding(db, tenant.tenant_id)
-    return OnboardingResult(**detail.model_dump(), temp_password=temp_password)
+    # ... subscription, security), not just counts. The tenant is already
+    # committed at this point; if building the full detail throws for any
+    # reason, fall back to the minimal-but-valid result built straight from
+    # what create_onboarding() already returned, instead of losing tenant_id/
+    # temp_password behind an opaque 500 for a tenant that really was created.
+    try:
+        detail = onboarding_service.get_onboarding(db, tenant.tenant_id)
+        return OnboardingResult(**detail.model_dump(), temp_password=temp_password)
+    except Exception:
+        logger.error(
+            "Tenant %s was created but building its full detail response failed; "
+            "falling back to the minimal result.", tenant.tenant_id, exc_info=True,
+        )
+        return OnboardingResult(
+            tenant_id=tenant.tenant_id,
+            company=payload.company,
+            is_active=tenant.is_active,
+            tenant_db_name=tenant.tenant_db_name,
+            counts=counts,
+            temp_password=temp_password,
+        )
 
 
 @router.post(
@@ -406,7 +424,19 @@ async def get_client(
     db: Session = Depends(get_db),
     current_user=Depends(require_master_user),
 ):
-    return onboarding_service.get_onboarding(db, tenant_id)
+    try:
+        return onboarding_service.get_onboarding(db, tenant_id)
+    except HTTPException:
+        raise
+    except Exception:
+        # Never let an unexpected serialization error propagate unhandled —
+        # that surfaces to the caller as an empty-bodied 500 with nothing to
+        # go on. Log the full traceback server-side and return a clean error
+        # instead (same rationale as OnboardingCreationFailedError).
+        logger.error(
+            "Failed to build detail for tenant %s", tenant_id, exc_info=True,
+        )
+        raise OnboardingDetailFailedError()
 
 
 @router.get(
@@ -460,9 +490,22 @@ async def update_client(
     if before.get("users"):
         before["users"] = [{**u, "password": "***"} for u in before["users"]]
 
-    tenant, detail = onboarding_service.update_onboarding(
-        db, tenant_id, payload, updated_by_user_id=get_user_id(current_user)
-    )
+    try:
+        tenant, detail = onboarding_service.update_onboarding(
+            db, tenant_id, payload, updated_by_user_id=get_user_id(current_user)
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        # update_onboarding() applies every upsert and commits, then builds
+        # its return value via the same get_onboarding() detail-serialization
+        # path GET uses — a failure there must not surface as an empty-bodied
+        # 500 (the mutations already succeeded).
+        logger.error(
+            "Client %s was updated but building its detail response failed",
+            tenant_id, exc_info=True,
+        )
+        raise OnboardingDetailFailedError()
 
     try:
         tenant_id_audit, entity_id = get_audit_org_context(db, get_user_id(current_user))

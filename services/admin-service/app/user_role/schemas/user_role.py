@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
 from uuid import UUID
 
@@ -135,6 +135,24 @@ class PermissionItem(BaseModel):
         json_schema_extra={"example": ["write"]}
     )
 
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_stored_access_key(cls, data):
+        """The JSONB actually persisted on userrole_permission.menu_permissions/
+        button_permissions/form_permissions stores the access level under a
+        generic "access" key (see UserRoleService.build_permission_row /
+        _build_button_perms / _build_form_perms) — not menu_access/
+        form_access/button_access, which is what this schema (used for both
+        the direct Roles API and onboarding) actually exposes. Without this,
+        every permission read back from the DB shows menu_access/form_access/
+        button_access as null regardless of what was granted."""
+        if isinstance(data, dict) and "access" in data:
+            access = data["access"]
+            data.setdefault("menu_access", access)
+            data.setdefault("form_access", access)
+            data.setdefault("button_access", access)
+        return data
 
     @field_validator('menu_access', 'form_access', 'button_access')
     def validate_access(cls, v):

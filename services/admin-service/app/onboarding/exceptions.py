@@ -63,6 +63,20 @@ class TenantProvisioningError(HTTPException):
         )
 
 
+class OnboardingDetailFailedError(HTTPException):
+    """An unexpected error occurred while building a client's full detail
+    (branches/departments/.../security, each serialized against its own
+    domain's response schema) — raised instead of letting the underlying
+    exception propagate unhandled, which otherwise surfaces to the caller as
+    an empty-bodied 500 with no diagnosable detail."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load client details — an unexpected error occurred.",
+        )
+
+
 class OnboardingCreationFailedError(HTTPException):
     """An unexpected (e.g. database-level) error interrupted the org-structure
     build — branches/departments/.../users — partway through. Raised instead

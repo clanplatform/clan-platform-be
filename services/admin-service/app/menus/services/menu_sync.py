@@ -199,6 +199,7 @@ async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -
             "description": app.description or f"Manage {app.name}",
             "badge": app.badge,
             "sectionTitle": app.section_title or app.name,
+            "nav_group": app.nav_group or "apps",
             "route": app.route or f"/{app.name.lower().replace(' ', '-')}",
             "order_index": app.order_index or 1000,
             "access": app.access or [],

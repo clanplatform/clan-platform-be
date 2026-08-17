@@ -394,6 +394,7 @@ class MenuDetailsService(BaseMongoService):
                     "description": app_doc.get("description"),
                     "badge": app_doc.get("badge"),
                     "sectionTitle": app_doc.get("sectionTitle"),
+                    "nav_group": app_doc.get("nav_group"),
                     "route": app_doc.get("route"),
                     "application_id": app_doc.get("application_id"),
                     "level": 1,

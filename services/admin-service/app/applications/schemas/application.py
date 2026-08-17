@@ -5,6 +5,21 @@ import uuid
 
 from app.core.access import normalize_access as _normalize_access
 
+# The only values an application's nav_group may take.
+ALLOWED_NAV_GROUPS = {"tools", "apps", "store"}
+
+
+def _normalize_nav_group(value: Optional[str]) -> Optional[str]:
+    """Validate/normalize nav_group: must be one of ALLOWED_NAV_GROUPS if provided."""
+    if value is None:
+        return value
+    key = str(value).strip().lower()
+    if key not in ALLOWED_NAV_GROUPS:
+        raise ValueError(
+            f"Invalid nav_group '{value}'. Allowed values: {', '.join(sorted(ALLOWED_NAV_GROUPS))}"
+        )
+    return key
+
 class ApplicationBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="Application name")
     description: Optional[str] = Field(None, description="Application description")
@@ -22,6 +37,7 @@ class ApplicationBase(BaseModel):
     icon: Optional[str] = Field(None, max_length=100, description="Application icon class/name")
     badge: Optional[str] = Field(None, max_length=50, description="Application badge text")
     section_title: Optional[str] = Field(None, max_length=200, description="Section title for grouping applications")
+    nav_group: Optional[str] = Field("apps", description="Navigation group: 'tools', 'apps', or 'store'")
     order_index: Optional[int] = Field(0, description="Order index for sorting applications")
 
 class ApplicationCreate(ApplicationBase):
@@ -29,6 +45,11 @@ class ApplicationCreate(ApplicationBase):
     @classmethod
     def validate_access(cls, v):
         return _normalize_access(v)
+
+    @field_validator("nav_group")
+    @classmethod
+    def validate_nav_group(cls, v):
+        return _normalize_nav_group(v)
 
 class ApplicationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="Application name")
@@ -47,12 +68,18 @@ class ApplicationUpdate(BaseModel):
     icon: Optional[str] = Field(None, max_length=100, description="Application icon")
     badge: Optional[str] = Field(None, max_length=50, description="Application badge")
     section_title: Optional[str] = Field(None, max_length=200, description="Section title")
+    nav_group: Optional[str] = Field(None, description="Navigation group: 'tools', 'apps', or 'store'")
     order_index: Optional[int] = Field(None, description="Order index for sorting applications")
 
     @field_validator("access")
     @classmethod
     def validate_access(cls, v):
         return _normalize_access(v)
+
+    @field_validator("nav_group")
+    @classmethod
+    def validate_nav_group(cls, v):
+        return _normalize_nav_group(v)
 
 class ApplicationResponse(ApplicationBase):
     id: uuid.UUID
@@ -77,6 +104,7 @@ class ApplicationWithMenusResponse(BaseModel):
     application_icon: Optional[str] = Field(None, description="Application icon")
     application_badge: Optional[str] = Field(None, description="Application badge")
     application_section_title: Optional[str] = Field(None, description="Application section title")
+    application_nav_group: Optional[str] = Field(None, description="Application navigation group ('tools', 'apps', or 'store')")
     application_is_active: bool = Field(..., description="Whether application is active")
     application_created_at: datetime = Field(..., description="Application creation timestamp")
     application_updated_at: datetime = Field(..., description="Application update timestamp")

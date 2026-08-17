@@ -27,6 +27,7 @@ class Application(Base):
     icon = Column(String(100), nullable=True)
     badge = Column(String(50), nullable=True)
     section_title = Column(String(200), nullable=True)
+    nav_group = Column(String(20), nullable=True, default="apps")  # 'tools' | 'apps' | 'store'
     access = Column(ARRAY(String), default=list, nullable=True)  # Array of access permissions
     order_index = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

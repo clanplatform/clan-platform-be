@@ -109,6 +109,7 @@ def create_application(db: Session, application: ApplicationCreate, user_id: Opt
         icon=application.icon,
         badge=application.badge,
         section_title=application.section_title,
+        nav_group=application.nav_group,
         access=application.access,
         order_index=application.order_index,
     )

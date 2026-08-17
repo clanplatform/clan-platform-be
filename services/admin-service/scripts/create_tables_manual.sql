@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS applications (
     icon VARCHAR(100),
     badge VARCHAR(50),
     section_title VARCHAR(200),
+    nav_group VARCHAR(20) DEFAULT 'apps' CHECK (nav_group IN ('tools', 'apps', 'store')),
     access TEXT[],
     order_index INTEGER DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

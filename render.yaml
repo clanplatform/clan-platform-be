@@ -72,6 +72,8 @@ services:
         value: https://audit-service-dev.onrender.com   # update after deploying audit-service
       - key: IDENTITY_SERVICE_URL
         sync: false
+      - key: EMAIL_SERVICE_URL
+        value: https://email-service-dev.onrender.com   # clan-communication-be render.yaml — update if the deployed name differs
 
       # CORS
       - key: CORS_ORIGINS
@@ -162,6 +164,8 @@ services:
         value: https://audit-service-prod.onrender.com  # update after deploying audit-service
       - key: IDENTITY_SERVICE_URL
         sync: false
+      - key: EMAIL_SERVICE_URL
+        value: https://email-service-prod.onrender.com  # clan-communication-be render.yaml — update if the deployed name differs
 
       # CORS
       - key: CORS_ORIGINS

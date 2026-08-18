@@ -73,7 +73,7 @@ services:
       - key: IDENTITY_SERVICE_URL
         sync: false
       - key: EMAIL_SERVICE_URL
-        value: https://email-service-dev.onrender.com   # clan-communication-be render.yaml — update if the deployed name differs
+        value: https://clan-communication-be.onrender.com   # single shared email-service instance (deployed as a plain Web Service, not via the clan-communication-be Blueprint) — update if a dedicated dev instance is deployed later
 
       # CORS
       - key: CORS_ORIGINS
@@ -165,7 +165,7 @@ services:
       - key: IDENTITY_SERVICE_URL
         sync: false
       - key: EMAIL_SERVICE_URL
-        value: https://email-service-prod.onrender.com  # clan-communication-be render.yaml — update if the deployed name differs
+        value: https://clan-communication-be.onrender.com  # single shared email-service instance (deployed as a plain Web Service, not via the clan-communication-be Blueprint) — update if a dedicated prod instance is deployed later
 
       # CORS
       - key: CORS_ORIGINS

@@ -469,14 +469,15 @@ def _update_user_row(
 ) -> None:
     """Update-in-place counterpart to _create_user_row, used when a PUT
     users[] item's email matches an existing usersetup_basic row. Every
-    field OnboardingUser carries is overwritten (including password, which
-    is a required field on that schema — see OnboardingUpdate's docstring)."""
+    field OnboardingUser carries is overwritten - password_hash is not
+    among them, since OnboardingUser has no password field (see
+    OnboardingUpdate's docstring); an existing user's password is left
+    untouched."""
     department_id, division_id = _derive_dept_division_from_job_code(tenant_db, u.job_code_id)
     existing.firstname = u.first_name
     existing.lastname = u.last_name
     existing.employee_id = u.employee_id
     existing.username = u.username
-    existing.password_hash = get_password_hash(u.password)
     existing.phone_number = u.phone
     existing.profile_image_url = u.profile_image_url
     existing.status = u.status or "active"
@@ -805,7 +806,9 @@ def create_onboarding(
                 employee_id=u.employee_id,
                 username=u.username,
                 email=u.email,
-                password=u.password,
+                # Always server-generated — OnboardingUser has no password
+                # field. Never emailed; not returned in the API response.
+                password=generate_temp_password(),
                 tenant_id=tenant_id,
                 phone=u.phone,
                 profile_image_url=u.profile_image_url,
@@ -1055,7 +1058,9 @@ def _upsert_users(
             _create_user_row(
                 tenant_db,
                 firstname=u.first_name, lastname=u.last_name, employee_id=u.employee_id,
-                username=u.username, email=u.email, password=u.password, tenant_id=tenant_id,
+                # Always server-generated — OnboardingUser has no password
+                # field. Never emailed; not returned in the API response.
+                username=u.username, email=u.email, password=generate_temp_password(), tenant_id=tenant_id,
                 phone=u.phone, profile_image_url=u.profile_image_url, status=u.status or "active",
                 role_id=role_id, entity_id=u.entity_id, job_code_id=u.job_code_id,
                 user_group_id=u.user_group_id, send_invite_email=u.send_invite_email,

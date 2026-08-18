@@ -443,16 +443,21 @@ class OnboardingUserGroup(BaseModel):
 # ============================================================================
 
 class OnboardingUser(BaseModel):
-    """Step 8: a user (user_setup + usersetup_basic [+ role/entity assignment])."""
-    first_name: str = Field(..., min_length=1, max_length=100)
-    last_name: str = Field(..., min_length=1, max_length=100)
-    employee_id: str = Field(..., min_length=1, max_length=50)
-    username: str = Field(..., min_length=1, max_length=100)
-    email: str = Field(..., max_length=255)
-    password: str = Field(..., min_length=6)
-    phone: Optional[str] = Field(None, max_length=20)
-    profile_image_url: Optional[str] = Field(None, max_length=500, description="Profile image URL")
-    status: Optional[str] = Field("active", max_length=50)
+    """Step 8: a user (user_setup + usersetup_basic [+ role/entity assignment]).
+
+    No password field - a new user's password is always generated server-side
+    (see generate_temp_password() in onboarding/services/onboarding.py), never
+    accepted from the caller. It is not emailed anywhere; email here is
+    contact information only.
+    """
+    first_name: str
+    last_name: str
+    employee_id: str
+    username: str
+    email: str = Field(..., description="Contact email only - never used to send an invitation")
+    phone: Optional[str] = None
+    profile_image_url: Optional[str] = Field(None, description="Profile image URL")
+    status: Optional[str] = "active"
     role_id: Optional[UUID] = Field(
         None,
         description="UUID of the role to assign; must match a roles[].role_id "
@@ -628,8 +633,8 @@ class OnboardingUpdate(BaseModel):
     record (OnboardingBranch, OnboardingDepartment, ... OnboardingUser),
     every field the item schema carries is always overwritten on update —
     this is a full-record PUT per item, not a partial per-field patch.
-    Notably, users[].password is required, so re-sending an existing user
-    always resets their password; roles[].permissions defaults to an empty
+    Users[] has no password field, so re-sending an existing user never
+    touches their password; roles[].permissions defaults to an empty
     list when omitted, so a role item without permissions clears them.
 
     is_active is intentionally not here for company fields — same rule as

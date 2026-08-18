@@ -41,10 +41,7 @@ from app.infrastructure.audit_helpers import (
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
 from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
-from app.infrastructure.email_tenant import (
-    send_tenant_invitation_email,
-    send_user_invite_email,
-)
+from app.infrastructure.email_tenant import send_tenant_invitation_email
 
 from app.onboarding.services import onboarding as onboarding_service
 from app.onboarding.exceptions import MasterUserRequiredError, OnboardingDetailFailedError
@@ -93,34 +90,19 @@ def _sync_tenant(tenant) -> None:
 
 
 def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: str) -> None:
-    """Fire-and-forget: owner welcome (credentials), and per-user invites
-    (with each user's own step-form password) for users[] entries with
-    send_invite_email true. contact_email is not emailed - it's stored on
-    the tenant for reference only."""
-    # tenants.deployed_url is the login link's source of truth (falls back to
-    # settings.FRONTEND_LOGIN_URL inside email_tenant.py when unset).
-    # allowed_origins is a separate concept (usersetup_basic.allowed_origins —
-    # the master-DB user's own post-login redirect target) and isn't used here.
-    tenant_app_url = tenant.deployed_url
-
+    """Fire-and-forget: owner welcome (credentials) only. contact_email and
+    users[].email are stored for reference only - neither is ever emailed."""
     asyncio.create_task(send_tenant_invitation_email(
         to_email=payload.company.owner_email,
         tenant_name=tenant.tenant_name,
         tenant_id=str(tenant.tenant_id),
         temp_password=temp_password,
-        tenant_app_url=tenant_app_url,
+        # Login link points at the tenant's deployed app instance
+        # (tenants.deployed_url). allowed_origins is a separate concept
+        # (usersetup_basic.allowed_origins — the master-DB user's own
+        # post-login redirect target) and isn't used here.
+        tenant_app_url=tenant.deployed_url,
     ))
-
-    for u in payload.users:
-        if u.send_invite_email:
-            asyncio.create_task(send_user_invite_email(
-                to_email=u.email,
-                first_name=u.first_name,
-                tenant_name=tenant.tenant_name,
-                tenant_id=str(tenant.tenant_id),
-                tenant_app_url=tenant_app_url,
-                password=u.password,
-            ))
 
 
 async def _create_and_finalize(

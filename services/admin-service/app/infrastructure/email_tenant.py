@@ -1,15 +1,12 @@
 """
 HTTP client for clan-communication-be email-service.
 
-Two emails, both fire-and-forget (asyncio.create_task(...)) after a tenant
-is created and its users are seeded:
+One email, fire-and-forget (asyncio.create_task(...)) after a tenant is
+created and its users are seeded:
   - send_tenant_invitation_email() — the owner (owner_email), with their
     temp login password.
-  - send_user_invite_email() — any users[] entry with send_invite_email
-    true; includes the password set for them on the step form (an admin set
-    it on their behalf), plus a login link.
-contact_email is stored on the tenant for reference only - it is never
-emailed.
+contact_email and users[].email are stored for reference only - neither is
+ever emailed.
 Failures are always swallowed — an email error must never roll back or
 fail the tenant-creation request.
 """
@@ -103,73 +100,6 @@ async def send_tenant_invitation_email(
         body_html=body_html,
         recipient_id=recipient_id,
         log_label="tenant-invitation",
-    )
-
-
-async def send_user_invite_email(
-    *,
-    to_email: str,
-    first_name: Optional[str],
-    tenant_name: str,
-    tenant_id: str,
-    tenant_app_url: Optional[str] = None,
-    password: Optional[str] = None,
-) -> None:
-    """
-    Invite a user added during onboarding (users[] with send_invite_email
-    true) to log in. The password set for them on the step form
-    (users[].password, plaintext — only usersetup_basic.password_hash is
-    ever persisted) is included here since the user themself didn't choose
-    it; an admin set it on their behalf during onboarding.
-    Fire-and-forget — never raises.
-    """
-    subject = f"You've been added to {tenant_name} on Clan"
-    login_base = (tenant_app_url.rstrip("/") + "/login") if tenant_app_url else settings.FRONTEND_LOGIN_URL
-    login_url = f"{login_base}?email={quote(to_email)}&tenant_id={quote(tenant_id)}"
-    greeting = f"Hello {first_name}," if first_name else "Hello,"
-
-    body_text = (
-        f"{greeting}\n\n"
-        f"You've been added as a user of {tenant_name} on Clan. Use the "
-        f"email and password below to log in:\n\n"
-        f"Email: {to_email}\n"
-        f"Password: {password}\n\n"
-        f"Login URL: {login_url}\n\n"
-        "For your security, please change your password after your first "
-        "login.\n\n"
-        "If you did not expect this invitation, please contact the Clan "
-        "support team immediately.\n\n"
-        "Thank you,\n\n"
-        "Team Clan\n"
-        "clan.platform@gmail.com\n"
-        f"{settings.COMPANY_WEBSITE}"
-    )
-    body_html = (
-        f"<p>{greeting}</p>"
-        f"<p>You've been added as a user of <strong>{tenant_name}</strong> "
-        "on Clan. Use the email and password below to log in:</p>"
-        f"<p><strong>Email:</strong> {to_email}<br>"
-        f"<strong>Password:</strong> {password}</p>"
-        f"<p><a href=\"{login_url}\" "
-        "style=\"display:inline-block;padding:10px 24px;background:#2563eb;"
-        "color:#ffffff;text-decoration:none;border-radius:6px;\">Log In</a></p>"
-        f"<p><strong>Login URL:</strong> <a href=\"{login_url}\">{login_url}</a></p>"
-        "<p>For your security, please change your password after your "
-        "first login.</p>"
-        "<p>If you did not expect this invitation, please contact the Clan "
-        "support team immediately.</p>"
-        "<p>Thank you,</p>"
-        "<p><strong>Team Clan</strong><br>"
-        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
-        f"<a href=\"{settings.COMPANY_WEBSITE}\">{settings.COMPANY_WEBSITE}</a></p>"
-    )
-    await _post_email(
-        to_email=to_email,
-        tenant_id=tenant_id,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
-        log_label="user-invitation",
     )
 
 

@@ -1400,10 +1400,11 @@ async def create_single_menu_structured(
             print(f"[Menu Create Structured] ❌ Failed to connect to MongoDB: {conn_error}")
     
     try:
-        sync_success = await working_sync_to_mongodb(db, menu.application_id)
-        
+        from app.menus.services.menu_sync import add_menu_to_mongodb
+        sync_success = await add_menu_to_mongodb(db, menu.id)
+
         if sync_success:
-            print(f"[Menu Create Structured] ✅ MongoDB sync completed successfully")
+            print(f"[Menu Create Structured] ✅ MongoDB sync completed successfully (other modules/menus untouched)")
             print(f"[Menu Create Structured] ✅ Menu synced to mainNavigation in MongoDB")
         else:
             print(f"[Menu Create Structured] ⚠️ MongoDB sync failed, but menu created in PostgreSQL")

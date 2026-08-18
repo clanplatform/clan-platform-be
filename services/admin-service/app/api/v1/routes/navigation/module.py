@@ -73,10 +73,10 @@ async def create_module(
     try:
         module = ModuleService.create_module(db, module_data, created_by)
 
-        # Sync so the new (possibly empty) module appears in the MongoDB navigation
+        # Append just this module as a new node - other modules/menus untouched
         try:
-            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
-            await sync_application_menus_to_mongodb(db, module.application_id)
+            from app.menus.services.menu_sync import add_module_to_mongodb
+            await add_module_to_mongodb(db, module.id)
         except Exception as sync_error:
             print(f"[Module Create] ⚠️ MongoDB sync failed: {sync_error}")
 
@@ -279,13 +279,14 @@ async def update_module(
             )
     
     try:
+        changed_fields = module_data.dict(exclude_unset=True)
         updated_module = ModuleService.update_module(db, module_id, module_data)
 
-        # Sync the application's navigation document so module changes
-        # (label, icon, order, ...) reach MongoDB
+        # Patch only this module's own node (label, icon, order, ...) -
+        # other modules and all menus (including this module's own) untouched
         try:
-            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
-            await sync_application_menus_to_mongodb(db, updated_module.application_id)
+            from app.menus.services.menu_sync import sync_module_fields_to_mongodb
+            await sync_module_fields_to_mongodb(db, updated_module.id, updated_module.application_id, changed_fields)
         except Exception as sync_error:
             print(f"[Module Update] ⚠️ MongoDB sync failed: {sync_error}")
 
@@ -352,11 +353,12 @@ async def delete_module(
             detail=f"Module with ID {module_id} not found"
         )
 
-    # Sync so the deleted module disappears from the MongoDB navigation
+    # Remove just this module's node so it disappears from navigation -
+    # other modules/menus in the tree untouched
     if existing_module:
         try:
-            from app.menus.services.menu_sync import sync_application_menus_to_mongodb
-            await sync_application_menus_to_mongodb(db, existing_module.application_id)
+            from app.menus.services.menu_sync import remove_module_from_mongodb
+            await remove_module_from_mongodb(existing_module.application_id, existing_module.id)
         except Exception as sync_error:
             print(f"[Module Delete] ⚠️ MongoDB sync failed: {sync_error}")
 

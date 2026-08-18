@@ -671,15 +671,15 @@ async def update_application(
     except Exception:
         pass
 
-    # Sync to MongoDB: full rebuild of this application's navigation document.
-    # mainNavigation holds ObjectId references to per-application documents, so
-    # the app doc itself must be updated - the shared sync refreshes its
-    # application-level fields (key, label, icon, route, ...) from PostgreSQL.
+    # Sync to MongoDB: update only the application-level fields that were
+    # actually part of this PUT (key, label, icon, route, ...). This is
+    # deliberately NOT a full rebuild - "children" (modules/menus tree) is
+    # never touched here, only module/menu writes are allowed to change it.
     try:
-        from app.menus.services.menu_sync import sync_application_menus_to_mongodb
-        synced = await sync_application_menus_to_mongodb(db, application.id)
+        from app.menus.services.menu_sync import sync_application_fields_to_mongodb
+        synced = await sync_application_fields_to_mongodb(db, application.id, update_data)
         if synced:
-            print(f"[Application Update] ✅ MongoDB navigation synced")
+            print(f"[Application Update] ✅ MongoDB fields synced (children untouched)")
         else:
             print(f"[Application Update] ⚠️ MongoDB sync skipped (not available)")
     except Exception as e:
@@ -687,10 +687,12 @@ async def update_application(
         import traceback
         traceback.print_exc()
 
-    # Invalidate caches
+    # Invalidate caches - use the wildcard so per-user cached navigation
+    # (menus:user:{id}:navigation[:lang]) doesn't keep serving stale data;
+    # the single fixed key alone left GET /login-user-menus stale after PUT.
     redis_cache.delete(f"application:{application.id}")
     redis_cache.delete_pattern("applications:list:*")
-    redis_cache.delete("menus:mongo:main_navigation_full")
+    redis_cache.delete_pattern("menus:*")
 
     print(f"[Application Update] ✅ Complete!")
 

@@ -232,6 +232,50 @@ async def get_modules_by_application(
         )
 
 
+@router.get(
+    "/{module_id}",
+    response_model=ModuleResponse,
+    summary="Get a module by ID",
+    description="Retrieve a single module by its ID"
+)
+async def get_module(
+    request: Request,
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Get a single module by ID.
+
+    - **module_id**: The UUID of the module to retrieve
+    """
+    module = ModuleService.get_module(db, module_id)
+    if not module:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Module with ID {module_id} not found"
+        )
+
+    try:
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))
+        fire_audit_log(
+            action="READ",
+            object_type="Module",
+            object_id=str(module_id),
+            user_id=get_user_id(current_user),
+            tenant_id=tenant_id_audit,
+            entity_id=entity_id_audit,
+            session_id=get_session_id(current_user),
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            risk_score="LOW",
+        )
+    except Exception:
+        pass
+
+    return module
+
+
 @router.put(
     "/{module_id}",
     response_model=ModuleResponse,
@@ -242,14 +286,16 @@ async def update_module(
     request: Request,
     module_id: str,
     module_data: ModuleUpdate,
+    nav_doc_id: str = Query("69074724f217ab8fcb2e3b24", description="Navigation document ID"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """
     Update an existing module.
-    
+
     - **module_id**: The UUID of the module to update
     - All fields are optional and only provided fields will be updated
+    - **nav_doc_id**: MongoDB master navigation document to sync against (defaults to the standard one)
     """
     
     # Check if module exists
@@ -286,7 +332,9 @@ async def update_module(
         # other modules and all menus (including this module's own) untouched
         try:
             from app.menus.services.menu_sync import sync_module_fields_to_mongodb
-            await sync_module_fields_to_mongodb(db, updated_module.id, updated_module.application_id, changed_fields)
+            await sync_module_fields_to_mongodb(
+                db, updated_module.id, updated_module.application_id, changed_fields, nav_doc_id=nav_doc_id
+            )
         except Exception as sync_error:
             print(f"[Module Update] ⚠️ MongoDB sync failed: {sync_error}")
 

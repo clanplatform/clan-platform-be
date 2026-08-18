@@ -99,11 +99,14 @@ def _build_module_item(module, root_menus: List[Menu], menus_by_parent: Dict[Any
     return item
 
 
-async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -> bool:
+async def sync_application_menus_to_mongodb(
+    db: Session, application_id: UUID, nav_doc_id: Optional[str] = None
+) -> bool:
     """
     Rebuild the application's menu_details document from PostgreSQL and
     upsert it into MongoDB. Also ensures the document is referenced from the
-    master mainNavigation array and backfills mongo_id on the menus rows.
+    master mainNavigation array (nav_doc_id, defaulting to MASTER_NAV_DOC_ID)
+    and backfills mongo_id on the menus rows.
 
     Returns True on success, False otherwise (never raises — menu writes to
     PostgreSQL must not fail because of a Mongo outage).
@@ -181,7 +184,7 @@ async def sync_application_menus_to_mongodb(db: Session, application_id: UUID) -
             })
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
         now = datetime.now(timezone.utc).isoformat()
 
         app_doc = await collection.find_one({
@@ -271,7 +274,7 @@ _APPLICATION_FIELD_MAP: Dict[str, str] = {
 
 
 async def sync_application_fields_to_mongodb(
-    db: Session, application_id: UUID, changed_fields: Dict[str, Any]
+    db: Session, application_id: UUID, changed_fields: Dict[str, Any], nav_doc_id: Optional[str] = None
 ) -> bool:
     """
     Update only the application-level fields that actually changed on this
@@ -282,6 +285,10 @@ async def sync_application_fields_to_mongodb(
     (e.g. just editing the description) has no business touching modules or
     menus, and a full rebuild was silently wiping the tree whenever Postgres
     didn't happen to have every module/menu the Mongo doc previously showed.
+
+    nav_doc_id selects which master navigation document this application's
+    doc is excluded against / would be registered into on a fallback full
+    build; defaults to MASTER_NAV_DOC_ID.
 
     Falls back to the full rebuild only if no MongoDB document exists yet for
     this application (first sync - nothing to preserve).
@@ -303,7 +310,7 @@ async def sync_application_fields_to_mongodb(
             return False
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
 
         app_doc = await collection.find_one({
             "application_id": str(application_id),
@@ -313,7 +320,7 @@ async def sync_application_fields_to_mongodb(
         if not app_doc:
             # No document to preserve yet - do the normal first-time build.
             logger.info(f"[Menu Sync] No existing document for {application_id}, doing full build")
-            return await sync_application_menus_to_mongodb(db, application_id)
+            return await sync_application_menus_to_mongodb(db, application_id, nav_doc_id)
 
         updates = {
             mongo_field: getattr(app, pg_field)
@@ -359,13 +366,18 @@ _MODULE_FIELD_MAP: Dict[str, str] = {
 
 
 async def sync_module_fields_to_mongodb(
-    db: Session, module_id: UUID, application_id: UUID, changed_fields: Dict[str, Any]
+    db: Session, module_id: UUID, application_id: UUID, changed_fields: Dict[str, Any],
+    nav_doc_id: Optional[str] = None,
 ) -> bool:
     """
     Update only the fields that changed on one module's own node inside its
     application's `children` array (via a positional array filter), leaving
     every other module and all menus - including this module's own nested
     menus - completely untouched.
+
+    nav_doc_id selects which master navigation document this module's
+    application doc is excluded against / would be registered into on a
+    fallback full build; defaults to MASTER_NAV_DOC_ID.
 
     Falls back to the full rebuild when there's nothing to target: no app
     document yet, this module's node isn't in the tree yet, or the module is
@@ -380,7 +392,7 @@ async def sync_module_fields_to_mongodb(
 
         if "application_id" in changed_fields:
             logger.info(f"[Menu Sync] Module {module_id} changed application, doing full rebuild")
-            return await sync_application_menus_to_mongodb(db, application_id)
+            return await sync_application_menus_to_mongodb(db, application_id, nav_doc_id)
 
         db_mongo = await get_mongodb()
         if db_mongo is None:
@@ -393,7 +405,7 @@ async def sync_module_fields_to_mongodb(
             return False
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
 
         app_doc = await collection.find_one({
             "application_id": str(application_id),
@@ -404,7 +416,7 @@ async def sync_module_fields_to_mongodb(
         if not app_doc:
             # No doc yet, or this module's node isn't in the tree yet.
             logger.info(f"[Menu Sync] Module {module_id} not found in existing tree, doing full rebuild")
-            return await sync_application_menus_to_mongodb(db, application_id)
+            return await sync_application_menus_to_mongodb(db, application_id, nav_doc_id)
 
         updates = {
             f"children.$[mod].{mongo_field}": getattr(module, pg_field)
@@ -433,11 +445,15 @@ async def sync_module_fields_to_mongodb(
         return False
 
 
-async def add_module_to_mongodb(db: Session, module_id: UUID) -> bool:
+async def add_module_to_mongodb(db: Session, module_id: UUID, nav_doc_id: Optional[str] = None) -> bool:
     """
     Append a newly-created module as a fresh node (no menus yet) onto its
     application's `children` array, without touching any other module or
     menu already in the tree.
+
+    nav_doc_id selects which master navigation document this application's
+    doc is excluded against / would be registered into on a fallback full
+    build; defaults to MASTER_NAV_DOC_ID.
 
     Falls back to the full rebuild only if the application has no MongoDB
     document yet (first-ever sync for that application - nothing to append
@@ -460,7 +476,7 @@ async def add_module_to_mongodb(db: Session, module_id: UUID) -> bool:
             return False
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
 
         app_doc = await collection.find_one({
             "application_id": str(module.application_id),
@@ -469,7 +485,7 @@ async def add_module_to_mongodb(db: Session, module_id: UUID) -> bool:
 
         if not app_doc:
             logger.info(f"[Menu Sync] No existing document for application {module.application_id}, doing full build")
-            return await sync_application_menus_to_mongodb(db, module.application_id)
+            return await sync_application_menus_to_mongodb(db, module.application_id, nav_doc_id)
 
         # Avoid duplicating the node on a retry/race where it's already there
         already_present = any(
@@ -499,10 +515,15 @@ async def add_module_to_mongodb(db: Session, module_id: UUID) -> bool:
         return False
 
 
-async def remove_module_from_mongodb(application_id: UUID, module_id: UUID) -> bool:
+async def remove_module_from_mongodb(
+    application_id: UUID, module_id: UUID, nav_doc_id: Optional[str] = None
+) -> bool:
     """
     Remove one module's node (and its nested menus) from its application's
     `children` array via a targeted $pull, without rebuilding anything else.
+
+    nav_doc_id selects which master navigation document to exclude the
+    application's own doc against; defaults to MASTER_NAV_DOC_ID.
 
     Returns True on success, False otherwise (never raises).
     """
@@ -515,7 +536,7 @@ async def remove_module_from_mongodb(application_id: UUID, module_id: UUID) -> b
             return False
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
         now = datetime.now(timezone.utc).isoformat()
 
         result = await collection.update_one(
@@ -551,13 +572,17 @@ def _find_node_by_id(items: List[Dict[str, Any]], id_field: str, target_id: str)
     return None
 
 
-async def add_menu_to_mongodb(db: Session, menu_id: UUID) -> bool:
+async def add_menu_to_mongodb(db: Session, menu_id: UUID, nav_doc_id: Optional[str] = None) -> bool:
     """
     Insert a newly-created menu (with any children created alongside it,
     already nested in) as a single new node at the correct position in its
     application's tree - inside its parent menu's children, its module's
     children, or the synthetic default-module - without rebuilding or
     touching any sibling module or menu already in the tree.
+
+    nav_doc_id selects which master navigation document this application's
+    doc is excluded against / would be registered into on a fallback full
+    build; defaults to MASTER_NAV_DOC_ID.
 
     Falls back to the full rebuild only when there's nowhere targeted to
     insert: no application document yet, or the intended parent (module or
@@ -579,7 +604,7 @@ async def add_menu_to_mongodb(db: Session, menu_id: UUID) -> bool:
             return False
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
 
         app_doc = await collection.find_one({
             "application_id": str(menu.application_id),
@@ -587,7 +612,7 @@ async def add_menu_to_mongodb(db: Session, menu_id: UUID) -> bool:
         })
         if not app_doc:
             logger.info(f"[Menu Sync] No existing document for application {menu.application_id}, doing full build")
-            return await sync_application_menus_to_mongodb(db, menu.application_id)
+            return await sync_application_menus_to_mongodb(db, menu.application_id, nav_doc_id)
 
         # Build the new node - descendants created alongside it are already
         # committed in Postgres, so this nests them in via the normal recursion.
@@ -607,7 +632,7 @@ async def add_menu_to_mongodb(db: Session, menu_id: UUID) -> bool:
             parent_node = _find_node_by_id(children, "menu_id", str(menu.parent_menu_id))
             if parent_node is None:
                 logger.info(f"[Menu Sync] Parent menu {menu.parent_menu_id} not found in tree, doing full rebuild")
-                return await sync_application_menus_to_mongodb(db, menu.application_id)
+                return await sync_application_menus_to_mongodb(db, menu.application_id, nav_doc_id)
             parent_node.setdefault("children", []).append(menu_item)
         else:
             target_module_id = str(menu.module_id) if menu.module_id else "default"
@@ -615,7 +640,7 @@ async def add_menu_to_mongodb(db: Session, menu_id: UUID) -> bool:
             if module_node is None:
                 if menu.module_id:
                     logger.info(f"[Menu Sync] Module {menu.module_id} not found in tree, doing full rebuild")
-                    return await sync_application_menus_to_mongodb(db, menu.application_id)
+                    return await sync_application_menus_to_mongodb(db, menu.application_id, nav_doc_id)
                 # No module - create the synthetic default module holding just this menu.
                 children.append({
                     "key": "default-module",
@@ -648,10 +673,11 @@ async def add_menu_to_mongodb(db: Session, menu_id: UUID) -> bool:
         return False
 
 
-async def remove_application_from_mongodb(application_id: UUID) -> bool:
+async def remove_application_from_mongodb(application_id: UUID, nav_doc_id: Optional[str] = None) -> bool:
     """
     Remove a deleted application's navigation document(s) from MongoDB and
-    pull their references out of the master mainNavigation array.
+    pull their references out of the master mainNavigation array (nav_doc_id,
+    defaulting to MASTER_NAV_DOC_ID).
 
     Used by DELETE /applications - the rebuild sync can't handle this case
     because it skips applications that are deleted in PostgreSQL.
@@ -666,7 +692,7 @@ async def remove_application_from_mongodb(application_id: UUID) -> bool:
             return False
 
         collection = db_mongo["menu_details"]
-        master_doc_id = ObjectId(MASTER_NAV_DOC_ID)
+        master_doc_id = ObjectId(nav_doc_id or MASTER_NAV_DOC_ID)
         now = datetime.now(timezone.utc).isoformat()
 
         doc_ids = []

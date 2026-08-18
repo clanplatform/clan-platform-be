@@ -677,7 +677,7 @@ async def update_application(
     # never touched here, only module/menu writes are allowed to change it.
     try:
         from app.menus.services.menu_sync import sync_application_fields_to_mongodb
-        synced = await sync_application_fields_to_mongodb(db, application.id, update_data)
+        synced = await sync_application_fields_to_mongodb(db, application.id, update_data, nav_doc_id=nav_doc_id)
         if synced:
             print(f"[Application Update] ✅ MongoDB fields synced (children untouched)")
         else:

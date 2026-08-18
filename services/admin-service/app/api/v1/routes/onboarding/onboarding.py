@@ -43,7 +43,6 @@ from app.infrastructure.tenant_sync_client import sync_tenant_profile
 from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
 from app.infrastructure.email_tenant import (
     send_tenant_invitation_email,
-    send_tenant_contact_notification,
     send_user_invite_email,
 )
 
@@ -94,11 +93,10 @@ def _sync_tenant(tenant) -> None:
 
 
 def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: str) -> None:
-    """Fire-and-forget: owner welcome (credentials), contact notification
-    (only if contact_email differs from owner_email — avoids duplicate
-    emails to the same inbox; also carries the owner's temp password), and
-    per-user invites (with each user's own step-form password) for users[]
-    entries with send_invite_email true."""
+    """Fire-and-forget: owner welcome (credentials), and per-user invites
+    (with each user's own step-form password) for users[] entries with
+    send_invite_email true. contact_email is not emailed - it's stored on
+    the tenant for reference only."""
     # tenants.deployed_url is the login link's source of truth (falls back to
     # settings.FRONTEND_LOGIN_URL inside email_tenant.py when unset).
     # allowed_origins is a separate concept (usersetup_basic.allowed_origins —
@@ -112,15 +110,6 @@ def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: s
         temp_password=temp_password,
         tenant_app_url=tenant_app_url,
     ))
-
-    if payload.company.contact_email and payload.company.contact_email != payload.company.owner_email:
-        asyncio.create_task(send_tenant_contact_notification(
-            to_email=payload.company.contact_email,
-            tenant_name=tenant.tenant_name,
-            tenant_id=str(tenant.tenant_id),
-            owner_email=payload.company.owner_email,
-            temp_password=temp_password,
-        ))
 
     for u in payload.users:
         if u.send_invite_email:

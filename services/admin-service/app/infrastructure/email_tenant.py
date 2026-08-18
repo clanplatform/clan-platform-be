@@ -1,17 +1,15 @@
 """
 HTTP client for clan-communication-be email-service.
 
-Three emails, all fire-and-forget (asyncio.create_task(...)) after a tenant
+Two emails, both fire-and-forget (asyncio.create_task(...)) after a tenant
 is created and its users are seeded:
   - send_tenant_invitation_email() — the owner (owner_email), with their
     temp login password.
-  - send_tenant_contact_notification() — the client's general contact
-    address (contact_email), only when it differs from owner_email; includes
-    the owner's temp password too, even though contact_email isn't itself a
-    login identity, so the contact can relay it.
   - send_user_invite_email() — any users[] entry with send_invite_email
     true; includes the password set for them on the step form (an admin set
     it on their behalf), plus a login link.
+contact_email is stored on the tenant for reference only - it is never
+emailed.
 Failures are always swallowed — an email error must never roll back or
 fail the tenant-creation request.
 """
@@ -105,65 +103,6 @@ async def send_tenant_invitation_email(
         body_html=body_html,
         recipient_id=recipient_id,
         log_label="tenant-invitation",
-    )
-
-
-async def send_tenant_contact_notification(
-    *,
-    to_email: str,
-    tenant_name: str,
-    tenant_id: str,
-    owner_email: str,
-    temp_password: Optional[str] = None,
-) -> None:
-    """
-    Notify a client's general contact address that onboarding completed.
-    Includes the owner's temp login credentials (same owner_password_hash
-    seeded for owner_email — temp_password is its plaintext, generated once
-    in create_onboarding() and never persisted) so the contact can pass them
-    along even though contact_email itself isn't a login identity. Only
-    call this when contact_email differs from owner_email, to avoid sending
-    two emails to the same inbox.
-    Fire-and-forget — never raises.
-    """
-    subject = f"{tenant_name} is now set up on Clan"
-    body_text = (
-        f"Hello,\n\n"
-        f"Your organization, {tenant_name}, has been successfully onboarded "
-        "to Clan.\n\n"
-        f"The account admin login is: {owner_email}\n"
-        f"Temporary Password: {temp_password}\n\n"
-        "That admin also received a separate email with these login "
-        "credentials.\n\n"
-        "If you did not request this, please contact the Clan support team "
-        "immediately.\n\n"
-        "Thank you,\n\n"
-        "Team Clan\n"
-        "clan.platform@gmail.com\n"
-        f"{settings.COMPANY_WEBSITE}"
-    )
-    body_html = (
-        "<p>Hello,</p>"
-        f"<p>Your organization, <strong>{tenant_name}</strong>, has been "
-        "successfully onboarded to Clan.</p>"
-        f"<p>The account admin login is: <strong>{owner_email}</strong><br>"
-        f"<strong>Temporary Password:</strong> {temp_password}</p>"
-        "<p>That admin also received a separate email with these login "
-        "credentials.</p>"
-        "<p>If you did not request this, please contact the Clan support "
-        "team immediately.</p>"
-        "<p>Thank you,</p>"
-        "<p><strong>Team Clan</strong><br>"
-        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
-        f"<a href=\"{settings.COMPANY_WEBSITE}\">{settings.COMPANY_WEBSITE}</a></p>"
-    )
-    await _post_email(
-        to_email=to_email,
-        tenant_id=tenant_id,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
-        log_label="tenant-contact-notification",
     )
 
 

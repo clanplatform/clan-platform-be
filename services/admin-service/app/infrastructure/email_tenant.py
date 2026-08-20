@@ -10,6 +10,7 @@ ever emailed.
 Failures are always swallowed — an email error must never roll back or
 fail the tenant-creation request.
 """
+import asyncio
 import logging
 import uuid
 from typing import Optional
@@ -20,6 +21,14 @@ import httpx
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Render's free/starter tier fronts services with Cloudflare, which can
+# transiently 429 (rate limit) or 503 (still cold-starting) a request even
+# after it reaches the edge - worth a short retry rather than silently
+# dropping the email. Network-level failures (timeout, connection refused)
+# are equally transient on a cold-starting service and get the same treatment.
+_RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+_RETRY_DELAYS_SECONDS = [3.0, 8.0]  # before attempt 2 and attempt 3
 
 
 async def send_tenant_invitation_email(
@@ -113,35 +122,71 @@ async def _post_email(
     recipient_id: Optional[str] = None,
     log_label: str,
 ) -> None:
-    """Shared HTTP call to the email-service /send endpoint. Never raises."""
-    try:
-        # Must exceed the email-service's own SMTP timeout (15s) plus its
-        # SendGrid fallback — the /send endpoint blocks until delivery, and a
-        # Gmail SMTP handshake alone takes ~5s. Also must tolerate a Render
-        # free/starter-tier cold start (the service sleeps after inactivity
-        # and can take 30-60s to wake on the next request) — a shorter
-        # timeout here reports a false failure (and silently drops the
-        # email, since this call is fire-and-forget) even when the service
-        # would have responded successfully given more time.
-        async with httpx.AsyncClient(timeout=90.0) as http:
-            resp = await http.post(
-                f"{settings.EMAIL_SERVICE_URL}/api/v1/send",
-                json={
-                    "notification_id": str(uuid.uuid4()),
-                    "tenant_id": tenant_id or "master",
-                    "recipient_id": recipient_id or str(uuid.uuid4()),
-                    "to_email": to_email,
-                    "subject": subject,
-                    "body_text": body_text,
-                    "body_html": body_html,
-                },
-            )
-            if resp.status_code in (200, 201, 202):
-                logger.info("[email] %s email accepted for %s", log_label, to_email)
-            else:
-                logger.warning(
-                    "[email] %s email rejected for %s: %s %s",
-                    log_label, to_email, resp.status_code, resp.text[:200],
+    """Shared HTTP call to the email-service /send endpoint. Never raises.
+
+    Retries up to 3 attempts total on a retryable HTTP status (429/502/503/504)
+    or a network-level failure (timeout, connection refused) - both are
+    transient on a Render free/starter-tier service that may be cold-starting
+    or briefly rate-limited at the edge. This call is fire-and-forget, so the
+    extra wait never blocks the caller's actual response.
+    """
+    payload = {
+        "notification_id": str(uuid.uuid4()),
+        "tenant_id": tenant_id or "master",
+        "recipient_id": recipient_id or str(uuid.uuid4()),
+        "to_email": to_email,
+        "subject": subject,
+        "body_text": body_text,
+        "body_html": body_html,
+    }
+    max_attempts = len(_RETRY_DELAYS_SECONDS) + 1
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # Must exceed the email-service's own SMTP timeout (15s) plus its
+            # SendGrid fallback — the /send endpoint blocks until delivery, and a
+            # Gmail SMTP handshake alone takes ~5s. Also must tolerate a Render
+            # free/starter-tier cold start (the service sleeps after inactivity
+            # and can take 30-60s to wake on the next request) — a shorter
+            # timeout here reports a false failure (and silently drops the
+            # email, since this call is fire-and-forget) even when the service
+            # would have responded successfully given more time.
+            async with httpx.AsyncClient(timeout=90.0) as http:
+                resp = await http.post(
+                    f"{settings.EMAIL_SERVICE_URL}/api/v1/send",
+                    json=payload,
                 )
-    except Exception as exc:
-        logger.error("[email] %s email failed for %s: %s", log_label, to_email, exc)
+            if resp.status_code in (200, 201, 202):
+                logger.info("[email] %s email accepted for %s (attempt %d/%d)", log_label, to_email, attempt, max_attempts)
+                return
+            if resp.status_code in _RETRYABLE_STATUS_CODES and attempt < max_attempts:
+                delay = _RETRY_DELAYS_SECONDS[attempt - 1]
+                logger.warning(
+                    "[email] %s email got %s for %s (attempt %d/%d), retrying in %.0fs",
+                    log_label, resp.status_code, to_email, attempt, max_attempts, delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.warning(
+                "[email] %s email rejected for %s: %s %s",
+                log_label, to_email, resp.status_code, resp.text[:200],
+            )
+            return
+        except httpx.TransportError as exc:
+            # Network-level failure (timeout, connection refused, DNS, ...) —
+            # same transient causes as a 429/503, worth the same retry.
+            if attempt < max_attempts:
+                delay = _RETRY_DELAYS_SECONDS[attempt - 1]
+                logger.warning(
+                    "[email] %s email attempt %d/%d failed for %s: %s, retrying in %.0fs",
+                    log_label, attempt, max_attempts, to_email, exc, delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.error("[email] %s email failed for %s: %s", log_label, to_email, exc)
+            return
+        except Exception as exc:
+            # Unexpected (not a transport issue) — give up immediately, a
+            # bug won't fix itself on retry.
+            logger.error("[email] %s email failed for %s: %s", log_label, to_email, exc)
+            return

@@ -117,9 +117,13 @@ async def _post_email(
     try:
         # Must exceed the email-service's own SMTP timeout (15s) plus its
         # SendGrid fallback — the /send endpoint blocks until delivery, and a
-        # Gmail SMTP handshake alone takes ~5s. A shorter timeout here reports
-        # a false failure even when the email was actually sent.
-        async with httpx.AsyncClient(timeout=30.0) as http:
+        # Gmail SMTP handshake alone takes ~5s. Also must tolerate a Render
+        # free/starter-tier cold start (the service sleeps after inactivity
+        # and can take 30-60s to wake on the next request) — a shorter
+        # timeout here reports a false failure (and silently drops the
+        # email, since this call is fire-and-forget) even when the service
+        # would have responded successfully given more time.
+        async with httpx.AsyncClient(timeout=90.0) as http:
             resp = await http.post(
                 f"{settings.EMAIL_SERVICE_URL}/api/v1/send",
                 json={

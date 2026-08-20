@@ -76,7 +76,7 @@ async def send_tenant_invitation_email(
         "by mistake, please contact the Clan support team immediately.\n\n"
         "Thank you,\n\n"
         "Team Clan\n"
-        "noreply@clan-platform.com\n"
+        "clan.platform@gmail.com\n"
         f"{website}"
     )
 
@@ -97,7 +97,7 @@ async def send_tenant_invitation_email(
         "email by mistake, please contact the Clan support team immediately.</p>"
         "<p>Thank you,</p>"
         "<p><strong>Team Clan</strong><br>"
-        "<a href=\"mailto:noreply@clan-platform.com\">noreply@clan-platform.com</a><br>"
+        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
         f"<a href=\"{website}\">{website}</a></p>"
     )
 

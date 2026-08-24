@@ -8,7 +8,7 @@ from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
-from app.infrastructure.scope_helpers import resolve_scope_filter
+from app.infrastructure.scope_helpers import resolve_scope_filter, require_whole_org_admin
 from app.user_setup.services.user_setup import UserSetupService
 from app.user_setup.schemas.user_setup import (
     UserSetupBasicCreate,
@@ -36,7 +36,7 @@ async def create_user_setup_with_details(
     request: Request,
     user_data: UserSetupCreateWithDetails,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Create a user setup with roles, entities, and preferences in one request."""
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
@@ -199,7 +199,7 @@ async def update_user_setup(
     user_id: UUID,
     user_data: UserSetupBasicUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Update a user setup."""
     result = await UserSetupService.update_user_setup(db, user_id, user_data)
@@ -237,7 +237,7 @@ async def delete_user_setup(
     request: Request,
     user_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Delete a user setup (cascades to preferences)."""
     result = await UserSetupService.delete_user_setup(db, user_id)

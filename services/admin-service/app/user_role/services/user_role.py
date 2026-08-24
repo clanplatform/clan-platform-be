@@ -9,6 +9,8 @@ from app.infrastructure.audit_tenant import fire_audit_log
 from app.menus.models.menu import Menu
 from app.forms.models.forms import Form
 from app.buttons.models.button import Button
+from app.subscription.models.subscription import Subscription
+from app.user_setup.models.user_setup import UserSetupBasic
 from app.user_role.schemas.user_role import (
     UserRoleBasicCreate,
     UserRoleBasicUpdate,
@@ -405,11 +407,13 @@ class UserRoleService:
         userrole_basic_id: UUID,
     ) -> UserRolePermission:
         """Build (unattached — caller adds/flushes) a UserRolePermission from a
-        UserRolePermissionBase-shaped payload. Shared by create_user_role_with_details
-        and onboarding's role creation so the menu/button/form JSONB conversion and
-        access-level calculation stay in one place."""
-        if perm_data.menu_permissions:
-            menu_ids = [item.id for item in perm_data.menu_permissions]
+        UserRolePermissionBase-shaped payload. Shared by create_user_role_with_details,
+        update_user_role_with_details and onboarding's role creation so the
+        menu/button/form JSONB conversion, access-level calculation and
+        subscription-grant enforcement (see _verify_permissions_within_subscription)
+        stay in one place."""
+        menu_ids = [item.id for item in perm_data.menu_permissions] if perm_data.menu_permissions else []
+        if menu_ids:
             UserRoleService._verify_menus_exist(db, menu_ids)
 
         menu_perms = []
@@ -423,19 +427,27 @@ class UserRoleService:
                 perm_dict["access"] = item.menu_access
             menu_perms.append(perm_dict)
 
-        if getattr(perm_data, "button_permissions", None):
-            button_ids = [item.id for item in perm_data.button_permissions]
+        button_ids = (
+            [item.id for item in perm_data.button_permissions]
+            if getattr(perm_data, "button_permissions", None) else []
+        )
+        if button_ids:
             UserRoleService._verify_buttons_exist(db, button_ids)
         button_perms = UserRoleService._build_button_perms(
             getattr(perm_data, "button_permissions", None)
         )
 
-        if getattr(perm_data, "form_permissions", None):
-            form_ids = [item.id for item in perm_data.form_permissions]
+        form_ids = (
+            [item.id for item in perm_data.form_permissions]
+            if getattr(perm_data, "form_permissions", None) else []
+        )
+        if form_ids:
             UserRoleService._verify_forms_exist(db, form_ids)
         form_perms = UserRoleService._build_form_perms(
             getattr(perm_data, "form_permissions", None)
         )
+
+        UserRoleService._verify_permissions_within_subscription(db, menu_ids, form_ids, button_ids)
 
         return UserRolePermission(
             user_role_id=user_role_id,
@@ -541,39 +553,13 @@ class UserRoleService:
                     UserRolePermission.user_role_id == role_id
                 ).delete()
 
-                # Create new permissions
+                # Create new permissions — same builder create_user_role_with_details
+                # and onboarding use, so existence + subscription-grant checks
+                # (see build_permission_row / _verify_permissions_within_subscription)
+                # apply here too instead of writing unvalidated JSONB directly.
                 for perm_data in role_data.permissions:
-                    # Build JSONB structures
-                    menu_perms = []
-                    for item in (perm_data.menu_permissions or []):
-                        perm_dict = {"id": item.id}
-                        if hasattr(item, 'application_id') and item.application_id:
-                            perm_dict["application_id"] = item.application_id
-                        if hasattr(item, 'modules_id') and item.modules_id:
-                            perm_dict["modules_id"] = item.modules_id
-                        if hasattr(item, 'menu_access') and item.menu_access:
-                            perm_dict["access"] = item.menu_access
-                        menu_perms.append(perm_dict)
-
-                    # Button permissions — same JSONB shape as menus, keyed by button id
-                    button_perms = UserRoleService._build_button_perms(
-                        getattr(perm_data, "button_permissions", None)
-                    )
-
-                    # Form permissions — same JSONB shape as menus, keyed by form id
-                    form_perms = UserRoleService._build_form_perms(
-                        getattr(perm_data, "form_permissions", None)
-                    )
-
-                    db_permission = UserRolePermission(
-                        user_role_id=db_role.user_role_id,
-                        userrole_basic_id=db_role.id,
-                        menu_permissions=menu_perms,
-                        menu_access=UserRoleService._calculate_highest_access(menu_perms),
-                        button_permissions=button_perms,
-                        button_access=UserRoleService._calculate_highest_access(button_perms),
-                        form_permissions=form_perms,
-                        form_access=UserRoleService._calculate_highest_access(form_perms),
+                    db_permission = UserRoleService.build_permission_row(
+                        db, perm_data, db_role.user_role_id, db_role.id
                     )
                     db.add(db_permission)
 
@@ -675,6 +661,78 @@ class UserRoleService:
                 )
 
     @staticmethod
+    def _verify_permissions_within_subscription(
+        db: Session,
+        menu_ids: Optional[List[str]] = None,
+        form_ids: Optional[List[str]] = None,
+        button_ids: Optional[List[str]] = None,
+    ) -> None:
+        """menu_permissions/form_permissions/button_permissions may only grant
+        access to a menu/form/button whose application (and, when the menu is
+        tied to one, module) is actually part of this tenant's subscription
+        (Subscription.applications_to_grant / modules_to_grant) — a role can't
+        grant access to an application/module the tenant hasn't subscribed to.
+        Forms and buttons don't carry their own application_id/module_id —
+        both are derived through their parent menu. One subscription row per
+        tenant DB by convention (same as app.subscription.services.subscription).
+        """
+        if not menu_ids and not form_ids and not button_ids:
+            return
+
+        subscription = db.query(Subscription).first()
+        if subscription is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No subscription found for this tenant — menu/form/button "
+                       "permissions can only be granted for applications/modules "
+                       "already in the subscription (applications_to_grant / "
+                       "modules_to_grant).",
+            )
+        granted_apps = set(subscription.applications_to_grant or [])
+        granted_modules = set(subscription.modules_to_grant or [])
+
+        def _check(kind: str, application_id, module_id, entity_id) -> None:
+            if application_id not in granted_apps:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{kind} {entity_id} belongs to an application that isn't "
+                           "in this tenant's subscription (applications_to_grant)",
+                )
+            if module_id is not None and module_id not in granted_modules:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{kind} {entity_id} belongs to a module that isn't in "
+                           "this tenant's subscription (modules_to_grant)",
+                )
+
+        def _uuids(ids: Optional[List[str]]) -> List[UUID]:
+            return [UUID(str(i)) for i in ids] if ids else []
+
+        if menu_ids:
+            for m in db.query(Menu).filter(Menu.id.in_(_uuids(menu_ids))).all():
+                _check("Menu", m.application_id, m.module_id, m.id)
+
+        if form_ids:
+            rows = (
+                db.query(Form.id, Menu.application_id, Menu.module_id)
+                .join(Menu, Form.menu_id == Menu.id)
+                .filter(Form.id.in_(_uuids(form_ids)))
+                .all()
+            )
+            for form_id, application_id, module_id in rows:
+                _check("Form", application_id, module_id, form_id)
+
+        if button_ids:
+            rows = (
+                db.query(Button.id, Menu.application_id, Menu.module_id)
+                .join(Menu, Button.menu_id == Menu.id)
+                .filter(Button.id.in_(_uuids(button_ids)))
+                .all()
+            )
+            for button_id, application_id, module_id in rows:
+                _check("Button", application_id, module_id, button_id)
+
+    @staticmethod
     def _build_button_perms(button_permissions) -> List[Dict[str, Any]]:
         """Convert button PermissionItems (or dicts) to the JSONB shape stored on
         userrole_permission.button_permissions: [{"id": ..., "access": [...]}].
@@ -760,6 +818,75 @@ class UserRoleService:
             return "disable"
         else:
             return "disable"
+
+    @staticmethod
+    def get_user_permission_context(db: Session, user_id: Optional[UUID]) -> Dict[str, Any]:
+        """Resolve a logged-in user's role-based access context for gating the
+        dashboard: whether their role is admin (sees everything), and the
+        sets of menu/form/button ids their role's permissions actually grant.
+
+        An id is accessible when its `access` list contains 'read' or
+        'write' and does NOT contain 'disable' — same convention already
+        used for menu_permissions in get_login_user_menus (see
+        app/api/v1/routes/navigation/menu.py). form_ids/button_ids follow
+        the identical rule against form_permissions/button_permissions.
+
+        Returns {"is_admin": bool, "has_role": bool, "menu_ids": set[str],
+        "form_ids": set[str], "button_ids": set[str]}. Callers should treat
+        an id-set that ended up empty (no role, no permission rows, or every
+        permission row happened to grant nothing for that kind) as "don't
+        filter" rather than "show nothing" — a role that was only ever given
+        menu_permissions shouldn't blank out every form/button for its users.
+        """
+        result: Dict[str, Any] = {
+            "is_admin": False, "has_role": False,
+            "menu_ids": set(), "form_ids": set(), "button_ids": set(),
+        }
+        if user_id is None:
+            return result
+
+        user = db.query(UserSetupBasic).filter(UserSetupBasic.id == user_id).first()
+        if not user or not user.role_id:
+            return result
+
+        result["has_role"] = True
+        role_basic = db.query(UserRoleBasic).filter(
+            UserRoleBasic.user_role_id == user.role_id, UserRoleBasic.active == True
+        ).first()
+        if role_basic and role_basic.is_admin:
+            result["is_admin"] = True
+            return result
+
+        permissions = db.query(UserRolePermission).filter(
+            UserRolePermission.user_role_id == user.role_id
+        ).all()
+
+        def _accessible_ids(perm_list_attr: str) -> set:
+            accessible, disabled = set(), set()
+            for perm in permissions:
+                for item in (getattr(perm, perm_list_attr, None) or []):
+                    if not isinstance(item, dict) or item.get("id") is None:
+                        continue
+                    item_id = str(item["id"])
+                    access = item.get("access") or []
+                    if "disable" in access:
+                        disabled.add(item_id)
+                    elif "read" in access or "write" in access:
+                        accessible.add(item_id)
+            return accessible - disabled
+
+        result["menu_ids"] = _accessible_ids("menu_permissions")
+        result["form_ids"] = _accessible_ids("form_permissions")
+        result["button_ids"] = _accessible_ids("button_permissions")
+        return result
+
+    @staticmethod
+    def should_filter(context: Dict[str, Any], kind: str) -> bool:
+        """True when `context` (from get_user_permission_context) should
+        actually narrow results for the given kind ('menu' | 'form' |
+        'button') — i.e. the user has a non-admin role AND that role's
+        permissions grant a non-empty set for this kind."""
+        return bool(context.get("has_role")) and not context.get("is_admin") and bool(context.get(f"{kind}_ids"))
 
     @staticmethod
     def get_available_entities(db: Session) -> AvailableEntitiesResponse:

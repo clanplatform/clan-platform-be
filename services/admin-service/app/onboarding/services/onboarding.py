@@ -6,8 +6,9 @@ Flow (POST):
   1. Create the tenant row in the MASTER db and provision its dedicated DB.
   2. In the TENANT db: seed the tenant row (so FKs / get_tenant resolve) and the
      owner admin user, then create branches -> departments -> divisions ->
-     job codes -> roles -> user_groups -> users, resolving each child to its
-     parent by the client-supplied UUID carried in the payload.
+     job codes -> subscription -> roles -> user_groups -> users, resolving
+     each child to its parent by the client-supplied UUID carried in the
+     payload.
 
 Reuse: branches/departments/divisions/job codes/user_groups go through the
 existing per-record services (validation, locale derivation, audit). Roles
@@ -411,7 +412,8 @@ def _create_user_row(
     employee_id: str,
     username: str,
     email: str,
-    password: str,
+    password: Optional[str] = None,
+    password_hash: Optional[str] = None,
     tenant_id: UUID,
     phone: Optional[str] = None,
     profile_image_url: Optional[str] = None,
@@ -425,8 +427,17 @@ def _create_user_row(
     """Create user_setup + usersetup_basic (+ optional role/entity/job code assignment).
 
     By this point in the onboarding sequence, job_codes have already been
-    created (step 5, before users at step 8), so the department/division
+    created (step 5, before users at step 9), so the department/division
     lookup below resolves.
+
+    Exactly one of password / password_hash must be given. password_hash lets
+    the owner's row be seeded with the EXACT SAME hash already computed for
+    tenants.owner_password_hash — bcrypt salts every hash it computes, so
+    calling get_password_hash(password) a second time here would produce a
+    different-looking hash of the identical password, leaving the two
+    permanently out of sync (see login_service.py's LoginService, which
+    otherwise has to treat owner_password_hash as the authoritative copy and
+    keep re-syncing it — this is what avoids needing that entirely).
     """
     user_setup = UserSetup()
     tenant_db.add(user_setup)
@@ -441,7 +452,7 @@ def _create_user_row(
         employee_id=employee_id,
         username=username,
         email=email,
-        password_hash=get_password_hash(password),
+        password_hash=password_hash if password_hash is not None else get_password_hash(password),
         phone_number=phone,
         profile_image_url=profile_image_url,
         status=status or "active",
@@ -501,8 +512,14 @@ def create_onboarding(
     company = payload.company
     # The owner's password is never accepted from the caller — always
     # randomly generated here, used to seed the actual login below, and
-    # returned once so the caller can hand it to the owner.
+    # returned once so the caller can hand it to the owner. Hashed exactly
+    # once: this same hash is used for BOTH tenants.owner_password_hash
+    # (below) and the owner's usersetup_basic.password_hash (see
+    # _create_user_row's password_hash param below) — bcrypt salts every
+    # hash it computes, so hashing temp_password twice would give two
+    # different-looking hashes of the identical password.
     temp_password = generate_temp_password()
+    owner_password_hash = get_password_hash(temp_password)
 
     # Duplicate guard (master DB)
     if master_db.query(Tenant).filter(Tenant.tenant_name == company.client_name).first():
@@ -558,7 +575,7 @@ def create_onboarding(
         company_logo=company.company_logo,
         owner_name=company.owner_name,
         owner_email=company.owner_email,
-        owner_password_hash=get_password_hash(temp_password),
+        owner_password_hash=owner_password_hash,
         # Active/Trial/Pending setup, as selected on the account-status step.
         initial_status=company.initial_status,
         is_active=(company.initial_status or "active").strip().lower() == "active",
@@ -605,7 +622,7 @@ def create_onboarding(
             employee_id=f"OWNER-{code}",
             username=company.owner_email.split("@")[0],
             email=company.owner_email,
-            password=temp_password,
+            password_hash=owner_password_hash,
             tenant_id=tenant_id,
         )
         counts.users += 1
@@ -717,7 +734,17 @@ def create_onboarding(
             job_code_ids.append(job_code.id)
         counts.job_codes = len(job_code_ids)
 
-        # 7. Roles (+ their userrole_permission — Menu/Form/Button access).
+        # 7. Subscription plan (optional; one per client)
+        if payload.subscription is not None:
+            create_subscription(
+                tenant_db,
+                payload.subscription,
+                tenant_id=tenant_id,
+                user_id=_safe_uuid(created_by_user_id),
+            )
+            counts.subscription = 1
+
+        # 8. Roles (+ their userrole_permission — Menu/Form/Button access).
         # Two passes: parent_role may point at any role regardless of array
         # order (including one later in the array), so every UserRoleMain
         # (and its real id) must exist before any UserRoleBasic sets
@@ -777,7 +804,7 @@ def create_onboarding(
                 owner_basic.role_id = admin_role_id
                 tenant_db.commit()
 
-        # 8. User groups
+        # 9. User groups
         user_group_ids: List[UUID] = []
         for g in payload.users_groups:
             group = create_user_group(
@@ -797,7 +824,7 @@ def create_onboarding(
             user_group_ids.append(group.id)
         counts.users_groups = len(user_group_ids)
 
-        # 9. Users
+        # 10. Users
         for u in payload.users:
             _create_user_row(
                 tenant_db,
@@ -824,16 +851,6 @@ def create_onboarding(
                 send_invite_email=u.send_invite_email,
             )
             counts.users += 1
-
-        # 10. Subscription plan (optional; one per client)
-        if payload.subscription is not None:
-            create_subscription(
-                tenant_db,
-                payload.subscription,
-                tenant_id=tenant_id,
-                user_id=_safe_uuid(created_by_user_id),
-            )
-            counts.subscription = 1
 
         # 11. Security settings (optional; one per client)
         if payload.security is not None:
@@ -1118,10 +1135,10 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
     departments: List[DepartmentResponse] = []
     divisions: List[DivisionResponse] = []
     job_codes: List[JobCodeRead] = []
+    subscription: Optional[SubscriptionResponse] = None
     roles: List[OnboardingRoleDetail] = []
     users_groups: List[UserGroupResponse] = []
     users: List[UserSetupBasicResponse] = []
-    subscription: Optional[SubscriptionResponse] = None
     security: Optional[SecurityResponse] = None
 
     if tenant.tenant_db_name:
@@ -1143,6 +1160,11 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
                 JobCodeRead.model_validate(j)
                 for j in tdb.query(JobCode).filter(JobCode.deleted_at.is_(None)).all()
             ]
+            # One row per tenant DB by convention (no DB-level unique
+            # constraint — same convention _upsert_subscription/_upsert_security
+            # already rely on).
+            subscription_row = tdb.query(Subscription).first()
+            subscription = SubscriptionResponse.model_validate(subscription_row) if subscription_row else None
             role_rows = tdb.query(UserRoleBasic).all()
             # parent_role (role_code) is resolved and stashed onto each row in
             # memory here — same trick UserRoleService's own list/get use — so
@@ -1164,9 +1186,7 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
             # One row per tenant DB by convention (no DB-level unique
             # constraint — same convention _upsert_subscription/_upsert_security
             # already rely on).
-            subscription_row = tdb.query(Subscription).first()
             security_row = tdb.query(Security).first()
-            subscription = SubscriptionResponse.model_validate(subscription_row) if subscription_row else None
             security = SecurityResponse.model_validate(security_row) if security_row else None
         finally:
             tdb.close()
@@ -1175,10 +1195,10 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
     counts.departments = len(departments)
     counts.divisions = len(divisions)
     counts.job_codes = len(job_codes)
+    counts.subscription = 1 if subscription else 0
     counts.roles = len(roles)
     counts.users_groups = len(users_groups)
     counts.users = len(users)
-    counts.subscription = 1 if subscription else 0
     counts.security = 1 if security else 0
 
     return OnboardingDetail(
@@ -1228,10 +1248,10 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
         departments=departments,
         divisions=divisions,
         job_codes=job_codes,
+        subscription=subscription,
         roles=roles,
         users_groups=users_groups,
         users=users,
-        subscription=subscription,
         security=security,
     )
 
@@ -1243,10 +1263,10 @@ _PROGRESS_STEPS = [
     ("departments", "Departments"),
     ("divisions", "Divisions"),
     ("job_codes", "Job Codes"),
+    ("subscription", "Subscription"),
     ("roles", "Roles"),
     ("users_groups", "User Groups"),
     ("users", "Users"),
-    ("subscription", "Subscription"),
     ("security", "Security"),
 ]
 
@@ -1304,10 +1324,10 @@ def get_onboarding_progress(master_db: Session, tenant_id: UUID) -> OnboardingPr
             step_counts["departments"] = tdb.query(Department).filter(Department.is_deleted == False).count()  # noqa: E712
             step_counts["divisions"] = tdb.query(Division).filter(Division.deleted_at.is_(None)).count()
             step_counts["job_codes"] = tdb.query(JobCode).filter(JobCode.deleted_at.is_(None)).count()
+            step_counts["subscription"] = tdb.query(Subscription).count()
             step_counts["roles"] = tdb.query(UserRoleBasic).count()
             step_counts["users_groups"] = tdb.query(UserGroup).filter(UserGroup.deleted_at.is_(None)).count()
             step_counts["users"] = tdb.query(UserSetupBasic).count()
-            step_counts["subscription"] = tdb.query(Subscription).count()
             step_counts["security"] = tdb.query(Security).count()
         finally:
             tdb.close()
@@ -1342,10 +1362,10 @@ def compute_dict_progress(merged: dict) -> OnboardingProgress:
         "departments": len(merged.get("departments") or []),
         "divisions": len(merged.get("divisions") or []),
         "job_codes": len(merged.get("job_codes") or []),
+        "subscription": 1 if merged.get("subscription") else 0,
         "roles": len(merged.get("roles") or []),
         "users_groups": len(merged.get("users_groups") or []),
         "users": len(merged.get("users") or []),
-        "subscription": 1 if merged.get("subscription") else 0,
         "security": 1 if merged.get("security") else 0,
     }
     return _build_progress(step_counts, tenant_id=None, company_present=bool(merged.get("company")))
@@ -1369,8 +1389,8 @@ _UPDATE_FIELD_MAP = {
 # The 9 non-company steps OnboardingUpdate carries — iterated separately
 # against the tenant DB ("company" is handled on its own, see below).
 _UPDATE_STEP_FIELDS = (
-    "branches", "departments", "divisions", "job_codes", "roles",
-    "users_groups", "users", "subscription", "security",
+    "branches", "departments", "divisions", "job_codes", "subscription",
+    "roles", "users_groups", "users", "security",
 )
 
 
@@ -1416,6 +1436,8 @@ def update_onboarding(
                 _upsert_divisions(tenant_db, tenant_id, update.divisions, user_id)
             if update.job_codes is not None:
                 _upsert_job_codes(tenant_db, tenant_id, update.job_codes, user_id)
+            if update.subscription is not None:
+                _upsert_subscription(tenant_db, tenant_id, update.subscription, user_id)
 
             role_translation: Dict[UUID, UUID] = {}
             if update.roles is not None:
@@ -1426,8 +1448,6 @@ def update_onboarding(
                 _upsert_user_groups(tenant_db, tenant_id, update.users_groups, role_translation, user_id)
             if update.users is not None:
                 _upsert_users(tenant_db, tenant_id, update.users, role_translation)
-            if update.subscription is not None:
-                _upsert_subscription(tenant_db, tenant_id, update.subscription, user_id)
             if update.security is not None:
                 _upsert_security(tenant_db, tenant_id, update.security, user_id)
         except HTTPException:

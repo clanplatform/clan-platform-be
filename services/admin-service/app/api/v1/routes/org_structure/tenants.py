@@ -32,15 +32,39 @@ from app.tenants.schemas.tenants import (
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
 
 
-def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
+def _split_full_name(full_name: Optional[str]) -> tuple:
+    """Split 'Owner full name' into (first, last); defaults to Tenant/Admin
+    when no owner_name was given (same rule as onboarding's create_onboarding
+    / _split_full_name)."""
+    parts = (full_name or "").strip().split()
+    if not parts:
+        return "Tenant", "Admin"
+    if len(parts) == 1:
+        return parts[0], parts[0]
+    return parts[0], " ".join(parts[1:])
+
+
+def _seed_tenant_db(tenant_db: Session, tenant, owner_password_hash: str) -> None:
     """
     Seed a newly provisioned tenant DB with:
     1. The tenant's own row (satisfies FK constraints from usersetup_basic.tenant_id)
     2. The first admin user in user_setup + usersetup_basic
+
+    owner_password_hash is the SAME hash already stored on
+    tenant.owner_password_hash (computed once by the caller) — reused as-is
+    here rather than re-hashing the plaintext, since bcrypt salts every hash
+    it computes: hashing the same password twice gives two different-looking
+    hashes that silently drift apart (see admin-service's onboarding
+    create_onboarding / auth-service's LoginService for the login bug this
+    caused before it was fixed the same way there).
+
+    The seeded admin's login identity is tenant.owner_email (falling back to
+    contact_email only when no owner_email was given) — auth-service's
+    first-login tenant resolution matches on owner_email specifically, not
+    contact_email.
     """
     from app.tenants.models.tenants import Tenant as TenantModel
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic
-    from app.core.security import get_password_hash
 
     # 1. Seed the tenant row so FK on usersetup_basic.tenant_id is satisfied.
     # Copy every column so the tenant DB holds the full tenant profile
@@ -59,7 +83,9 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
 
     # 3. Derive unique identifiers from tenant info
     code = (tenant.tenant_code or str(tenant.tenant_id)[:8]).upper()
-    username = tenant.contact_email.split("@")[0]
+    login_email = tenant.owner_email or tenant.contact_email
+    username = login_email.split("@")[0]
+    owner_first, owner_last = _split_full_name(tenant.owner_name)
 
     # 4. Seed initial admin user
     # can_change_password=True + is_password_change=False → auth-service
@@ -67,12 +93,12 @@ def _seed_tenant_db(tenant_db: Session, tenant, temp_password: str) -> None:
     # announces the temp password).
     user_basic = UserSetupBasic(
         user_setup_id=user_setup.id,
-        firstname="Tenant",
-        lastname="Admin",
+        firstname=owner_first,
+        lastname=owner_last,
         employee_id=f"ADMIN-{code}",
         username=username,
-        email=tenant.contact_email,
-        password_hash=get_password_hash(temp_password),
+        email=login_email,
+        password_hash=owner_password_hash,
         tenant_id=tenant.tenant_id,
         status="active",
         is_password_change=False,
@@ -167,15 +193,19 @@ async def create_tenant(
             db_tenant.tenant_id, db_tenant.tenant_db_name
         )
 
-    # Seed the initial admin user into the tenant DB with the generated
-    # temp_password (also emailed as the temporary login credential below).
+    # Seed the initial admin user into the tenant DB with the same hash
+    # already stored on db_tenant.owner_password_hash (temp_password itself
+    # is only used for the invitation email below — never hashed twice).
     if ok:
         tenant_db = tenant_db_manager.get_session(db_tenant.tenant_db_name, settings.DATABASE_URL)
         try:
-            _seed_tenant_db(tenant_db, db_tenant, temp_password)
-            # Invite the tenant by email with a login link (fire-and-forget)
+            _seed_tenant_db(tenant_db, db_tenant, db_tenant.owner_password_hash)
+            # Invite the tenant by email with a login link (fire-and-forget).
+            # Goes to owner_email — the actual login identity — falling back
+            # to contact_email only when no owner_email was given, matching
+            # _seed_tenant_db's own login_email precedence.
             asyncio.create_task(send_tenant_invitation_email(
-                to_email=db_tenant.contact_email,
+                to_email=db_tenant.owner_email or db_tenant.contact_email,
                 tenant_name=db_tenant.tenant_name,
                 tenant_id=str(db_tenant.tenant_id),
                 temp_password=temp_password,

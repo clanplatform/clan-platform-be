@@ -16,12 +16,17 @@ with two entities sees both entities' data.
 from dataclasses import dataclass, field
 from typing import List, Optional
 from uuid import UUID
+from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session, Query
+
+from app.core.security import get_current_user
+from app.infrastructure.database.session import get_tenant_db
 
 
 @dataclass
 class ScopeFilter:
     scope: Optional[str] = None
+    is_admin: bool = False
     entity_ids: List[UUID] = field(default_factory=list)
     department_ids: List[UUID] = field(default_factory=list)
     division_ids: List[UUID] = field(default_factory=list)
@@ -33,14 +38,25 @@ class ScopeFilter:
         scope; it never restricts anything that wasn't already restricted."""
         return self.scope in ("branch_entity", "department", "division")
 
+    @property
+    def is_whole_org_admin(self) -> bool:
+        """True only for a role with is_admin=True AND
+        access_scope='whole_organization' — the gate for org-structure
+        write endpoints (see require_whole_org_admin below)."""
+        return self.is_admin and self.scope == "whole_organization"
+
 
 def resolve_scope_filter(db: Session, user_id: Optional[str]) -> ScopeFilter:
     """
-    Resolve the acting user's role access_scope plus their assigned
-    entity/department/division IDs.
+    Resolve the acting user's role access_scope + is_admin plus their
+    assigned entity/department/division IDs.
 
     Fails open (no restriction) on any error or missing data — same
-    fail-open behaviour as get_audit_org_context.
+    fail-open behaviour as get_audit_org_context. Note "fails open" here
+    means unrestricted for READ filtering (is_restricted / scoped_*_ids);
+    it does NOT make is_whole_org_admin true — that stays False (and
+    require_whole_org_admin below stays a 403) whenever no role/admin
+    flag was actually resolved, since a write gate must fail closed.
     """
     if not user_id:
         return ScopeFilter()
@@ -57,7 +73,9 @@ def resolve_scope_filter(db: Session, user_id: Optional[str]) -> ScopeFilter:
         if not user_row or not user_row.role_id:
             return ScopeFilter()
 
-        role_row = db.query(UserRoleBasic.access_scope).filter(
+        role_row = db.query(
+            UserRoleBasic.access_scope, UserRoleBasic.is_admin
+        ).filter(
             UserRoleBasic.user_role_id == user_row.role_id
         ).first()
         if not role_row:
@@ -65,6 +83,7 @@ def resolve_scope_filter(db: Session, user_id: Optional[str]) -> ScopeFilter:
 
         return ScopeFilter(
             scope=role_row.access_scope,
+            is_admin=bool(role_row.is_admin),
             entity_ids=list(user_row.entity_id or []),
             department_ids=list(user_row.department_id or []),
             division_ids=list(user_row.division_id or []),
@@ -72,6 +91,26 @@ def resolve_scope_filter(db: Session, user_id: Optional[str]) -> ScopeFilter:
     except Exception:
         db.rollback()
         return ScopeFilter()
+
+
+def require_whole_org_admin(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_tenant_db),
+) -> dict:
+    """FastAPI dependency gating org-structure write endpoints (create
+    entities/departments/divisions/job_codes, ...): only a role with
+    is_admin=True AND access_scope='whole_organization' may proceed.
+    Unlike resolve_scope_filter's read-side fail-open default, this fails
+    closed — no role, no is_admin, or any scope other than
+    whole_organization all result in 403."""
+    from app.infrastructure.audit_helpers import get_user_id
+    sf = resolve_scope_filter(db, get_user_id(current_user))
+    if not sf.is_whole_org_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a whole-organization admin role can perform this action",
+        )
+    return current_user
 
 
 def scoped_entity_ids(db: Session, sf: ScopeFilter) -> Optional[List[UUID]]:

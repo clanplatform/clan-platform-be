@@ -201,8 +201,8 @@ async def _create_and_finalize(
         "whichever step(s) you send onto whatever was saved under that "
         "draft_id earlier, so already-completed steps don't need to be "
         "resent — e.g. once company/branches/departments/divisions are saved, "
-        "a later call can send just job_codes/roles/users_groups/users/"
-        "subscription/security. Note this merge is step-level, not item-"
+        "a later call can send just job_codes/subscription/roles/users_groups/"
+        "users/security. Note this merge is step-level, not item-"
         "level: resending a step's array replaces the previously saved array "
         "for that step outright, so a single step's items must all be sent "
         "together.\n\n"
@@ -216,8 +216,8 @@ async def _create_and_finalize(
         "every one of the 10 steps (matching the wizard's own step list, "
         "nothing optional) is present and valid, the client (tenant) + its "
         "dedicated database is created (status 'created', HTTP 201): every "
-        "branch, department, division, job code, role, user, the "
-        "subscription and the security settings in one sequence. Otherwise "
+        "branch, department, division, job code, the subscription, role, "
+        "user and the security settings in one sequence. Otherwise "
         "422, listing which step(s) are still missing (and the payload is "
         "still saved as a draft, resumable the same way).\n\n"
         "Children reference parents by the client-supplied UUIDs carried in "
@@ -416,7 +416,7 @@ async def get_client(
     summary="Onboarding step progress",
     description=(
         "Which of the 10 onboarding steps (company, branches, departments, "
-        "divisions, job codes, roles, user groups, users, subscription, security) "
+        "divisions, job codes, subscription, roles, user groups, users, security) "
         "already have data, and which to continue with next — powers a 'resume "
         "onboarding' wizard."
     ),
@@ -436,7 +436,7 @@ async def get_client_progress(
     description=(
         "Updates company/tenant fields and/or upserts any of the other 9 "
         "onboarding steps (branches, departments, divisions, job codes, "
-        "roles, user groups, users, subscription, security) against the "
+        "subscription, roles, user groups, users, security) against the "
         "tenant's own database — same shape as OnboardingRequest, but every "
         "field is optional and independent: a step left out of the request "
         "is left untouched. Within a step that IS included, each item is "

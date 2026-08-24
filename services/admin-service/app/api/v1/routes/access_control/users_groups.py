@@ -10,6 +10,7 @@ from app.users_groups.schemas.users_groups import UserGroupCreate, UserGroupUpda
 from app.users_groups.services import users_groups as user_group_service
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import require_whole_org_admin
 
 router = APIRouter()
 
@@ -94,7 +95,7 @@ def create_user_group(
     request: Request,
     group_data: UserGroupCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_whole_org_admin),
 ):
     """Create a new user group"""
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
@@ -138,7 +139,7 @@ def update_user_group(
     group_id: UUID,
     group_data: UserGroupUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_whole_org_admin),
 ):
     """Update a user group"""
     try:
@@ -179,7 +180,7 @@ def delete_user_group(
     request: Request,
     group_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_whole_org_admin),
 ):
     """Soft delete a user group"""
     try:

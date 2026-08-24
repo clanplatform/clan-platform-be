@@ -247,8 +247,11 @@ def create_division(
         department = get_department(db, division.department_id)
         if not department:
             raise DivisionDepartmentNotFoundError()
-        # Verify department belongs to the tenant
-        if department.tenant_id != tenant_id:
+        # Verify department belongs to the tenant. str() on both sides: tenant_id
+        # here is the raw JWT claim (a str), while department.tenant_id is a
+        # uuid.UUID from the ORM — comparing them directly is always unequal in
+        # Python even for the same id, since UUID.__eq__ rejects non-UUID types.
+        if str(department.tenant_id) != str(tenant_id):
             raise DivisionDepartmentTenantMismatchError("specified")
 
     # Check if division name already exists in the same entity

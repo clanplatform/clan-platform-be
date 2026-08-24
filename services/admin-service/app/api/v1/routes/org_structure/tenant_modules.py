@@ -6,7 +6,7 @@ import math
 import uuid
 
 from app.infrastructure.database.session import get_db, get_tenant_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_master_user
 from app.tenant_modules.services.tenant_module import TenantModuleService
 from app.tenant_modules.schemas.tenant_module import (
     TenantModuleCreate, TenantModuleUpdate, TenantModuleResponse, TenantModuleListResponse,
@@ -28,7 +28,7 @@ def _to_uuid(value) -> Optional[uuid.UUID]:
              summary="Assign a module to a tenant")
 async def assign_module(
     request: Request, data: TenantModuleCreate,
-    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_master_user),
 ):
     if TenantModuleService.get_assignment_by_tenant_module(db, str(data.tenant_id), str(data.module_id)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Module already assigned to this tenant")
@@ -101,7 +101,7 @@ async def get_assignment(
             summary="Update assignment (activate / deactivate)")
 async def update_assignment(
     request: Request, assignment_id: str, data: TenantModuleUpdate,
-    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_master_user),
 ):
     if not TenantModuleService.get_assignment(db, assignment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")
@@ -120,7 +120,7 @@ async def update_assignment(
 @router.delete("/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove a module from a tenant")
 async def remove_assignment(
     request: Request, assignment_id: str,
-    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_master_user),
 ):
     if not TenantModuleService.remove_assignment(db, assignment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")

@@ -8,6 +8,7 @@ from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user, get_current_user_id
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_session_id, get_user_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import require_whole_org_admin
 from app.user_role.services.user_role import UserRoleService
 from app.user_role.models.user_role import UserRoleBasic, UserRoleMain, UserRolePermission
 from app.user_role.schemas.user_role import (
@@ -46,7 +47,7 @@ async def create_user_role_with_details(
     request: Request,
     role_data: UserRoleCreateWithDetails,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Create a user role with permissions in one request"""
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
@@ -164,7 +165,7 @@ async def update_user_role_with_details(
     role_id: UUID,
     role_data: UserRoleUpdateWithDetails,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Update a user role with all permissions in one request"""
     role = UserRoleService.update_user_role_with_details(db, role_id, role_data)
@@ -219,7 +220,7 @@ async def delete_user_role(
     request: Request,
     role_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Delete a user role (cascades to permissions)"""
     success = UserRoleService.delete_user_role(db, role_id)

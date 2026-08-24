@@ -6,7 +6,7 @@ import math
 import uuid
 
 from app.infrastructure.database.session import get_db, get_tenant_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_master_user
 from app.tenant_applications.services.tenant_application import TenantApplicationService
 from app.tenant_applications.schemas.tenant_application import (
     TenantApplicationCreate, TenantApplicationUpdate, TenantApplicationResponse, TenantApplicationListResponse,
@@ -31,7 +31,7 @@ def _to_uuid(value) -> Optional[uuid.UUID]:
                          "that application without needing individual tenant_modules rows.")
 async def assign_application(
     request: Request, data: TenantApplicationCreate,
-    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_master_user),
 ):
     if TenantApplicationService.get_assignment_by_tenant_application(db, str(data.tenant_id), str(data.application_id)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application already assigned to this tenant")
@@ -104,7 +104,7 @@ async def get_assignment(
             summary="Update assignment (activate / deactivate)")
 async def update_assignment(
     request: Request, assignment_id: str, data: TenantApplicationUpdate,
-    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_master_user),
 ):
     if not TenantApplicationService.get_assignment(db, assignment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")
@@ -123,7 +123,7 @@ async def update_assignment(
 @router.delete("/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove an application from a tenant")
 async def remove_assignment(
     request: Request, assignment_id: str,
-    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: dict = Depends(require_master_user),
 ):
     if not TenantApplicationService.remove_assignment(db, assignment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")

@@ -11,24 +11,40 @@ from app.subscription.schemas.subscription import SubscriptionCreate, Subscripti
 from app.subscription.exceptions import SubscriptionNotFoundError
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.database.session import SessionLocal
+from app.applications.models.application import Application
 from app.modules.models.module import Module
 
 logger = logging.getLogger(__name__)
 
 
 def _validate_grants(application_ids: Optional[List[UUID]], module_ids: Optional[List[UUID]]) -> None:
-    """Every id in modules_to_grant must belong to one of applications_to_grant.
+    """applications_to_grant must be real applications.id values, and every id
+    in modules_to_grant must belong to one of those granted applications.
 
     applications/modules are master-catalog data (app.applications /
     app.modules), so this always checks against the master DB regardless of
     which DB the subscription row itself is being written to (a tenant-DB
     caller's own copy of these tables may only hold whatever's been synced
     on demand elsewhere — not the full catalog)."""
-    if not module_ids:
+    if not application_ids and not module_ids:
         return
     application_id_set = set(application_ids or [])
     master_db = SessionLocal()
     try:
+        if application_id_set:
+            found_apps = {
+                a.id for a in master_db.query(Application.id)
+                .filter(Application.id.in_(application_id_set)).all()
+            }
+            missing_apps = application_id_set - found_apps
+            if missing_apps:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Application(s) not found: {', '.join(str(a) for a in missing_apps)}",
+                )
+
+        if not module_ids:
+            return
         modules = master_db.query(Module).filter(Module.id.in_(module_ids)).all()
         found_ids = {m.id for m in modules}
         missing = set(module_ids) - found_ids

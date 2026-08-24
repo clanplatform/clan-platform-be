@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -9,6 +10,7 @@ from app.forms.services.forms import FormsService
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.forms_details.services.forms_details import forms_details_service
+from app.user_role.services.user_role import UserRoleService
 from app.forms.schemas.forms import (
     FormCreate,
     FormCreateFromFrontend,
@@ -23,6 +25,27 @@ import math
 import json
 
 router = APIRouter()
+
+
+def _user_permission_context(db: Session, current_user: dict) -> Dict[str, Any]:
+    """Resolve the current user's role-based access context (see
+    UserRoleService.get_user_permission_context) so forms can be scoped to
+    the same menu/form/button permissions the dashboard nav is scoped to."""
+    user_id_str = get_user_id(current_user)
+    try:
+        user_uuid = UUID(user_id_str) if user_id_str else None
+    except ValueError:
+        user_uuid = None
+    return UserRoleService.get_user_permission_context(db, user_uuid)
+
+
+def _filter_accessible_forms(forms: list, accessible_form_ids: set) -> list:
+    """Keep only form entries whose form_id is in the role's accessible set —
+    same JSONB shape as forms_details_service's grouped-by-menu documents."""
+    return [
+        f for f in (forms or [])
+        if isinstance(f, dict) and str(f.get("form_id")) in accessible_form_ids
+    ]
 
 
 @router.post(
@@ -326,7 +349,14 @@ async def get_forms(
         for doc in forms_data:
             if "_id" in doc:
                 doc["_id"] = str(doc["_id"])
-        
+
+        # Scope each menu's forms down to what the user's role permissions
+        # actually grant (dashboard should only ever show permissioned forms).
+        context = _user_permission_context(db, current_user)
+        if UserRoleService.should_filter(context, "form"):
+            for doc in forms_data:
+                doc["forms"] = _filter_accessible_forms(doc.get("forms"), context["form_ids"])
+
         total_pages = math.ceil(total / size) if total > 0 else 0
         
         result = {
@@ -421,10 +451,18 @@ async def get_forms_by_menu(
             }
         
         # Return only the essential structure - name is now inside each form object
+        forms_list = forms_collection.get("forms", [])
+
+        # Scope down to what the user's role permissions actually grant
+        # (dashboard should only ever show permissioned forms).
+        context = _user_permission_context(db, current_user)
+        if UserRoleService.should_filter(context, "form"):
+            forms_list = _filter_accessible_forms(forms_list, context["form_ids"])
+
         response = {
             "menu_id": forms_collection.get("menu_id"),
             "access": forms_collection.get("access", []),
-            "forms": forms_collection.get("forms", [])
+            "forms": forms_list
         }
         try:
             tenant_id_audit, entity_id_audit = get_audit_org_context(db, get_user_id(current_user))

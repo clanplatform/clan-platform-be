@@ -17,7 +17,7 @@ from app.entities.schemas.entity import (
 )
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
-from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_entity_ids
+from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_entity_ids, require_whole_org_admin
 
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
 
@@ -29,9 +29,13 @@ async def create_entity(
     request: Request,
     entity: EntityCreate,
     db: Session = Depends(get_tenant_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_whole_org_admin)
 ):
-    """Create a new entity"""
+    """Create a new entity.
+
+    Restricted to a role with is_admin=True AND access_scope=
+    'whole_organization' — see require_whole_org_admin.
+    """
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
     tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     try:
@@ -162,7 +166,7 @@ async def update_entity(
     entity_id: UUID,
     entity_data: EntityUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_whole_org_admin)
 ):
     """Update entity"""
     entity = db.query(Entity).filter(Entity.entity_id == entity_id).first()
@@ -210,7 +214,7 @@ async def delete_entity(
     request: Request,
     entity_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_whole_org_admin)
 ):
     """Soft delete entity"""
     entity = db.query(Entity).filter(

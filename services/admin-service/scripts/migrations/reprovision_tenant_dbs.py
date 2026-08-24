@@ -54,7 +54,10 @@ from app.tenant_modules.models.tenant_module import TenantModule                
 from app.tenant_applications.models.tenant_application import TenantApplication      # noqa: F401
 
 from app.api.v1.routes.org_structure.tenants import _seed_tenant_db
-from app.core.security import generate_temp_password as _generate_temp_password
+from app.core.security import (
+    generate_temp_password as _generate_temp_password,
+    get_password_hash as _get_password_hash,
+)
 
 # Tables the login/seeding flow depends on — always provisioned even when
 # the tenant's table_permission list doesn't mention them.
@@ -90,8 +93,16 @@ for t in tenants:
                 results.append((label, "OK (already seeded)", None))
                 continue
 
+            # Hash once and reuse for both tenants.owner_password_hash (master
+            # DB) and usersetup_basic.password_hash (tenant DB) — bcrypt
+            # salts every hash it computes, so hashing the same password
+            # twice would leave the two permanently out of sync (same bug
+            # this whole seeding path was already fixed for elsewhere).
             temp_password = _generate_temp_password()
-            _seed_tenant_db(tdb, t, temp_password)
+            new_hash = _get_password_hash(temp_password)
+            t.owner_password_hash = new_hash
+            master.commit()
+            _seed_tenant_db(tdb, t, new_hash)
             results.append((label, "PROVISIONED + SEEDED", temp_password))
         finally:
             tdb.close()
@@ -102,7 +113,7 @@ print("\n===== SUMMARY =====")
 for label, status_msg, temp_password in results:
     line = f"{status_msg:24} {label}"
     if temp_password:
-        line += f"\n{'':24} login email: see tenants.contact_email — temp password: {temp_password}"
+        line += f"\n{'':24} login email: see tenants.owner_email (falls back to contact_email) — temp password: {temp_password}"
     print(line)
 
 master.close()

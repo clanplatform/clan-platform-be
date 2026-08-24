@@ -8,7 +8,7 @@ from app.divisions.schemas.divisions import DivisionCreate, DivisionUpdate, Divi
 from app.divisions.services import divisions as division_service
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
-from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_division_ids
+from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_division_ids, require_whole_org_admin
 import uuid
 
 router = APIRouter()
@@ -106,9 +106,13 @@ def create_division(
     request: Request,
     division_data: DivisionCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
-    """Create a new division"""
+    """Create a new division.
+
+    Restricted to a role with is_admin=True AND access_scope=
+    'whole_organization' — see require_whole_org_admin.
+    """
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
     tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     try:
@@ -158,7 +162,7 @@ def update_division(
     division_id: uuid.UUID,
     division_data: DivisionUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Update a division"""
     try:
@@ -206,7 +210,7 @@ async def delete_division(
     request: Request,
     division_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_whole_org_admin)
 ):
     """Soft delete a division"""
     try:

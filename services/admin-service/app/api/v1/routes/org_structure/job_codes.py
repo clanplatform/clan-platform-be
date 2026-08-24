@@ -14,6 +14,7 @@ from app.job_codes.models.job_codes import JobCode
 from app.job_codes.services import job_codes as job_code_service
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.scope_helpers import require_whole_org_admin
 from app.job_codes.schemas.job_codes import (
     JobCodeCreate,
     JobCodeUpdate,
@@ -125,9 +126,13 @@ async def create_job_code(
     request: Request,
     job_code_data: JobCodeCreate,
     db: Session = Depends(get_tenant_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_whole_org_admin)
 ):
-    """Create a new job code with optional nested relationships"""
+    """Create a new job code with optional nested relationships.
+
+    Restricted to a role with is_admin=True AND access_scope=
+    'whole_organization' — see require_whole_org_admin.
+    """
 
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
     tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
@@ -170,7 +175,7 @@ async def update_job_code(
     job_code_id: UUID,
     job_code_data: JobCodeUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_whole_org_admin)
 ):
     """Update a job code and its nested relationships"""
 
@@ -217,7 +222,7 @@ async def delete_job_code(
     request: Request,
     job_code_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_whole_org_admin)
 ):
     """Delete a job code and all its nested relationships"""
 

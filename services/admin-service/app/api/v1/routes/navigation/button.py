@@ -1,4 +1,5 @@
 from typing import List, Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 import math
@@ -9,8 +10,21 @@ from app.buttons.services.button import ButtonService
 from app.buttons.schemas.button import ButtonCreate, ButtonUpdate, ButtonResponse, ButtonListResponse
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.user_role.services.user_role import UserRoleService
 
 router = APIRouter()
+
+
+def _user_permission_context(db: Session, current_user: dict):
+    """Resolve the current user's role-based access context (see
+    UserRoleService.get_user_permission_context) so buttons can be scoped to
+    the same menu/form/button permissions the dashboard nav is scoped to."""
+    user_id_str = get_user_id(current_user)
+    try:
+        user_uuid = UUID(user_id_str) if user_id_str else None
+    except ValueError:
+        user_uuid = None
+    return UserRoleService.get_user_permission_context(db, user_uuid)
 
 
 @router.post(
@@ -66,6 +80,14 @@ async def get_buttons(
             db=db, skip=skip, limit=size, menu_id=menu_id,
             is_active=is_active, search=search, sort_by=sort_by, sort_order=sort_order,
         )
+        # Scope down to what the user's role permissions actually grant
+        # (dashboard should only ever show permissioned buttons). Note this
+        # filters after pagination, so a page can come back smaller than
+        # `size` for a restricted role — acceptable here since button lists
+        # are small and this mirrors the existing menu-permission filtering.
+        context = _user_permission_context(db, current_user)
+        if UserRoleService.should_filter(context, "button"):
+            buttons = [b for b in buttons if str(b.id) in context["button_ids"]]
         return ButtonListResponse(
             buttons=buttons, total=total, page=page, size=size,
             total_pages=math.ceil(total / size) if total > 0 else 0,
@@ -87,7 +109,13 @@ async def get_buttons_by_menu(
     is_active: Optional[bool] = Query(None),
 ):
     try:
-        return ButtonService.get_buttons_by_menu(db, menu_id, is_active)
+        buttons = ButtonService.get_buttons_by_menu(db, menu_id, is_active)
+        # Scope down to what the user's role permissions actually grant
+        # (dashboard should only ever show permissioned buttons).
+        context = _user_permission_context(db, current_user)
+        if UserRoleService.should_filter(context, "button"):
+            buttons = [b for b in buttons if str(b.id) in context["button_ids"]]
+        return buttons
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve buttons: {str(e)}")
 

@@ -5,7 +5,7 @@ The onboarding POST accepts the entire step-form as one graph and creates, in a
 single sequence:
 
     tenant (client)  ->  branches (entities)  ->  departments  ->  divisions
-                     ->  job codes  ->  roles  ->  users_groups  ->  users
+                     ->  job codes  ->  subscription  ->  roles  ->  users_groups  ->  users
 
 branches[], departments[], divisions[], job_codes[], roles[] and
 users_groups[] all carry a **client-generated UUID** (entity_id,
@@ -305,11 +305,11 @@ class OnboardingJobCode(BaseModel):
 
 
 # ============================================================================
-# Step 6 — Roles
+# Step 7 — Roles
 # ============================================================================
 
 class OnboardingRole(BaseModel):
-    """Step 6: a role for this client (user_role + userrole_basic [+ userrole_permission]).
+    """Step 7: a role for this client (user_role + userrole_basic [+ userrole_permission]).
 
     users_groups[].default_role_id and users[].role_id both reference this
     role by role_id (a real, client-generated UUID — same as branches/
@@ -404,11 +404,11 @@ class OnboardingRole(BaseModel):
 
 
 # ============================================================================
-# Step 7 — User groups
+# Step 8 — User groups
 # ============================================================================
 
 class OnboardingUserGroup(BaseModel):
-    """Step 7: a user group — bundles users under a shared default role
+    """Step 8: a user group — bundles users under a shared default role
     (users_group table). Optional; add before users so they can be assigned
     to a group below.
 
@@ -439,11 +439,11 @@ class OnboardingUserGroup(BaseModel):
 
 
 # ============================================================================
-# Step 8 — Users
+# Step 9 — Users
 # ============================================================================
 
 class OnboardingUser(BaseModel):
-    """Step 8: a user (user_setup + usersetup_basic [+ role/entity assignment]).
+    """Step 9: a user (user_setup + usersetup_basic [+ role/entity assignment]).
 
     No password field - a new user's password is always generated server-side
     (see generate_temp_password() in onboarding/services/onboarding.py), never
@@ -512,11 +512,11 @@ class OnboardingRequest(BaseModel):
     departments: List[OnboardingDepartment] = Field(default_factory=list)
     divisions: List[OnboardingDivision] = Field(default_factory=list)
     job_codes: List[OnboardingJobCode] = Field(default_factory=list)
+    # Step 6 — Subscription plan (one per client; tenant_id is set from the new tenant)
+    subscription: Optional[SubscriptionCreate] = None
     roles: List[OnboardingRole] = Field(default_factory=list)
     users_groups: List[OnboardingUserGroup] = Field(default_factory=list)
     users: List[OnboardingUser] = Field(default_factory=list)
-    # Step 9 — Subscription plan (one per client; tenant_id is set from the new tenant)
-    subscription: Optional[SubscriptionCreate] = None
     # Step 10 — Security settings (SSO / MFA / session & password policy)
     security: Optional[SecurityCreate] = None
 
@@ -545,10 +545,10 @@ class OnboardingStepRequest(BaseModel):
     departments: Optional[List[OnboardingDepartment]] = None
     divisions: Optional[List[OnboardingDivision]] = None
     job_codes: Optional[List[OnboardingJobCode]] = None
+    subscription: Optional[SubscriptionCreate] = None
     roles: Optional[List[OnboardingRole]] = None
     users_groups: Optional[List[OnboardingUserGroup]] = None
     users: Optional[List[OnboardingUser]] = None
-    subscription: Optional[SubscriptionCreate] = None
     security: Optional[SecurityCreate] = None
 
 
@@ -650,10 +650,10 @@ class OnboardingUpdate(BaseModel):
     departments: Optional[List[OnboardingDepartment]] = None
     divisions: Optional[List[OnboardingDivision]] = None
     job_codes: Optional[List[OnboardingJobCode]] = None
+    subscription: Optional[SubscriptionCreate] = None
     roles: Optional[List[OnboardingRole]] = None
     users_groups: Optional[List[OnboardingUserGroup]] = None
     users: Optional[List[OnboardingUser]] = None
-    subscription: Optional[SubscriptionCreate] = None
     security: Optional[SecurityCreate] = None
 
 
@@ -666,10 +666,10 @@ class OnboardingCounts(BaseModel):
     departments: int = 0
     divisions: int = 0
     job_codes: int = 0
+    subscription: int = 0
     roles: int = 0
     users_groups: int = 0
     users: int = 0
-    subscription: int = 0
     security: int = 0
 
 
@@ -774,10 +774,10 @@ class OnboardingDetail(BaseModel):
     departments: List[DepartmentResponse] = Field(default_factory=list)
     divisions: List[DivisionResponse] = Field(default_factory=list)
     job_codes: List[JobCodeRead] = Field(default_factory=list)
+    subscription: Optional[SubscriptionResponse] = None
     roles: List[OnboardingRoleDetail] = Field(default_factory=list)
     users_groups: List[UserGroupResponse] = Field(default_factory=list)
     users: List[UserSetupBasicResponse] = Field(default_factory=list)
-    subscription: Optional[SubscriptionResponse] = None
     security: Optional[SecurityResponse] = None
 
 
@@ -805,7 +805,7 @@ class OnboardingStepProgress(BaseModel):
 class OnboardingProgress(BaseModel):
     """Returned by GET /{tenant_id}/progress — powers a 'resume onboarding'
     wizard: which of the 10 steps (company, branches, departments, divisions,
-    job codes, roles, user groups, users, subscription, security) already
+    job codes, subscription, roles, user groups, users, security) already
     have data, and which to continue with next."""
     tenant_id: Optional[UUID] = Field(
         None,

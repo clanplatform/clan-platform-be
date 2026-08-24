@@ -326,8 +326,29 @@ async def get_current_user(
     }
     
     print(f"[AUTH] User authenticated: {user_id} (username: {user.get('username')})")
-    
+
     return user
+
+
+def require_master_user(current_user: dict = Depends(get_current_user)) -> dict:
+    """Dependency for endpoints that only make sense for master-DB platform
+    users (JWT tenant_id NULL) — e.g. assigning catalog modules/applications
+    to a tenant (tenant_modules.py / tenant_applications.py), which always
+    write through get_db (always the master DB) and have no tenant-scoped
+    role to check in the first place. Tenant-DB users are rejected with 403.
+
+    Same rule as the onboarding module's own require_master_user
+    (app/api/v1/routes/onboarding/onboarding.py) — duplicated here as a
+    plain HTTPException rather than importing onboarding's
+    MasterUserRequiredError, so callers elsewhere don't need a dependency
+    on the onboarding module."""
+    tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    if tenant_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only master platform users can perform this action",
+        )
+    return current_user
 
 
 async def get_optional_user_id(

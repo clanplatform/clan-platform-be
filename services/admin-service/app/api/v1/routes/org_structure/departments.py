@@ -9,7 +9,7 @@ from app.departments.exceptions import DepartmentNotFoundError
 from app.core.security import get_current_user  # Uses optional auth support
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
-from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_department_ids
+from app.infrastructure.scope_helpers import resolve_scope_filter, scoped_department_ids, require_whole_org_admin
 import uuid
 
 router = APIRouter()
@@ -110,9 +110,13 @@ def create_department(
     request: Request,
     department_data: DepartmentCreate,
     db: Session = Depends(get_tenant_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_whole_org_admin)
 ):
-    """Create a new department"""
+    """Create a new department.
+
+    Restricted to a role with is_admin=True AND access_scope=
+    'whole_organization' — see require_whole_org_admin.
+    """
     # tenant_id is taken from the JWT, never the body. None => master-DB user.
     tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
     try:
@@ -165,7 +169,7 @@ def update_department(
     department_id: uuid.UUID,
     department_data: DepartmentUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_whole_org_admin)
 ):
     """Update a department"""
     try:
@@ -214,7 +218,7 @@ async def delete_department(
     request: Request,
     department_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_whole_org_admin)
 ):
     """Soft delete department"""
     try:

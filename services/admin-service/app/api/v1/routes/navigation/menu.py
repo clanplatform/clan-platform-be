@@ -35,6 +35,7 @@ from bson import ObjectId
 from app.infrastructure.mongodb import get_mongodb
 from app.user_setup.models.user_setup import UserSetupBasic
 from app.user_role.models.user_role import UserRolePermission
+from app.subscription.models.subscription import Subscription
 import uuid
 from uuid import UUID
 import logging
@@ -791,6 +792,21 @@ async def get_login_user_menus(
 
         print(f"[GET Login User Menus] 📊 Fetched {len(main_nav_items)} application documents")
 
+        # 6b. Restrict to applications/modules actually in the tenant's
+        # subscription — this runs BEFORE the role-permission filtering below
+        # and applies unconditionally (even to admins / users with no role
+        # permissions), since a role can only ever grant access within what
+        # the tenant has subscribed to (see UserRoleService.
+        # _verify_permissions_within_subscription), but menus/modules
+        # embedded in the shared MongoDB nav document aren't themselves
+        # tenant-scoped, so this is the actual enforcement point at read time.
+        subscription = db.query(Subscription).first()
+        granted_apps = {str(a) for a in (subscription.applications_to_grant or [])} if subscription else set()
+        granted_modules = {str(m) for m in (subscription.modules_to_grant or [])} if subscription else set()
+        print(f"[GET Login User Menus] 📊 Subscription grants — applications: {len(granted_apps)}, modules: {len(granted_modules)}")
+        main_nav_items = _filter_navigation_by_subscription(main_nav_items, granted_apps, granted_modules)
+        print(f"[GET Login User Menus] 📊 {len(main_nav_items)} application documents remain after subscription filtering")
+
         # 7. Filter the navigation items by permissions
         filtered_navigation = []
 
@@ -930,6 +946,64 @@ async def get_login_user_menus(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
         )
+
+
+def _prune_by_module_grant(node: Dict[str, Any], granted_modules: set) -> Optional[Dict[str, Any]]:
+    """Recursively drop a nav node (and its whole subtree) whose module_id is
+    set but not in the tenant's subscription (modules_to_grant). Nodes with
+    no module_id (e.g. app-level items not tied to a specific module) are
+    never pruned on this basis — only their children are still checked."""
+    module_id = node.get("module_id")
+    if module_id and module_id not in granted_modules:
+        return None
+
+    children = node.get("children") or []
+    if not children:
+        return node
+
+    pruned_children = []
+    for child in children:
+        if isinstance(child, dict):
+            pruned_child = _prune_by_module_grant(child, granted_modules)
+            if pruned_child is not None:
+                pruned_children.append(pruned_child)
+        else:
+            pruned_children.append(child)
+
+    result = dict(node)
+    result["children"] = pruned_children
+    return result
+
+
+def _filter_navigation_by_subscription(
+    nav_items: List[Dict[str, Any]],
+    granted_apps: set,
+    granted_modules: set,
+) -> List[Dict[str, Any]]:
+    """Restrict a mainNavigation list (one Mongo doc per application) to only
+    the applications/modules actually granted in the tenant's subscription
+    (Subscription.applications_to_grant / modules_to_grant — see
+    app.subscription.services.subscription._validate_grants, which enforces
+    the same relationship when the subscription itself is created/updated).
+
+    Permissive when the tenant has no subscription yet, or its
+    applications_to_grant is empty: no filtering is applied, so tenants
+    onboarded before this existed (or mid-onboarding, before the
+    subscription step) aren't left with an empty nav."""
+    if not granted_apps:
+        return nav_items
+
+    result = []
+    for item in nav_items:
+        if not isinstance(item, dict):
+            continue
+        application_id = item.get("application_id")
+        if application_id and application_id not in granted_apps:
+            continue
+        pruned = _prune_by_module_grant(item, granted_modules) if granted_modules else item
+        if pruned is not None:
+            result.append(pruned)
+    return result
 
 
 async def _filter_menu_by_permissions(

@@ -169,6 +169,7 @@ class OnboardingBranch(BaseModel):
     country: Optional[str] = Field(None, max_length=100, description="Country")
     postal_code: Optional[str] = Field(None, max_length=20)
     time_zone: Optional[str] = Field(None, max_length=50, description="Site timezone (IANA, e.g. Asia/Kolkata)")
+    date_format: Optional[str] = Field(None, max_length=20, description="Optional, else auto-derived from country's locale")
     default_language: Optional[str] = Field(None, max_length=50)
     default_currency: Optional[str] = Field(None, max_length=10)
     fiscal_year_start: Optional[str] = Field(None, max_length=20)

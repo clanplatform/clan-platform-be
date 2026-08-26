@@ -646,6 +646,7 @@ def create_onboarding(
                     state=b.state,
                     country=b.country,
                     time_zone=b.time_zone,
+                    date_format=b.date_format,
                     default_language=b.default_language,
                     default_currency=b.default_currency,
                     fiscal_year_start=b.fiscal_year_start,

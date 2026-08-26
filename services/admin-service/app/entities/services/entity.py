@@ -164,18 +164,18 @@ def create_entity(
     fiscal_year_start = entity_data.get('fiscal_year_start')
     week_starts_on = entity_data.get('week_starts_on')
 
-    # When the tenant has use_default_localization=true, its own
+    # When this branch has use_default_localization=true, the tenant's own
     # default_language/time_zone/default_currency/date_format/
     # fiscal_year_start/week_starts_on win outright over both the
     # country-derived locale fields above and whatever this branch supplied
-    # — the UI disables per-branch entry for these in that case. The tenant
-    # row is mirrored into every tenant DB (see _seed_tenant_row /
-    # _seed_tenant_db), so it's reachable from `db` here regardless of
-    # whether this is a master-DB or tenant-DB session.
-    if tenant_id is not None:
+    # for those 6 fields — the UI disables per-branch entry for these in
+    # that case. The tenant row is mirrored into every tenant DB (see
+    # _seed_tenant_row / _seed_tenant_db), so it's reachable from `db` here
+    # regardless of whether this is a master-DB or tenant-DB session.
+    if tenant_id is not None and entity_data.get('use_default_localization'):
         from app.tenants.models.tenants import Tenant
         tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
-        if tenant and tenant.use_default_localization:
+        if tenant:
             if tenant.time_zone:
                 locale_fields['time_zone'] = tenant.time_zone
                 locale_fields['time_zone_offset'] = (
@@ -225,6 +225,7 @@ def create_entity(
         default_currency=default_currency,
         fiscal_year_start=fiscal_year_start,
         week_starts_on=week_starts_on,
+        use_default_localization=entity_data.get('use_default_localization', False),
     )
     # Honor a caller-supplied primary key (onboarding); otherwise the model's
     # uuid4 default generates one.

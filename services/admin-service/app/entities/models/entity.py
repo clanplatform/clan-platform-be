@@ -30,12 +30,14 @@ class Entity(Base):
     time_format = Column(String(20), nullable=True)
     date_time_format = Column(String(40), nullable=True)
     # Localization & business defaults — mirror tenants' own columns of the
-    # same name; auto-copied from the tenant when it has
-    # use_default_localization=true (see create_entity()).
+    # same name. When use_default_localization is true, default_language/
+    # time_zone/default_currency/date_format/fiscal_year_start/week_starts_on
+    # above are all overridden with the tenant's own values (see create_entity()).
     default_language = Column(String(50), nullable=True)
     default_currency = Column(String(10), nullable=True)
     fiscal_year_start = Column(String(20), nullable=True)
     week_starts_on = Column(String(20), nullable=True)
+    use_default_localization = Column(Boolean, nullable=False, server_default='false', default=False)
 
     # Branch profile (Add-branch form)
     location_type = Column(String(50), nullable=True)

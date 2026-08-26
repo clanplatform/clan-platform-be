@@ -123,13 +123,6 @@ class OnboardingCompany(BaseModel):
     date_format: Optional[str] = Field(None, max_length=20)
     fiscal_year_start: Optional[str] = Field(None, max_length=20)
     week_starts_on: Optional[str] = Field(None, max_length=20)
-    use_default_localization: bool = Field(
-        False,
-        description="When true, branches[] inherit default_language/time_zone/"
-                    "default_currency/date_format/fiscal_year_start/week_starts_on "
-                    "from this company instead of setting their own per branch "
-                    "(-> tenants.use_default_localization; see create_entity()).",
-    )
 
     # Account status
     initial_status: Optional[str] = Field(
@@ -180,8 +173,14 @@ class OnboardingBranch(BaseModel):
     default_currency: Optional[str] = Field(None, max_length=10)
     fiscal_year_start: Optional[str] = Field(None, max_length=20)
     week_starts_on: Optional[str] = Field(None, max_length=20)
-    # NOTE: all 4 above (plus time_zone) are overridden with the company's own
-    # values when company.use_default_localization=true — see create_entity().
+    use_default_localization: bool = Field(
+        False,
+        description="When true, this branch's default_language/time_zone/"
+                    "default_currency/date_format/fiscal_year_start/week_starts_on "
+                    "are overridden with the company's own values instead of the "
+                    "ones set above (-> entities.use_default_localization; see "
+                    "create_entity()).",
+    )
     location_type: Optional[str] = Field(None, max_length=50)
     is_headquarters: bool = Field(default=False, description="Headquarters flag")
     phone: Optional[str] = Field(None, max_length=20)
@@ -608,7 +607,6 @@ class OnboardingCompanyUpdate(BaseModel):
     date_format: Optional[str] = Field(None, max_length=20)
     fiscal_year_start: Optional[str] = Field(None, max_length=20)
     week_starts_on: Optional[str] = Field(None, max_length=20)
-    use_default_localization: Optional[bool] = None
     initial_status: Optional[str] = Field(
         None, max_length=50,
         description="Active, Trial, Pending setup, or Deactivate — see OnboardingCompany.initial_status.",

@@ -19,10 +19,11 @@ class EntityBase(BaseModel):
     default_currency: Optional[str] = None
     fiscal_year_start: Optional[str] = None
     week_starts_on: Optional[str] = None
-    # NOTE: default_language/default_currency/time_zone/fiscal_year_start/
-    # week_starts_on are all overridden with the tenant's own values when
-    # the tenant has use_default_localization=true (see create_entity()) —
-    # whatever is supplied here is then ignored.
+    use_default_localization: bool = False
+    # NOTE: when use_default_localization=true, default_language/time_zone/
+    # default_currency/date_format/fiscal_year_start/week_starts_on above are
+    # all overridden with the tenant's own values (see create_entity()) —
+    # whatever is supplied for them here is then ignored.
     # Branch profile (Add-branch form)
     location_type: Optional[str] = None
     is_headquarters: bool = False
@@ -69,6 +70,7 @@ class EntityUpdate(BaseModel):
     default_currency: Optional[str] = None
     fiscal_year_start: Optional[str] = None
     week_starts_on: Optional[str] = None
+    use_default_localization: Optional[bool] = None
     location_type: Optional[str] = None
     is_headquarters: Optional[bool] = None
     phone: Optional[str] = None

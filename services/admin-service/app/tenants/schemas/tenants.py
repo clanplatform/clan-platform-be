@@ -49,13 +49,6 @@ class TenantBase(BaseModel):
     date_format: Optional[str] = None
     fiscal_year_start: Optional[str] = None
     week_starts_on: Optional[str] = None
-    use_default_localization: bool = Field(
-        False,
-        description="When true, new branches (entities) inherit default_language/"
-                    "time_zone/default_currency/date_format/fiscal_year_start/"
-                    "week_starts_on from this tenant instead of setting their own "
-                    "(see entities.create_entity()).",
-    )
     # Account status
     internal_notes: Optional[str] = None
     # Account owner (denormalized; owner password is never stored/returned here)
@@ -112,7 +105,6 @@ class TenantUpdate(BaseModel):
     date_format: Optional[str] = None
     fiscal_year_start: Optional[str] = None
     week_starts_on: Optional[str] = None
-    use_default_localization: Optional[bool] = None
     internal_notes: Optional[str] = None
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None

@@ -571,7 +571,6 @@ def create_onboarding(
         date_format=company.date_format,
         fiscal_year_start=company.fiscal_year_start,
         week_starts_on=company.week_starts_on,
-        use_default_localization=company.use_default_localization,
         internal_notes=company.internal_notes,
         company_logo=company.company_logo,
         owner_name=company.owner_name,
@@ -651,6 +650,7 @@ def create_onboarding(
                     default_currency=b.default_currency,
                     fiscal_year_start=b.fiscal_year_start,
                     week_starts_on=b.week_starts_on,
+                    use_default_localization=b.use_default_localization,
                     location_type=b.location_type,
                     is_headquarters=b.is_headquarters,
                     phone=b.phone,
@@ -1241,7 +1241,6 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
             date_format=tenant.date_format,
             fiscal_year_start=tenant.fiscal_year_start,
             week_starts_on=tenant.week_starts_on,
-            use_default_localization=tenant.use_default_localization,
             internal_notes=tenant.internal_notes,
             owner_name=tenant.owner_name,
             owner_email=tenant.owner_email,
@@ -1435,9 +1434,9 @@ def update_onboarding(
         master_db.refresh(tenant)
 
         # Best-effort: keep the tenant DB's copy of the tenants row in sync
-        # BEFORE any branches are upserted below, so a same-call branch
-        # create sees this call's own use_default_localization/localization
-        # changes rather than the stale pre-update values.
+        # BEFORE any branches are upserted below, so a same-call branch with
+        # use_default_localization=true inherits this call's own company
+        # localization changes rather than the stale pre-update values.
         if tenant.tenant_db_name:
             try:
                 tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)

@@ -50,6 +50,9 @@ class Tenant(Base):
     date_format = Column(String(20), nullable=True)
     fiscal_year_start = Column(String(20), nullable=True)
     week_starts_on = Column(String(20), nullable=True)
+    # When true, new branches (entities) inherit the 6 fields above instead of
+    # setting their own — see create_entity()'s use_default_localization check.
+    use_default_localization = Column(Boolean, nullable=False, server_default='false', default=False)
 
     # Status — "Initial status" (Active / Trial / Pending setup) selected on
     # the account-status step. is_active (below) is derived from it at

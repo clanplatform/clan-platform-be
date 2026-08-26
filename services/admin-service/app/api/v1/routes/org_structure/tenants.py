@@ -349,6 +349,11 @@ async def update_tenant(
     for field, value in update_data.items():
         setattr(tenant, field, value)
 
+    # is_active is backend-only (not on TenantUpdate) — re-derive it whenever
+    # initial_status changes, same rule as create_tenant()/create_onboarding().
+    if "initial_status" in update_data:
+        tenant.is_active = (tenant.initial_status or "Active").strip().lower() == "active"
+
     db.commit()
     db.refresh(tenant)
 
@@ -409,7 +414,9 @@ async def delete_tenant(
     # Snapshot name before soft delete for audit
     old_tenant_name = tenant.tenant_name
 
-    # Perform soft delete
+    # Perform soft delete — Deactivate is the 4th initial_status state (see
+    # TenantBase.initial_status): soft-deleted, purged permanently after 90 days.
+    tenant.initial_status = "Deactivate"
     tenant.is_active = False
 
     db.commit()

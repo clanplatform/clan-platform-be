@@ -14,7 +14,14 @@ class TenantBase(BaseModel):
     country: Optional[str] = None
     industry: Optional[str] = None
     company_size: Optional[str] = None
-    initial_status: Optional[str] = Field("Active", description="Active, Trial, or Pending setup")
+    initial_status: Optional[str] = Field(
+        "Active",
+        description="Tenant lifecycle status. One of: "
+                    "Active (fully active), "
+                    "Trial (active for 90 days, then automatically moves to Deactivate), "
+                    "Pending setup (awaiting manual verification), "
+                    "Deactivate (soft-deleted; purged permanently after 90 days).",
+    )
     employees_count: Optional[int] = None
     description: Optional[str] = None
 
@@ -42,15 +49,25 @@ class TenantBase(BaseModel):
     date_format: Optional[str] = None
     fiscal_year_start: Optional[str] = None
     week_starts_on: Optional[str] = None
+    use_default_localization: bool = Field(
+        False,
+        description="When true, new branches (entities) inherit default_language/"
+                    "time_zone/default_currency/date_format/fiscal_year_start/"
+                    "week_starts_on from this tenant instead of setting their own "
+                    "(see entities.create_entity()).",
+    )
     # Account status
     internal_notes: Optional[str] = None
     # Account owner (denormalized; owner password is never stored/returned here)
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
 
-    # NOTE: tenant_db_name (derived from tenant_code), table_permission,
-    # allowed_origins and is_active are intentionally NOT part of the schema —
-    # they are operational/backend-managed and never accepted or returned here.
+    # NOTE: tenant_db_name (derived from tenant_code), table_permission and
+    # allowed_origins are intentionally NOT part of the schema — they are
+    # operational/backend-managed and never accepted or returned here.
+    # is_active is also backend-managed (derived from initial_status, see
+    # create_tenant()/create_onboarding()) — it's never accepted on
+    # create/update, but is surfaced read-only on TenantResponse below.
 
 class TenantCreate(TenantBase):
     # Tenant creation is authorized by the caller's JWT (must be a master-DB
@@ -70,7 +87,10 @@ class TenantUpdate(BaseModel):
     country: Optional[str] = None
     industry: Optional[str] = None
     company_size: Optional[str] = None
-    initial_status: Optional[str] = None
+    initial_status: Optional[str] = Field(
+        None,
+        description="Active, Trial, Pending setup, or Deactivate — see TenantBase.initial_status.",
+    )
     employees_count: Optional[int] = None
     description: Optional[str] = None
     display_name: Optional[str] = None
@@ -92,12 +112,19 @@ class TenantUpdate(BaseModel):
     date_format: Optional[str] = None
     fiscal_year_start: Optional[str] = None
     week_starts_on: Optional[str] = None
+    use_default_localization: Optional[bool] = None
     internal_notes: Optional[str] = None
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
 
 class TenantResponse(TenantBase):
     tenant_id: UUID
+    is_active: Optional[bool] = Field(
+        None,
+        description="tenants.is_active — backend-derived from initial_status "
+                    "('Active' => true, anything else => false); read-only, "
+                    "never accepted on create/update.",
+    )
     gateway_tenant_ref: Optional[UUID] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

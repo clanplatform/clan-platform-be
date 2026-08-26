@@ -159,6 +159,35 @@ def create_entity(
             _utc_offset_for_zone(entity_data['time_zone']) or locale_fields['time_zone_offset']
         )
 
+    default_language = entity_data.get('default_language')
+    default_currency = entity_data.get('default_currency')
+    fiscal_year_start = entity_data.get('fiscal_year_start')
+    week_starts_on = entity_data.get('week_starts_on')
+
+    # When the tenant has use_default_localization=true, its own
+    # default_language/time_zone/default_currency/date_format/
+    # fiscal_year_start/week_starts_on win outright over both the
+    # country-derived locale fields above and whatever this branch supplied
+    # — the UI disables per-branch entry for these in that case. The tenant
+    # row is mirrored into every tenant DB (see _seed_tenant_row /
+    # _seed_tenant_db), so it's reachable from `db` here regardless of
+    # whether this is a master-DB or tenant-DB session.
+    if tenant_id is not None:
+        from app.tenants.models.tenants import Tenant
+        tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+        if tenant and tenant.use_default_localization:
+            if tenant.time_zone:
+                locale_fields['time_zone'] = tenant.time_zone
+                locale_fields['time_zone_offset'] = (
+                    _utc_offset_for_zone(tenant.time_zone) or locale_fields['time_zone_offset']
+                )
+            if tenant.date_format:
+                locale_fields['date_format'] = tenant.date_format
+            default_language = tenant.default_language
+            default_currency = tenant.default_currency
+            fiscal_year_start = tenant.fiscal_year_start
+            week_starts_on = tenant.week_starts_on
+
     # Create entity without updated_at to avoid constraint issues
     db_entity = Entity(
         entity_name=entity_data['entity_name'],
@@ -191,7 +220,11 @@ def create_entity(
         time_zone_offset=locale_fields['time_zone_offset'],
         date_format=locale_fields['date_format'],
         time_format=locale_fields['time_format'],
-        date_time_format=locale_fields['date_time_format']
+        date_time_format=locale_fields['date_time_format'],
+        default_language=default_language,
+        default_currency=default_currency,
+        fiscal_year_start=fiscal_year_start,
+        week_starts_on=week_starts_on,
     )
     # Honor a caller-supplied primary key (onboarding); otherwise the model's
     # uuid4 default generates one.

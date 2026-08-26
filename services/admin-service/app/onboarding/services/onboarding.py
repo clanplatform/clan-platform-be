@@ -571,6 +571,7 @@ def create_onboarding(
         date_format=company.date_format,
         fiscal_year_start=company.fiscal_year_start,
         week_starts_on=company.week_starts_on,
+        use_default_localization=company.use_default_localization,
         internal_notes=company.internal_notes,
         company_logo=company.company_logo,
         owner_name=company.owner_name,
@@ -646,6 +647,10 @@ def create_onboarding(
                     state=b.state,
                     country=b.country,
                     time_zone=b.time_zone,
+                    default_language=b.default_language,
+                    default_currency=b.default_currency,
+                    fiscal_year_start=b.fiscal_year_start,
+                    week_starts_on=b.week_starts_on,
                     location_type=b.location_type,
                     is_headquarters=b.is_headquarters,
                     phone=b.phone,
@@ -1236,6 +1241,7 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
             date_format=tenant.date_format,
             fiscal_year_start=tenant.fiscal_year_start,
             week_starts_on=tenant.week_starts_on,
+            use_default_localization=tenant.use_default_localization,
             internal_notes=tenant.internal_notes,
             owner_name=tenant.owner_name,
             owner_email=tenant.owner_email,
@@ -1421,8 +1427,31 @@ def update_onboarding(
     if company_data:
         for field, value in company_data.items():
             setattr(tenant, _UPDATE_FIELD_MAP.get(field, field), value)
+        # is_active is backend-only (not on OnboardingCompanyUpdate) — re-derive
+        # it whenever initial_status changes, same rule as create_onboarding().
+        if "initial_status" in company_data:
+            tenant.is_active = (tenant.initial_status or "Active").strip().lower() == "active"
         master_db.commit()
         master_db.refresh(tenant)
+
+        # Best-effort: keep the tenant DB's copy of the tenants row in sync
+        # BEFORE any branches are upserted below, so a same-call branch
+        # create sees this call's own use_default_localization/localization
+        # changes rather than the stale pre-update values.
+        if tenant.tenant_db_name:
+            try:
+                tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
+                try:
+                    row = tdb.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+                    if row is not None:
+                        for col in Tenant.__table__.columns:
+                            if col.name != "tenant_id":
+                                setattr(row, col.name, getattr(tenant, col.name))
+                        tdb.commit()
+                finally:
+                    tdb.close()
+            except Exception as exc:
+                logger.warning("Onboarding update: tenant DB sync failed for %s: %s", tenant_id, exc)
 
     if tenant.tenant_db_name and any(getattr(update, f) is not None for f in _UPDATE_STEP_FIELDS):
         user_id = _safe_uuid(updated_by_user_id)
@@ -1464,23 +1493,6 @@ def update_onboarding(
         finally:
             tenant_db.close()
 
-    # Best-effort: keep the tenant DB's copy of the tenants row in sync
-    # (only meaningful when company fields actually changed).
-    if company_data and tenant.tenant_db_name:
-        try:
-            tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
-            try:
-                row = tdb.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
-                if row is not None:
-                    for col in Tenant.__table__.columns:
-                        if col.name != "tenant_id":
-                            setattr(row, col.name, getattr(tenant, col.name))
-                    tdb.commit()
-            finally:
-                tdb.close()
-        except Exception as exc:
-            logger.warning("Onboarding update: tenant DB sync failed for %s: %s", tenant_id, exc)
-
     master_db.refresh(tenant)
     return tenant, get_onboarding(master_db, tenant_id)
 
@@ -1490,6 +1502,9 @@ def delete_onboarding(master_db: Session, tenant_id: UUID) -> bool:
     tenant = master_db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise OnboardingNotFoundError()
+    # Deactivate is the 4th initial_status state (see OnboardingCompany.initial_status):
+    # soft-deleted, purged permanently after 90 days.
+    tenant.initial_status = "Deactivate"
     tenant.is_active = False
     tenant.deleted_at = datetime.now(timezone.utc)
     master_db.commit()

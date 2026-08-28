@@ -69,6 +69,12 @@ from app.user_role.schemas.user_role import (
     _validate_access_scope,
 )
 from app.entities.schemas.entity import EntityResponse
+from app.entities.schemas.entities_healthcare import EntitiesHealthcareCreate
+from app.entities.schemas.entities_manufacturing_industrial import EntitiesManufacturingIndustrialCreate
+from app.entities.schemas.entities_retail_ecommerce import EntitiesRetailEcommerceCreate
+from app.entities.schemas.entities_banking_financial import EntitiesBankingFinancialCreate
+from app.entities.schemas.logistics_supply_chain import LogisticsSupplyChainCreate
+from app.entities.schemas.entities_education import EntitiesEducationCreate
 from app.departments.schemas.departments import DepartmentResponse
 from app.divisions.schemas.divisions import DivisionResponse
 from app.job_codes.schemas.job_codes import JobCodeRead
@@ -198,6 +204,47 @@ class OnboardingBranch(BaseModel):
     data_processing_agreement_doc: Optional[str] = Field(None, max_length=500)
     insurance_certificate_doc: Optional[str] = Field(None, max_length=500)
     other_documents_doc: Optional[str] = Field(None, max_length=500)
+    # Per-vertical compliance sections — each nested, at most one item (upserted
+    # onto its own table, keyed by this branch's entity_id).
+    # Omitted -> not created; [item] -> created/updated; [] -> cleared.
+    entities_healthcare: Optional[List[EntitiesHealthcareCreate]] = Field(
+        None,
+        description="Branch's Healthcare facility & compliance section — a single "
+                    "nested object in a list; upserted onto the entities_healthcare "
+                    "table keyed by this branch's entity_id.",
+    )
+    entities_manufacturing_industrial: Optional[List[EntitiesManufacturingIndustrialCreate]] = Field(
+        None,
+        description="Branch's Manufacturing plant & production section — a single "
+                    "nested object in a list; upserted onto the "
+                    "entities_manufacturing_industrial table keyed by this branch's "
+                    "entity_id.",
+    )
+    entities_retail_ecommerce: Optional[List[EntitiesRetailEcommerceCreate]] = Field(
+        None,
+        description="Branch's Retail & store operations section — a single nested "
+                    "object in a list; upserted onto the entities_retail_ecommerce "
+                    "table keyed by this branch's entity_id.",
+    )
+    entities_banking_financial: Optional[List[EntitiesBankingFinancialCreate]] = Field(
+        None,
+        description="Branch's Financial services & regulation section — a single "
+                    "nested object in a list; upserted onto the "
+                    "entities_banking_financial table keyed by this branch's "
+                    "entity_id.",
+    )
+    logistics_supply_chain: Optional[List[LogisticsSupplyChainCreate]] = Field(
+        None,
+        description="Branch's Logistics & supply chain section — a single nested "
+                    "object in a list; upserted onto the logistics_supply_chain "
+                    "table keyed by this branch's entity_id.",
+    )
+    entities_education: Optional[List[EntitiesEducationCreate]] = Field(
+        None,
+        description="Branch's Education institution section — a single nested "
+                    "object in a list; upserted onto the entities_education table "
+                    "keyed by this branch's entity_id.",
+    )
 
 
 # ============================================================================

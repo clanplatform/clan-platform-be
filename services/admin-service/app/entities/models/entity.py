@@ -68,6 +68,89 @@ class Entity(Base):
     # Relationships
     departments = relationship("Department", back_populates="entity")
     divisions = relationship("Division", back_populates="entity")
+    # Branch form's "Healthcare facility & compliance" section — at most one
+    # live row per branch. viewonly: writes go through
+    # app.entities.services.entities_healthcare.sync_entities_healthcare_rows,
+    # so EntityResponse.model_validate() only reads it here.
+    entities_healthcare = relationship(
+        "EntitiesHealthcare",
+        primaryjoin="and_(Entity.entity_id == EntitiesHealthcare.entity_id, "
+                    "EntitiesHealthcare.deleted == False)",
+        foreign_keys="EntitiesHealthcare.entity_id",
+        viewonly=True,
+        uselist=True,
+        lazy="selectin",
+    )
+    # Branch form's "Manufacturing plant & production" section — same pattern:
+    # writes go through
+    # app.entities.services.entities_manufacturing_industrial.sync_entities_manufacturing_industrial_rows.
+    entities_manufacturing_industrial = relationship(
+        "EntitiesManufacturingIndustrial",
+        primaryjoin="and_(Entity.entity_id == EntitiesManufacturingIndustrial.entity_id, "
+                    "EntitiesManufacturingIndustrial.deleted == False)",
+        foreign_keys="EntitiesManufacturingIndustrial.entity_id",
+        viewonly=True,
+        uselist=True,
+        lazy="selectin",
+    )
+    # Branch form's "Retail & store operations" section — same pattern:
+    # writes go through
+    # app.entities.services.entities_retail_ecommerce.sync_entities_retail_ecommerce_rows.
+    entities_retail_ecommerce = relationship(
+        "EntitiesRetailEcommerce",
+        primaryjoin="and_(Entity.entity_id == EntitiesRetailEcommerce.entity_id, "
+                    "EntitiesRetailEcommerce.deleted == False)",
+        foreign_keys="EntitiesRetailEcommerce.entity_id",
+        viewonly=True,
+        uselist=True,
+        lazy="selectin",
+    )
+    # Branch form's "Financial services & regulation" section — same pattern:
+    # writes go through
+    # app.entities.services.entities_banking_financial.sync_entities_banking_financial_rows.
+    entities_banking_financial = relationship(
+        "EntitiesBankingFinancial",
+        primaryjoin="and_(Entity.entity_id == EntitiesBankingFinancial.entity_id, "
+                    "EntitiesBankingFinancial.deleted == False)",
+        foreign_keys="EntitiesBankingFinancial.entity_id",
+        viewonly=True,
+        uselist=True,
+        lazy="selectin",
+    )
+    # Branch form's "Logistics & supply chain" section — same pattern:
+    # writes go through
+    # app.entities.services.logistics_supply_chain.sync_logistics_supply_chain_rows.
+    logistics_supply_chain = relationship(
+        "LogisticsSupplyChain",
+        primaryjoin="and_(Entity.entity_id == LogisticsSupplyChain.entity_id, "
+                    "LogisticsSupplyChain.deleted == False)",
+        foreign_keys="LogisticsSupplyChain.entity_id",
+        viewonly=True,
+        uselist=True,
+        lazy="selectin",
+    )
+    # Branch form's "Education institution" section — same pattern:
+    # writes go through
+    # app.entities.services.entities_education.sync_entities_education_rows.
+    entities_education = relationship(
+        "EntitiesEducation",
+        primaryjoin="and_(Entity.entity_id == EntitiesEducation.entity_id, "
+                    "EntitiesEducation.deleted == False)",
+        foreign_keys="EntitiesEducation.entity_id",
+        viewonly=True,
+        uselist=True,
+        lazy="selectin",
+    )
 
     def __repr__(self):
         return f"<Entity(id={self.entity_id}, name={self.entity_name}, tenant_id={self.tenant_id})>"
+
+
+# Imported at module end so the string-based relationships above resolve when
+# SQLAlchemy configures mappers (also registers the models with Base.metadata).
+from app.entities.models.entities_healthcare import EntitiesHealthcare  # noqa: E402,F401
+from app.entities.models.entities_manufacturing_industrial import EntitiesManufacturingIndustrial  # noqa: E402,F401
+from app.entities.models.entities_retail_ecommerce import EntitiesRetailEcommerce  # noqa: E402,F401
+from app.entities.models.entities_banking_financial import EntitiesBankingFinancial  # noqa: E402,F401
+from app.entities.models.logistics_supply_chain import LogisticsSupplyChain  # noqa: E402,F401
+from app.entities.models.entities_education import EntitiesEducation  # noqa: E402,F401

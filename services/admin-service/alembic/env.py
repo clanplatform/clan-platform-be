@@ -42,6 +42,12 @@ try:
     # Org structure models
     from app.tenants.models.tenants import Tenant
     from app.entities.models.entity import Entity
+    from app.entities.models.entities_healthcare import EntitiesHealthcare
+    from app.entities.models.entities_manufacturing_industrial import EntitiesManufacturingIndustrial
+    from app.entities.models.entities_retail_ecommerce import EntitiesRetailEcommerce
+    from app.entities.models.entities_banking_financial import EntitiesBankingFinancial
+    from app.entities.models.logistics_supply_chain import LogisticsSupplyChain
+    from app.entities.models.entities_education import EntitiesEducation
     from app.departments.models.departments import Department
     from app.divisions.models.divisions import Division
 

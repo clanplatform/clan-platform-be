@@ -193,6 +193,12 @@ class TenantDatabaseManager:
         from app.forms.models.forms import Form                                              # noqa: F401
         from app.tenants.models.tenants import Tenant                                        # noqa: F401
         from app.entities.models.entity import Entity                                        # noqa: F401
+        from app.entities.models.entities_healthcare import EntitiesHealthcare               # noqa: F401
+        from app.entities.models.entities_manufacturing_industrial import EntitiesManufacturingIndustrial  # noqa: F401
+        from app.entities.models.entities_retail_ecommerce import EntitiesRetailEcommerce    # noqa: F401
+        from app.entities.models.entities_banking_financial import EntitiesBankingFinancial  # noqa: F401
+        from app.entities.models.logistics_supply_chain import LogisticsSupplyChain          # noqa: F401
+        from app.entities.models.entities_education import EntitiesEducation                  # noqa: F401
         from app.departments.models.departments import Department                             # noqa: F401
         from app.divisions.models.divisions import Division                                   # noqa: F401
         from app.job_codes.models.job_codes import JobCode                                   # noqa: F401

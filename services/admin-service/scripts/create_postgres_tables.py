@@ -50,6 +50,12 @@ from app.infrastructure.database.base import Base
 from app.tenants.models.tenants import Tenant
 from app.domains.models.domain import Domain
 from app.entities.models.entity import Entity
+from app.entities.models.entities_healthcare import EntitiesHealthcare
+from app.entities.models.entities_manufacturing_industrial import EntitiesManufacturingIndustrial
+from app.entities.models.entities_retail_ecommerce import EntitiesRetailEcommerce
+from app.entities.models.entities_banking_financial import EntitiesBankingFinancial
+from app.entities.models.logistics_supply_chain import LogisticsSupplyChain
+from app.entities.models.entities_education import EntitiesEducation
 from app.departments.models.departments import Department
 from app.divisions.models.divisions import Division
 from app.applications.models.application import Application
@@ -120,6 +126,12 @@ def get_table_dependency_order():
         'tenants',              # No dependencies
         'domains',              # No dependencies
         'entities',             # Depends on: tenants
+        'entities_healthcare',  # Depends on: tenants, entities
+        'entities_manufacturing_industrial',  # Depends on: tenants, entities
+        'entities_retail_ecommerce',  # Depends on: tenants, entities
+        'entities_banking_financial',  # Depends on: tenants, entities
+        'logistics_supply_chain',  # Depends on: tenants, entities
+        'entities_education',  # Depends on: tenants, entities
         'departments',          # Depends on: tenants, entities, (self-referencing)
         'divisions',            # Depends on: tenants, entities, departments, (self-referencing)
         'applications',         # Depends on: domains

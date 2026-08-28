@@ -3,6 +3,31 @@ from pydantic import BaseModel
 from datetime import datetime, date
 from uuid import UUID
 
+from app.entities.schemas.entities_healthcare import (
+    EntitiesHealthcareCreate,
+    EntitiesHealthcareResponse,
+)
+from app.entities.schemas.entities_manufacturing_industrial import (
+    EntitiesManufacturingIndustrialCreate,
+    EntitiesManufacturingIndustrialResponse,
+)
+from app.entities.schemas.entities_retail_ecommerce import (
+    EntitiesRetailEcommerceCreate,
+    EntitiesRetailEcommerceResponse,
+)
+from app.entities.schemas.entities_banking_financial import (
+    EntitiesBankingFinancialCreate,
+    EntitiesBankingFinancialResponse,
+)
+from app.entities.schemas.logistics_supply_chain import (
+    LogisticsSupplyChainCreate,
+    LogisticsSupplyChainResponse,
+)
+from app.entities.schemas.entities_education import (
+    EntitiesEducationCreate,
+    EntitiesEducationResponse,
+)
+
 class EntityBase(BaseModel):
     entity_name: str
     entity_code: str
@@ -43,6 +68,15 @@ class EntityBase(BaseModel):
     data_processing_agreement_doc: Optional[str] = None
     insurance_certificate_doc: Optional[str] = None
     other_documents_doc: Optional[str] = None
+    # Branch form's per-vertical compliance sections — each nested, at most one
+    # item (upserted onto its own table, keyed by entity_id).
+    # None -> section untouched, [] -> clear it, [item] -> upsert.
+    entities_healthcare: Optional[List[EntitiesHealthcareCreate]] = None
+    entities_manufacturing_industrial: Optional[List[EntitiesManufacturingIndustrialCreate]] = None
+    entities_retail_ecommerce: Optional[List[EntitiesRetailEcommerceCreate]] = None
+    entities_banking_financial: Optional[List[EntitiesBankingFinancialCreate]] = None
+    logistics_supply_chain: Optional[List[LogisticsSupplyChainCreate]] = None
+    entities_education: Optional[List[EntitiesEducationCreate]] = None
     # NOTE: active / deleted are operational/backend-managed — not part of the
     # CRUD schema. active defaults to true and deleted to false on create; the
     # delete endpoint flips them.
@@ -88,6 +122,12 @@ class EntityUpdate(BaseModel):
     data_processing_agreement_doc: Optional[str] = None
     insurance_certificate_doc: Optional[str] = None
     other_documents_doc: Optional[str] = None
+    entities_healthcare: Optional[List[EntitiesHealthcareCreate]] = None
+    entities_manufacturing_industrial: Optional[List[EntitiesManufacturingIndustrialCreate]] = None
+    entities_retail_ecommerce: Optional[List[EntitiesRetailEcommerceCreate]] = None
+    entities_banking_financial: Optional[List[EntitiesBankingFinancialCreate]] = None
+    logistics_supply_chain: Optional[List[LogisticsSupplyChainCreate]] = None
+    entities_education: Optional[List[EntitiesEducationCreate]] = None
 
 class EntityResponse(EntityBase):
     entity_id: UUID
@@ -97,6 +137,14 @@ class EntityResponse(EntityBase):
     date_time_format: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # Read-back of the branch's per-vertical compliance rows (0 or 1 each),
+    # loaded from the matching Entity relationship.
+    entities_healthcare: List[EntitiesHealthcareResponse] = []
+    entities_manufacturing_industrial: List[EntitiesManufacturingIndustrialResponse] = []
+    entities_retail_ecommerce: List[EntitiesRetailEcommerceResponse] = []
+    entities_banking_financial: List[EntitiesBankingFinancialResponse] = []
+    logistics_supply_chain: List[LogisticsSupplyChainResponse] = []
+    entities_education: List[EntitiesEducationResponse] = []
 
     class Config:
         from_attributes = True

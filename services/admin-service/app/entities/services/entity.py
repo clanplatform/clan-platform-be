@@ -16,6 +16,71 @@ from app.core.hybrid_encryption import hybrid_encryption
 logger = logging.getLogger(__name__)
 
 
+def _sync_entity_compliance(
+    db: Session,
+    payload,
+    entity_id: UUID,
+    tenant_id: Optional[UUID],
+    provided: Optional[set] = None,
+) -> None:
+    """Sync the branch's nested per-vertical compliance section(s) from an
+    EntityCreate/EntityUpdate payload — the Healthcare facility & compliance
+    section (entities_healthcare), the Manufacturing plant & production section
+    (entities_manufacturing_industrial), the Retail & store operations section
+    (entities_retail_ecommerce), the Financial services & regulation section
+    (entities_banking_financial), the Logistics & supply chain section
+    (logistics_supply_chain) and the Education institution section
+    (entities_education).
+
+    provided: the payload's explicitly-set field names (EntityUpdate path) —
+    when given, a section is only touched if its key is present. None (create
+    path) always syncs (a None section value is itself a no-op).
+
+    Does not commit — the caller's create_entity/update_entity owns the txn.
+    """
+    from app.entities.services.entities_healthcare import sync_entities_healthcare_rows
+    from app.entities.services.entities_manufacturing_industrial import (
+        sync_entities_manufacturing_industrial_rows,
+    )
+    from app.entities.services.entities_retail_ecommerce import (
+        sync_entities_retail_ecommerce_rows,
+    )
+    from app.entities.services.entities_banking_financial import (
+        sync_entities_banking_financial_rows,
+    )
+    from app.entities.services.logistics_supply_chain import (
+        sync_logistics_supply_chain_rows,
+    )
+    from app.entities.services.entities_education import (
+        sync_entities_education_rows,
+    )
+
+    if provided is None or "entities_healthcare" in provided:
+        sync_entities_healthcare_rows(
+            db, entity_id, tenant_id, getattr(payload, "entities_healthcare", None)
+        )
+    if provided is None or "entities_manufacturing_industrial" in provided:
+        sync_entities_manufacturing_industrial_rows(
+            db, entity_id, tenant_id, getattr(payload, "entities_manufacturing_industrial", None)
+        )
+    if provided is None or "entities_retail_ecommerce" in provided:
+        sync_entities_retail_ecommerce_rows(
+            db, entity_id, tenant_id, getattr(payload, "entities_retail_ecommerce", None)
+        )
+    if provided is None or "entities_banking_financial" in provided:
+        sync_entities_banking_financial_rows(
+            db, entity_id, tenant_id, getattr(payload, "entities_banking_financial", None)
+        )
+    if provided is None or "logistics_supply_chain" in provided:
+        sync_logistics_supply_chain_rows(
+            db, entity_id, tenant_id, getattr(payload, "logistics_supply_chain", None)
+        )
+    if provided is None or "entities_education" in provided:
+        sync_entities_education_rows(
+            db, entity_id, tenant_id, getattr(payload, "entities_education", None)
+        )
+
+
 def _utc_offset_for_zone(tz_name: str) -> Optional[str]:
     """Current UTC offset for an IANA zone as '+05:30' / '-04:00' (DST-aware)."""
     try:
@@ -238,6 +303,10 @@ def create_entity(
     if entity_id is not None:
         db_entity.entity_id = entity_id
     db.add(db_entity)
+    db.flush()  # materialize entity_id so the compliance FK resolves
+    # Nested compliance section(s) (entities_healthcare) — upserted onto their
+    # own tables in the same transaction.
+    _sync_entity_compliance(db, entity, db_entity.entity_id, tenant_id)
     db.commit()
     db.refresh(db_entity)
     # Audit logging happens in the route layer (richer request context).
@@ -250,6 +319,13 @@ def update_entity(db: Session, entity_id: int, entity: EntityUpdate, user_id: Op
         raise EntityNotFoundError()
 
     update_data = entity.model_dump(exclude_unset=True)
+    # Nested compliance section(s) are not columns — sync them separately.
+    update_data.pop("entities_healthcare", None)
+    update_data.pop("entities_manufacturing_industrial", None)
+    update_data.pop("entities_retail_ecommerce", None)
+    update_data.pop("entities_banking_financial", None)
+    update_data.pop("logistics_supply_chain", None)
+    update_data.pop("entities_education", None)
 
     # Check code uniqueness if being updated
     if "entity_code" in update_data and update_data["entity_code"] != db_entity.entity_code:
@@ -260,6 +336,10 @@ def update_entity(db: Session, entity_id: int, entity: EntityUpdate, user_id: Op
         setattr(db_entity, key, value)
 
     db.add(db_entity)
+    db.flush()
+    _sync_entity_compliance(
+        db, entity, db_entity.entity_id, db_entity.tenant_id, provided=entity.model_fields_set
+    )
     db.commit()
     db.refresh(db_entity)
     # Audit logging happens in the route layer (richer request context).
@@ -274,6 +354,29 @@ def delete_entity(db: Session, entity_id: int, user_id: Optional[UUID] = None) -
     db_entity.deleted = True
     db_entity.active = False
     db.add(db_entity)
+    # Cascade the soft-delete to the branch's per-vertical compliance section(s).
+    from app.entities.services.entities_healthcare import soft_delete_entities_healthcare_rows
+    from app.entities.services.entities_manufacturing_industrial import (
+        soft_delete_entities_manufacturing_industrial_rows,
+    )
+    from app.entities.services.entities_retail_ecommerce import (
+        soft_delete_entities_retail_ecommerce_rows,
+    )
+    from app.entities.services.entities_banking_financial import (
+        soft_delete_entities_banking_financial_rows,
+    )
+    from app.entities.services.logistics_supply_chain import (
+        soft_delete_logistics_supply_chain_rows,
+    )
+    from app.entities.services.entities_education import (
+        soft_delete_entities_education_rows,
+    )
+    soft_delete_entities_healthcare_rows(db, entity_id)
+    soft_delete_entities_manufacturing_industrial_rows(db, entity_id)
+    soft_delete_entities_retail_ecommerce_rows(db, entity_id)
+    soft_delete_entities_banking_financial_rows(db, entity_id)
+    soft_delete_logistics_supply_chain_rows(db, entity_id)
+    soft_delete_entities_education_rows(db, entity_id)
     db.commit()
     # Audit logging happens in the route layer (richer request context).
     return True

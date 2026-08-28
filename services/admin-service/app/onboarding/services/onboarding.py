@@ -667,6 +667,14 @@ def create_onboarding(
                     data_processing_agreement_doc=b.data_processing_agreement_doc,
                     insurance_certificate_doc=b.insurance_certificate_doc,
                     other_documents_doc=b.other_documents_doc,
+                    # Nested per-vertical compliance sections — upserted onto
+                    # their own tables by create_entity().
+                    entities_healthcare=b.entities_healthcare,
+                    entities_manufacturing_industrial=b.entities_manufacturing_industrial,
+                    entities_retail_ecommerce=b.entities_retail_ecommerce,
+                    entities_banking_financial=b.entities_banking_financial,
+                    logistics_supply_chain=b.logistics_supply_chain,
+                    entities_education=b.entities_education,
                 ),
                 tenant_id=tenant_id,
                 user_id=_safe_uuid(created_by_user_id),

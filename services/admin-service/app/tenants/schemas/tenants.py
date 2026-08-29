@@ -39,7 +39,12 @@ class TenantBase(BaseModel):
     contact_name: Optional[str] = None
     contact_title: Optional[str] = None
     # Business domain & model
-    primary_domain: Optional[str] = None
+    # primary_domain_id -> domains.id (the tenant's industry vertical). The
+    # vertical's domains.branch_compliance_key drives which branch compliance
+    # section its branches seed. primary_domain_name / branch_compliance_key are
+    # read-only (TenantResponse) — do NOT add them here (create_tenant does
+    # Tenant(**model_dump()) and a non-column key would blow up).
+    primary_domain_id: Optional[UUID] = None
     business_model: Optional[str] = None
     organization_type: Optional[str] = None
     # Localization & business defaults
@@ -96,7 +101,7 @@ class TenantUpdate(BaseModel):
     postal_code: Optional[str] = None
     contact_name: Optional[str] = None
     contact_title: Optional[str] = None
-    primary_domain: Optional[str] = None
+    primary_domain_id: Optional[UUID] = None
     business_model: Optional[str] = None
     organization_type: Optional[str] = None
     default_language: Optional[str] = None
@@ -116,6 +121,14 @@ class TenantResponse(TenantBase):
         description="tenants.is_active — backend-derived from initial_status "
                     "('Active' => true, anything else => false); read-only, "
                     "never accepted on create/update.",
+    )
+    # Read-only, resolved from primary_domain_id -> domains (see Tenant model props)
+    primary_domain_name: Optional[str] = Field(None, description="domains.name of the tenant's vertical")
+    branch_compliance_key: Optional[str] = Field(
+        None,
+        description="domains.branch_compliance_key of the tenant's vertical — the "
+                    "branch-form compliance section its branches seed (e.g. "
+                    "'entities_healthcare'), or null if the vertical has none.",
     )
     gateway_tenant_ref: Optional[UUID] = None
     created_at: Optional[datetime] = None

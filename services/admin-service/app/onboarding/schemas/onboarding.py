@@ -118,7 +118,25 @@ class OnboardingCompany(BaseModel):
     contact_title: Optional[str] = Field(None, max_length=100)
 
     # Business domain & model
-    primary_domain: Optional[str] = Field(None, max_length=100)
+    # The tenant's industry vertical: primary_domain_id -> domains.id. The
+    # chosen vertical's domains.branch_compliance_key tells the client which
+    # nested compliance section to render/seed on each branch (branches[].
+    # entities_healthcare / … / entities_education). primary_domain_name and
+    # branch_compliance_key below are OUTPUT-only (echoed back in
+    # OnboardingDetail); sending them on input is ignored.
+    primary_domain_id: Optional[UUID] = Field(None, description="domains.id of the tenant's industry vertical")
+    # Output-only (echoed back in OnboardingDetail); never read from the request.
+    primary_domain_name: Optional[str] = Field(
+        None, description="Read-only — domains.name of the vertical",
+        json_schema_extra={"readOnly": True},
+    )
+    branch_compliance_key: Optional[str] = Field(
+        None,
+        description="Read-only — domains.branch_compliance_key of the vertical: the "
+                    "branches[] nested section to seed (e.g. 'entities_healthcare'), "
+                    "or null if the vertical has no compliance section.",
+        json_schema_extra={"readOnly": True},
+    )
     business_model: Optional[str] = Field(None, max_length=100)
     organization_type: Optional[str] = Field(None, max_length=100)
 
@@ -646,7 +664,7 @@ class OnboardingCompanyUpdate(BaseModel):
     annual_revenue: Optional[str] = Field(None, max_length=100)
     contact_name: Optional[str] = Field(None, max_length=255)
     contact_title: Optional[str] = Field(None, max_length=100)
-    primary_domain: Optional[str] = Field(None, max_length=100)
+    primary_domain_id: Optional[UUID] = Field(None, description="domains.id of the tenant's industry vertical")
     business_model: Optional[str] = Field(None, max_length=100)
     organization_type: Optional[str] = Field(None, max_length=100)
     default_language: Optional[str] = Field(None, max_length=50)

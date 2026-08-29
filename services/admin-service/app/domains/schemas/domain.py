@@ -7,6 +7,13 @@ class DomainBase(BaseModel):
     code: str = Field(..., min_length=1, max_length=50, description="Domain code")
     name: str = Field(..., min_length=1, max_length=100, description="Domain name")
     description: Optional[str] = Field(None, description="Domain description")
+    branch_compliance_key: Optional[str] = Field(
+        None, max_length=64,
+        description="For industry-vertical domains: the branches[] nested compliance "
+                    "section this vertical unlocks (e.g. 'entities_healthcare'). Must "
+                    "match a nested key on OnboardingBranch / EntityBase and that "
+                    "section's table name. NULL for verticals with no section.",
+    )
     is_active: Optional[bool] = Field(True, description="Whether the domain is active")
 
 class DomainCreate(DomainBase):
@@ -16,6 +23,7 @@ class DomainUpdate(BaseModel):
     code: Optional[str] = Field(None, min_length=1, max_length=50, description="Domain code")
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="Domain name")
     description: Optional[str] = Field(None, description="Domain description")
+    branch_compliance_key: Optional[str] = Field(None, max_length=64)
     is_active: Optional[bool] = Field(None, description="Whether the domain is active")
 
 class DomainResponse(DomainBase):

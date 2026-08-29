@@ -535,6 +535,16 @@ def create_onboarding(
     ).first():
         raise DuplicateTenantError("A client with this code already exists")
 
+    # Industry vertical must be a real domains row (drives which branch
+    # compliance section its branches seed — see _sync_entity_compliance).
+    if company.primary_domain_id and not master_db.query(Domain.id).filter(
+        Domain.id == company.primary_domain_id
+    ).first():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown primary_domain_id {company.primary_domain_id}",
+        )
+
     # Validate parent references before creating anything
     _validate_indices(payload)
 
@@ -562,7 +572,7 @@ def create_onboarding(
         annual_revenue=company.annual_revenue,
         contact_name=company.contact_name,
         contact_title=company.contact_title,
-        primary_domain=company.primary_domain,
+        primary_domain_id=company.primary_domain_id,
         business_model=company.business_model,
         organization_type=company.organization_type,
         default_language=company.default_language,
@@ -602,6 +612,11 @@ def create_onboarding(
     failed = False
     try:
         tenant_id = tenant.tenant_id
+
+        # The tenant's vertical (domains row) must exist in the tenant DB before
+        # the tenants row is seeded — tenants.primary_domain_id FKs to domains.id.
+        if tenant.primary_domain_id:
+            _sync_domain(master_db, tenant_db, tenant.primary_domain_id)
 
         # Seed the tenant row into the tenant DB
         _seed_tenant_row(tenant_db, tenant)
@@ -1241,7 +1256,9 @@ def get_onboarding(master_db: Session, tenant_id: UUID) -> OnboardingDetail:
             company_logo=tenant.company_logo,
             contact_name=tenant.contact_name,
             contact_title=tenant.contact_title,
-            primary_domain=tenant.primary_domain,
+            primary_domain_id=tenant.primary_domain_id,
+            primary_domain_name=tenant.primary_domain_name,
+            branch_compliance_key=tenant.branch_compliance_key,
             business_model=tenant.business_model,
             organization_type=tenant.organization_type,
             default_language=tenant.default_language,
@@ -1450,6 +1467,11 @@ def update_onboarding(
             try:
                 tdb = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
                 try:
+                    # tenants.primary_domain_id FKs to domains.id — the vertical's
+                    # domains row must exist in the tenant DB before the column
+                    # copy below sets primary_domain_id.
+                    if "primary_domain_id" in company_data and tenant.primary_domain_id:
+                        _sync_domain(master_db, tdb, tenant.primary_domain_id)
                     row = tdb.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
                     if row is not None:
                         for col in Tenant.__table__.columns:

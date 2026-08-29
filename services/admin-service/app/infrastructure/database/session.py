@@ -78,6 +78,9 @@ def create_tables():
     from app.security.models.security import Security
     from app.audit_logs.models.audit_logs import AuditLog
     from app.onboarding.models.onboarding import OnboardingDraft
+    # Import-time contract checks: SECTION_REGISTRY keys line up with the
+    # branch-form fields and the compliance tables.
+    from app.entities.services import compliance_registry  # noqa: F401
 
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)

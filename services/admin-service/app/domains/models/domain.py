@@ -12,6 +12,12 @@ class Domain(Base):
     code = Column(String(50), nullable=False, unique=True)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
+    # For industry-vertical domains: the branch-form compliance section this
+    # vertical unlocks — must exactly equal one of the nested keys on
+    # OnboardingBranch / EntityBase (e.g. "entities_healthcare") and the
+    # SQLAlchemy __tablename__ of that section's model. NULL for verticals with
+    # no compliance section and for the legacy "application domains".
+    branch_compliance_key = Column(String(64), nullable=True, index=True)
     is_active = Column(Boolean, default=True)
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)

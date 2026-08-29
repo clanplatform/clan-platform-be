@@ -39,7 +39,10 @@ class Tenant(Base):
     description = Column(Text, nullable=True)                   # Company description
 
     # Business domain & model
-    primary_domain = Column(String(100), nullable=True)
+    # The tenant's industry vertical — FK to domains.id. The chosen vertical's
+    # domains.branch_compliance_key decides which branch-form compliance section
+    # (entities_healthcare / … / entities_education) is seeded for its branches.
+    primary_domain_id = Column(UUID(as_uuid=True), ForeignKey("domains.id"), nullable=True, index=True)
     business_model = Column(String(100), nullable=True)
     organization_type = Column(String(100), nullable=True)
 
@@ -77,6 +80,21 @@ class Tenant(Base):
 
     # Relationships
     tenant_modules = relationship("TenantModule", back_populates="tenant", cascade="all, delete-orphan")
+    # Industry vertical (domains row). Read-only convenience — writes go through
+    # primary_domain_id. selectin so primary_domain_name / branch_compliance_key
+    # resolve during response serialization.
+    primary_domain = relationship("Domain", foreign_keys=[primary_domain_id], lazy="selectin")
+
+    @property
+    def primary_domain_name(self):
+        """domains.name of the tenant's vertical — read-only, surfaced on responses."""
+        return self.primary_domain.name if self.primary_domain is not None else None
+
+    @property
+    def branch_compliance_key(self):
+        """domains.branch_compliance_key of the tenant's vertical — which branch
+        compliance section its branches seed. None when no vertical / no section."""
+        return self.primary_domain.branch_compliance_key if self.primary_domain is not None else None
 
     @property
     def tenant_db_name(self):

@@ -18,7 +18,8 @@ from app.user_role.schemas.user_role import (
     UserRolePermissionUpdate,
     UserRoleCreateWithDetails,
     EntityReference,
-    AvailableEntitiesResponse
+    AvailableEntitiesResponse,
+    _extract_node_access,
 )
 
 
@@ -781,17 +782,22 @@ class UserRoleService:
           can't be 'write' when the form is read-only ('write' -> 'read').
           'hidden' is always kept (strictly more restrictive).
         - Duplicate child keys: first one wins.
-        - A node with no key is dropped (with its subtree)."""
+        - A node with no key is dropped (with its subtree).
+
+        The node's role access comes from props.access.value (form-builder prop
+        convention), falling back to a top-level `access` key — see
+        _extract_node_access."""
         if isinstance(node, dict):
             key = node.get("key")
-            raw_access = node.get("access")
             raw_children = node.get("children")
         else:
             key = getattr(node, "key", None)
-            raw_access = getattr(node, "access", None)
             raw_children = getattr(node, "children", None)
         if not key:
             return None
+        raw_access = _extract_node_access(node)
+        if isinstance(raw_access, str):
+            raw_access = [raw_access] if raw_access.strip() else []
 
         form_grants_write = "write" in (form_access or [])
         access: List[str] = []
@@ -820,6 +826,8 @@ class UserRoleService:
         (also what get_user_permission_context / _accessible_ids reads):
         [] root -> ['read','write'] (form granted, no per-form restriction);
         'hidden'/'disable' root -> ['disable'] (form not granted)."""
+        if isinstance(root_access, str):
+            root_access = [root_access] if root_access.strip() else []
         toks = {str(a).strip().lower() for a in (root_access or [])}
         if "hidden" in toks or "disable" in toks:
             return ["disable"]
@@ -836,10 +844,10 @@ class UserRoleService:
         on userrole_permission.form_permissions:
         [{"id": <form id>, "access": [...], "fields": {"key","access","children"}}].
 
-        The per-field access lives on form.children[*].access; _build_field_tree
-        strips each node to key/access/children and clamps to the form-level
-        access (form root's own access). `access` is the form-level summary
-        (see _form_access_summary)."""
+        The per-field access lives on each component's props.access.value;
+        _build_field_tree strips each node to key/access/children and clamps to
+        the form-level access (form root's own access). `access` is the
+        form-level summary (see _form_access_summary)."""
         form_perms: List[Dict[str, Any]] = []
         for item in (form_permissions or []):
             if isinstance(item, dict):
@@ -853,12 +861,7 @@ class UserRoleService:
             if not item_id:
                 continue
 
-            root_access = None
-            if isinstance(form_node, dict):
-                root_access = form_node.get("access")
-            elif form_node is not None:
-                root_access = getattr(form_node, "access", None)
-            summary = UserRoleService._form_access_summary(root_access)
+            summary = UserRoleService._form_access_summary(_extract_node_access(form_node))
 
             perm_dict = {"id": str(item_id), "access": summary}
             field_tree = (

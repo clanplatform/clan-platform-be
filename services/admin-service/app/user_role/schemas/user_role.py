@@ -119,12 +119,25 @@ _FORM_PERMISSION_EXAMPLE = [
             "key": "EditorScreen_1",
             "type": "Screen",
             "props": {},
-            "access": [],
             "children": [
-                {"key": "code", "type": "AntInput", "access": ["read"], "children": []},
-                {"key": "name", "type": "AntInput", "access": ["write"], "children": []},
-                {"key": "audit_log_button", "type": "AntButton", "access": ["hidden"], "children": []},
+                {
+                    "key": "code", "type": "AntInput",
+                    "props": {"label": {"value": "Code"}, "access": {"value": ["read"]}},
+                    "children": [], "tooltipProps": {},
+                    "schema": {"type": "string", "validations": [], "autoValidate": False},
+                },
+                {
+                    "key": "name", "type": "AntInput",
+                    "props": {"label": {"value": "Name"}, "access": {"value": ["write"]}},
+                    "children": [], "tooltipProps": {},
+                },
+                {
+                    "key": "audit_log_button", "type": "AntButton",
+                    "props": {"access": {"value": ["hidden"]}},
+                    "children": [], "tooltipProps": {},
+                },
             ],
+            "tooltipProps": {},
         },
         "languages": [
             {"code": "en", "dialect": "US", "name": "English",
@@ -154,55 +167,85 @@ class RoleFormLanguage(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+def _extract_node_access(node) -> Optional[Any]:
+    """A form component node's role access, read from the form-builder prop
+    convention `props.access.value` (every prop is `{value: ...}`). Falls back
+    to a top-level `access` key (older shape / the stored `fields` tree).
+    None when neither is set."""
+    if isinstance(node, dict):
+        props, top = node.get("props"), node.get("access")
+    else:
+        props, top = getattr(node, "props", None), getattr(node, "access", None)
+    if isinstance(props, dict) and "access" in props:
+        ap = props["access"]
+        return ap.get("value") if isinstance(ap, dict) else ap
+    return top
+
+
+def _fields_node_to_builder(node) -> Optional[Dict[str, Any]]:
+    """Convert a stored `fields` tree node ({key, access, children}) to the
+    form-builder shape ({key, props: {access: {value: [...]}}, children}) so a
+    role form permission reads back in the same shape it was sent."""
+    if not isinstance(node, dict):
+        return node
+    return {
+        "key": node.get("key"),
+        "props": {"access": {"value": list(node.get("access") or [])}},
+        "children": [_fields_node_to_builder(c) for c in (node.get("children") or [])],
+    }
+
+
 class RoleFormComponentTree(BaseModel):
     """A node of the form component tree carried on a role form permission —
-    same shape as the form builder's FormStructure (key/type/props/access/
-    children). Only `key`, `access` and `children` drive the permission logic;
-    `type`/`props` are accepted and ignored.
+    the form builder's own FormStructure shape (key/type/props/children, plus
+    schema/events/tooltipProps/... which are accepted and ignored).
 
-    Per-node `access` is [] ("Default" — inherit the form/parent access),
-    ['read'], ['write'] or ['hidden']. On save each node is clamped so it never
-    exceeds the form-level access (root node's access), and 'hidden' becomes
-    'disable' on the served component tree. Nested-children cascade/clamp/hidden
-    behaviour is unchanged — see app.core.access.
+    The per-node role access is `props.access.value` (form-builder prop
+    convention — every prop is `{value: ...}`); it is [] ("Default" — inherit
+    the form/parent access), ['read'], ['write'] or ['hidden']. On save each
+    node is clamped so it never exceeds the form-level access (root node's
+    access), and 'hidden' becomes 'disable' on the served component tree.
+    Nested-children cascade/clamp/hidden behaviour is unchanged — see
+    app.core.access.
     """
     key: str = Field(..., min_length=1, description="Form component key (FormComponent.key)")
     type: Optional[str] = Field(None, description="Component type — accepted, not used")
-    props: Dict[str, Any] = Field(default_factory=dict, description="Accepted, not used")
-    access: List[str] = Field(
-        default_factory=list,
-        description="[] (Default), ['read'], ['write'] or ['hidden']",
-        json_schema_extra={"example": []},
+    props: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Component props ({value: ...} each). The role access is props.access.value: "
+                    "[] (Default) / ['read'] / ['write'] / ['hidden'].",
     )
-    children: List[Any] = Field(default_factory=list, description="Child component nodes")
+    children: List["RoleFormComponentTree"] = Field(default_factory=list, description="Child component nodes")
 
     model_config = ConfigDict(extra="ignore")
 
-    @field_validator("access", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _coerce_access(cls, v):
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [v] if v.strip() else []
-        return list(v)
+    def _normalize_props_access(cls, data):
+        """Keep only props.access on the echoed-back node, as a clean token
+        list under {value: [...]} — tolerate a bare list / str / top-level
+        `access` key on input."""
+        if not isinstance(data, dict):
+            return data
+        raw = _extract_node_access(data)
+        if raw is None:
+            return data
+        if isinstance(raw, str):
+            raw = [raw] if raw.strip() else []
+        toks = [t for t in (str(x).strip().lower() for x in (raw or [])) if t in FIELD_ACCESS_VALUES]
+        props = dict(data.get("props") or {})
+        props["access"] = {"value": toks}
+        return {**data, "props": props}
 
-    @field_validator("access")
-    @classmethod
-    def _validate_access(cls, v):
-        bad = [x for x in (v or []) if str(x).strip().lower() not in FIELD_ACCESS_VALUES]
-        if bad:
-            raise ValueError(
-                f"Invalid access {bad}. Must be one of {sorted(FIELD_ACCESS_VALUES)} (or [] for Default)"
-            )
-        return [str(x).strip().lower() for x in (v or [])]
+
+RoleFormComponentTree.model_rebuild()
 
 
 class RoleFormPermission(BaseModel):
     """A role's form permission — the whole form object in the form builder's
     own shape (`id` = the form's UUID, plus the FormStructure under `form` and
-    the form's metadata). The per-field access lives on `form.children[*].access`;
-    the nested-children logic is unchanged.
+    the form's metadata). The per-field access lives on each component's
+    `props.access.value`; the nested-children logic is unchanged.
 
     Only `id` and `form` are used on save — `name`, `languages`, `localization`,
     `modalType`, ... are accepted (the frontend sends its whole form object) and
@@ -213,7 +256,7 @@ class RoleFormPermission(BaseModel):
     name: Optional[str] = Field(None, description="Form name — accepted, not used")
     defaultLanguage: Optional[str] = Field("en-US", description="Accepted, not used")
     form: Optional[RoleFormComponentTree] = Field(
-        None, description="The form component tree; children[*].access carry the per-field picks"
+        None, description="The form component tree; each component's props.access.value carries the per-field pick"
     )
     languages: List[RoleFormLanguage] = Field(
         default_factory=list,
@@ -237,14 +280,16 @@ class RoleFormPermission(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _accept_stored_shape(cls, data):
-        """Read back the stored JSONB shape {id, access, fields:{...}} as this
-        model: `id` maps straight through, `fields` -> `form`. Also tolerate a
+        """Read back the stored JSONB shape {id, access, fields:{key,access,
+        children}} in the form-builder shape: `id` maps straight through, and
+        the `fields` tree is rebuilt into `form` with access at
+        props.access.value (see _fields_node_to_builder). Also tolerate a
         legacy `form_id` alias on input."""
         if isinstance(data, dict):
             if data.get("id") is None and data.get("form_id") is not None:
                 data = {**data, "id": data["form_id"]}
             if data.get("form") is None and data.get("fields") is not None:
-                data = {**data, "form": data["fields"]}
+                data = {**data, "form": _fields_node_to_builder(data["fields"])}
         return data
 
 

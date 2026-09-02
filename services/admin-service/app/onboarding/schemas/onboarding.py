@@ -431,9 +431,10 @@ class OnboardingRole(BaseModel):
                     "menu/button id with an access level (read/write/disable). "
                     "form_permissions holds the FORM OBJECT itself (form-builder shape: "
                     "`id` [the form's UUID] + the component tree under `form`); the "
-                    "per-field access lives on form.children[*].access — [] (Default, "
-                    "inherit form/parent) / ['read'] / ['write'] / ['hidden'] — clamped "
-                    "on save to the form-level access (form root's own access).",
+                    "per-field access lives on each component's props.access.value — "
+                    "[] (Default, inherit form/parent) / ['read'] / ['write'] / "
+                    "['hidden'] — clamped on save to the form-level access (form root's "
+                    "own props.access.value).",
     )
 
     @field_validator("access_scope")
@@ -482,12 +483,16 @@ class OnboardingRole(BaseModel):
                                     "key": "EditorScreen_1",
                                     "type": "Screen",
                                     "props": {},
-                                    "access": [],
                                     "children": [
-                                        {"key": "code", "type": "AntInput", "access": ["read"], "children": []},
-                                        {"key": "name", "type": "AntInput", "access": ["write"], "children": []},
-                                        {"key": "audit_log_button", "type": "AntButton", "access": ["hidden"], "children": []},
+                                        {"key": "code", "type": "AntInput", "children": [], "tooltipProps": {},
+                                         "props": {"label": {"value": "Code"}, "access": {"value": ["read"]}},
+                                         "schema": {"type": "string", "validations": [], "autoValidate": False}},
+                                        {"key": "name", "type": "AntInput", "children": [], "tooltipProps": {},
+                                         "props": {"label": {"value": "Name"}, "access": {"value": ["write"]}}},
+                                        {"key": "audit_log_button", "type": "AntButton", "children": [], "tooltipProps": {},
+                                         "props": {"access": {"value": ["hidden"]}}},
                                     ],
+                                    "tooltipProps": {},
                                 },
                                 "languages": [
                                     {"code": "en", "dialect": "US", "name": "English",

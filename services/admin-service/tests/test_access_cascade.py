@@ -196,3 +196,74 @@ def test_build_form_perms_hidden_form_not_granted():
         [_role_form_perm("F3", {"key": "S", "access": ["disable"], "children": []})]
     )
     assert out[0]["access"] == ["disable"]
+
+
+# --- new shape: per-node access at props.access.value -----------------------
+
+def _c(key, access=None, extra_props=None):
+    """A component node in the form-builder shape (access at props.access.value)."""
+    props = dict(extra_props or {})
+    if access is not None:
+        props["access"] = {"value": access}
+    return {"key": key, "type": "AntInput", "props": props, "children": [], "tooltipProps": {}}
+
+
+def test_build_form_perms_reads_props_access_value():
+    from app.user_role.services.user_role import UserRoleService
+    item = _role_form_perm("F1", {
+        "key": "Screen", "type": "Screen", "props": {}, "children": [
+            _c("code", ["read"], {"label": {"value": "Code"}}),
+            _c("name", ["write"]),
+            _c("secret", ["hidden"]),
+            _c("notes", None),   # no access prop -> Default []
+        ],
+        "tooltipProps": {},
+    })
+    out = UserRoleService._build_form_perms([item])
+    assert out == [{
+        "id": "F1", "access": ["read", "write"],
+        "fields": {"key": "Screen", "access": [], "children": [
+            {"key": "code", "access": ["read"], "children": []},
+            {"key": "name", "access": ["write"], "children": []},
+            {"key": "secret", "access": ["hidden"], "children": []},
+            {"key": "notes", "access": [], "children": []},
+        ]},
+    }]
+
+
+def test_build_form_perms_props_access_read_only_root_clamps():
+    from app.user_role.services.user_role import UserRoleService
+    form = {"key": "Screen", "type": "Screen",
+            "props": {"access": {"value": ["read"]}}, "children": [_c("a", ["write"])],
+            "tooltipProps": {}}
+    out = UserRoleService._build_form_perms([_role_form_perm("F2", form)])
+    assert out[0]["access"] == ["read"]
+    assert out[0]["fields"]["children"][0]["access"] == ["read"]   # write clamped
+
+
+def test_role_form_component_tree_normalizes_props_access():
+    from app.user_role.schemas.user_role import RoleFormComponentTree, _extract_node_access
+    node = RoleFormComponentTree.model_validate(
+        {"key": "code", "type": "AntInput",
+         "props": {"label": {"value": "Code"}, "access": {"value": ["write", "bogus"]}, "tabIndex": {"value": 0}},
+         "children": [], "tooltipProps": {}, "schema": {"type": "string"}}
+    )
+    # unknown token dropped; label/tabIndex/schema ignored; access kept under props.access.value
+    assert node.props["access"] == {"value": ["write"]}
+    assert _extract_node_access(node) == ["write"]
+
+
+def test_role_form_permission_reads_back_in_props_access_value_shape():
+    from app.user_role.schemas.user_role import RoleFormPermission
+    stored = {"id": "F1", "access": ["read", "write"], "fields": {
+        "key": "Screen", "access": [], "children": [
+            {"key": "code", "access": ["write"], "children": []},
+            {"key": "notes", "access": [], "children": []},
+        ]}}
+    resp = RoleFormPermission.model_validate(stored)
+    assert resp.id == "F1"
+    assert resp.form.props == {"access": {"value": []}}
+    assert resp.form.children[0].props == {"access": {"value": ["write"]}}
+    assert resp.form.children[1].props == {"access": {"value": []}}
+    # no top-level `access` key on the echoed nodes
+    assert "access" not in resp.form.model_dump()

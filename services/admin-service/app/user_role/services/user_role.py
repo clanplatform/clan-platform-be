@@ -756,13 +756,57 @@ class UserRoleService:
         return button_perms
 
     @staticmethod
+    def _build_field_tree(node, form_access) -> Optional[Dict[str, Any]]:
+        """Normalize a role's per-field permission tree to the stored JSONB
+        shape: {"key": ..., "access": [...], "children": [...]} recursively —
+        ONLY key/access/children, nothing else from the form structure.
+
+        - access is [] ("Default"), ['read'], ['write'] or ['hidden'].
+        - Each node is CLAMPED to the form's own form_access: a node can't be
+          'write' when the form itself is read-only ('write' -> 'read').
+          'hidden' is always kept (strictly more restrictive).
+        - Duplicate child keys: first one wins.
+        - A node with no key is dropped (with its subtree)."""
+        if isinstance(node, dict):
+            key = node.get("key")
+            raw_access = node.get("access")
+            raw_children = node.get("children")
+        else:
+            key = getattr(node, "key", None)
+            raw_access = getattr(node, "access", None)
+            raw_children = getattr(node, "children", None)
+        if not key:
+            return None
+
+        form_grants_write = "write" in (form_access or [])
+        access: List[str] = []
+        for a in (raw_access or []):
+            tok = str(a).strip().lower()
+            if tok == "write" and not form_grants_write:
+                tok = "read"
+            if tok in ("read", "write", "hidden") and tok not in access:
+                access.append(tok)
+
+        children: List[Dict[str, Any]] = []
+        seen: set = set()
+        for child in (raw_children or []):
+            built = UserRoleService._build_field_tree(child, form_access)
+            if built and built["key"] not in seen:
+                seen.add(built["key"])
+                children.append(built)
+
+        return {"key": key, "access": access, "children": children}
+
+    @staticmethod
     def _build_form_perms(form_permissions) -> List[Dict[str, Any]]:
         """Convert form PermissionItems (or dicts) to the JSONB shape stored on
         userrole_permission.form_permissions:
-        [{"id":..., "application_id":..., "modules_id":..., "access": [...]}].
+        [{"id":..., "application_id":..., "modules_id":..., "access": [...],
+          "fields": {"key":..., "access":[...], "children":[...]}}].
 
         Mirrors how menu_permissions are stored; each item carries a form id and
-        a form_access list (['read'], ['read','write'], or ['disable'])."""
+        a form_access list (['read'], ['read','write'], or ['disable']), plus an
+        optional per-field permission tree (see _build_field_tree)."""
         form_perms: List[Dict[str, Any]] = []
         for item in (form_permissions or []):
             if isinstance(item, dict):
@@ -770,11 +814,13 @@ class UserRoleService:
                 application_id = item.get("application_id")
                 modules_id = item.get("modules_id")
                 access = item.get("form_access") or item.get("access")
+                fields = item.get("fields")
             else:
                 item_id = getattr(item, "id", None)
                 application_id = getattr(item, "application_id", None)
                 modules_id = getattr(item, "modules_id", None)
                 access = getattr(item, "form_access", None)
+                fields = getattr(item, "fields", None)
             if not item_id:
                 continue
             perm_dict = {"id": item_id}
@@ -784,6 +830,9 @@ class UserRoleService:
                 perm_dict["modules_id"] = modules_id
             if access:
                 perm_dict["access"] = access
+            field_tree = UserRoleService._build_field_tree(fields, access) if fields else None
+            if field_tree:
+                perm_dict["fields"] = field_tree
             form_perms.append(perm_dict)
         return form_perms
 
@@ -832,15 +881,21 @@ class UserRoleService:
         the identical rule against form_permissions/button_permissions.
 
         Returns {"is_admin": bool, "has_role": bool, "menu_ids": set[str],
-        "form_ids": set[str], "button_ids": set[str]}. Callers should treat
-        an id-set that ended up empty (no role, no permission rows, or every
-        permission row happened to grant nothing for that kind) as "don't
-        filter" rather than "show nothing" — a role that was only ever given
-        menu_permissions shouldn't blank out every form/button for its users.
+        "form_ids": set[str], "button_ids": set[str],
+        "form_field_permissions": {form_id: <fields tree>}}. Callers should
+        treat an id-set that ended up empty (no role, no permission rows, or
+        every permission row happened to grant nothing for that kind) as
+        "don't filter" rather than "show nothing" — a role that was only ever
+        given menu_permissions shouldn't blank out every form/button for its
+        users. form_field_permissions carries the per-field permission tree
+        (form_permissions[].fields — {key, access, children}) for the forms
+        the role CAN see, to overlay on the served component tree
+        (see app.core.access.apply_field_permissions).
         """
         result: Dict[str, Any] = {
             "is_admin": False, "has_role": False,
             "menu_ids": set(), "form_ids": set(), "button_ids": set(),
+            "form_field_permissions": {},
         }
         if user_id is None:
             return result
@@ -878,6 +933,20 @@ class UserRoleService:
         result["menu_ids"] = _accessible_ids("menu_permissions")
         result["form_ids"] = _accessible_ids("form_permissions")
         result["button_ids"] = _accessible_ids("button_permissions")
+
+        # Per-field permission tree for the forms the role can actually see.
+        field_perms: Dict[str, Any] = {}
+        for perm in permissions:
+            for item in (perm.form_permissions or []):
+                if not isinstance(item, dict) or item.get("id") is None:
+                    continue
+                form_id = str(item["id"])
+                if form_id not in result["form_ids"]:
+                    continue
+                tree = item.get("fields")
+                if isinstance(tree, dict) and tree.get("key"):
+                    field_perms[form_id] = tree
+        result["form_field_permissions"] = field_perms
         return result
 
     @staticmethod

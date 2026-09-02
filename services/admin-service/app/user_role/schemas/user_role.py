@@ -102,6 +102,46 @@ class UserRoleBasicResponse(UserRoleBasicBase):
 # UserRolePermission Schemas
 # ============================================================================
 
+# A per-field node's own access is one of these, or [] for "Default" (inherit
+# the form / parent-component access). "hidden" is the field-editor's term for
+# "not shown to this role" — mapped to the component tree's "disable" at serve
+# time (see app.core.access.apply_field_permissions).
+FIELD_ACCESS_VALUES = {"read", "write", "hidden"}
+
+
+class FieldPermissionNode(BaseModel):
+    """One node in a role's per-field permission tree. It mirrors a form
+    component's key/access/children skeleton and NOTHING else — no new field is
+    ever added to the form structure itself; this tree lives only on the role's
+    form_permissions entry (under `fields`).
+
+    `access` is [] ("Default" — inherit the form/parent access), ['read'],
+    ['write'] or ['hidden']. On save each node is clamped to the form's own
+    `form_access` (see UserRoleService._build_field_tree). The frontend sends
+    the whole skeleton (every component), unchanged nodes carrying [].
+    """
+    key: str = Field(..., min_length=1, description="Form component key (FormComponent.key)")
+    access: List[str] = Field(
+        default_factory=list,
+        description="[] (Default), ['read'], ['write'] or ['hidden']",
+        json_schema_extra={"example": []},
+    )
+    children: List["FieldPermissionNode"] = Field(default_factory=list)
+
+    @field_validator("access")
+    @classmethod
+    def _validate_field_access(cls, v):
+        bad = [x for x in (v or []) if x not in FIELD_ACCESS_VALUES]
+        if bad:
+            raise ValueError(
+                f"Invalid field access {bad}. Must be one of {sorted(FIELD_ACCESS_VALUES)} (or [] for Default)"
+            )
+        return v or []
+
+
+FieldPermissionNode.model_rebuild()  # resolve the self-referential `children`
+
+
 class PermissionItem(BaseModel):
     """Schema for permission item with multiple IDs sharing the same access level"""
     id: str = Field(
@@ -133,6 +173,26 @@ class PermissionItem(BaseModel):
         None,
         description="Button access permissions: ['read'], ['read', 'write'], or ['disable']",
         json_schema_extra={"example": ["write"]}
+    )
+    fields: Optional[FieldPermissionNode] = Field(
+        None,
+        description=(
+            "Per-field permission tree — ONLY meaningful on form_permissions "
+            "items. Mirrors the form's key/access/children skeleton (root key = "
+            "the form's own key); each node's access is [] (Default — inherit "
+            "form/parent), ['read'], ['write'] or ['hidden']. Send the whole "
+            "skeleton; unchanged nodes carry []. Each node is clamped on save so "
+            "it never exceeds the form's own form_access, and 'hidden' becomes "
+            "'disable' on the served component tree."
+        ),
+        json_schema_extra={
+            "example": {
+                "key": "EditorScreen_1", "access": [], "children": [
+                    {"key": "code", "access": ["read"], "children": []},
+                    {"key": "name", "access": ["write"], "children": []},
+                ],
+            }
+        },
     )
 
 

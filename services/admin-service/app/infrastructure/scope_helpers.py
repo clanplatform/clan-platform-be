@@ -93,6 +93,17 @@ def resolve_scope_filter(db: Session, user_id: Optional[str]) -> ScopeFilter:
         return ScopeFilter()
 
 
+def _assert_whole_org_admin(db: Session, user_id: Optional[str], detail: str) -> None:
+    """Shared fail-closed check behind require_whole_org_admin /
+    require_form_admin: the acting user's role must be is_admin=True AND
+    access_scope='whole_organization'. Unlike resolve_scope_filter's
+    read-side fail-open default, no role / no is_admin / any other scope
+    all raise 403 with `detail`."""
+    sf = resolve_scope_filter(db, user_id)
+    if not sf.is_whole_org_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
 def require_whole_org_admin(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),
@@ -104,12 +115,29 @@ def require_whole_org_admin(
     closed — no role, no is_admin, or any scope other than
     whole_organization all result in 403."""
     from app.infrastructure.audit_helpers import get_user_id
-    sf = resolve_scope_filter(db, get_user_id(current_user))
-    if not sf.is_whole_org_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a whole-organization admin role can perform this action",
-        )
+    _assert_whole_org_admin(
+        db, get_user_id(current_user),
+        "Only a whole-organization admin role can perform this action",
+    )
+    return current_user
+
+
+def require_form_admin(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_tenant_db),
+) -> dict:
+    """FastAPI dependency gating form-builder write endpoints (create/update/
+    delete/import forms and form-language translations): only a
+    whole-organization admin role may proceed. Same predicate as
+    require_whole_org_admin — branch/department/division-scoped roles and
+    non-admins are rejected — but with the product-standard RBAC message, so
+    a user who bypasses the UI still gets a clear 403 rather than a silent
+    write."""
+    from app.infrastructure.audit_helpers import get_user_id
+    _assert_whole_org_admin(
+        db, get_user_id(current_user),
+        "Only a permission user (admin role) can allow this action",
+    )
     return current_user
 
 

@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from app.infrastructure.mongodb.mongodb_forms import BaseMongoService
+from app.core.access import cascade_access, coerce_access
 
 class FormsDetailsService(BaseMongoService):
     """Service for managing form details in MongoDB (hybrid storage with PostgreSQL)
@@ -35,8 +36,14 @@ class FormsDetailsService(BaseMongoService):
             "forms": [array of form items]
         }
         """
+        # Resolve the parent -> child access cascade on the form component tree
+        # before persisting: a parent granting 'write' makes every nested child
+        # 'write' unless the child explicitly overrides to a lower level, and a
+        # child can never end up with more access than its parent.
+        form_item = self.apply_access_cascade(form_item, access)
+
         collection = await self.get_collection()
-        
+
         # Check if collection exists for this menu
         existing = await collection.find_one({"menu_id": menu_id})
         
@@ -68,23 +75,32 @@ class FormsDetailsService(BaseMongoService):
                 data["name"] = collection_name
             return await self.create(data)
     
-    def _ensure_access_field_recursive(self, component: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively ensure access field exists in component and all nested children"""
-        if not isinstance(component, dict):
-            return component
-        
-        # Ensure access field exists at current level
-        if "access" not in component:
-            component["access"] = []
-        
-        # Process children recursively
-        if "children" in component and isinstance(component["children"], list):
-            component["children"] = [
-                self._ensure_access_field_recursive(child) 
-                for child in component["children"]
-            ]
-        
-        return component
+    def apply_access_cascade(
+        self,
+        form_item: Dict[str, Any],
+        root_access: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Resolve the parent -> child access cascade on one form item's
+        component tree (form_item['form'] and its nested 'children').
+
+        The inheritance is seeded by, in order of precedence: the form's own
+        form['access'] when set, else the collection-level `root_access`
+        passed in, else the ['read', 'write'] default this service has always
+        used. See app.core.access.cascade_access for the inherit / override /
+        clamp rules. Mutates and returns form_item.
+        """
+        if not isinstance(form_item, dict):
+            return form_item
+        form_structure = form_item.get("form")
+        if not isinstance(form_structure, dict):
+            return form_item
+        seed = (
+            coerce_access(form_structure.get("access"))
+            or coerce_access(root_access)
+            or ["read", "write"]
+        )
+        cascade_access(form_structure, seed)
+        return form_item
     
     async def create_form_details(
         self,
@@ -152,17 +168,10 @@ class FormsDetailsService(BaseMongoService):
                 "children": []
             })
             
-            # Ensure access field exists at form level
-            if "access" not in form_structure:
-                form_structure["access"] = []
-            
-            # Recursively ensure access field in all children
-            if "children" in form_structure and isinstance(form_structure["children"], list):
-                form_structure["children"] = [
-                    self._ensure_access_field_recursive(child)
-                    for child in form_structure["children"]
-                ]
-            
+            # Guarantee the key exists; the parent -> child access cascade is
+            # resolved centrally in create_or_update_form_collection below.
+            form_structure.setdefault("access", [])
+
             # Create clean form item with form_id - avoid duplicate nesting
             form_item = {
                 "form_id": form_id,  # Always ensure form_id is set
@@ -204,17 +213,9 @@ class FormsDetailsService(BaseMongoService):
         update_data = dict(update_data or {})
         update_data["updated_at"] = datetime.utcnow()
         
-        # Ensure access field exists in form structure if present
+        # Resolve the parent -> child access cascade on the form tree if present
         if "form" in update_data and isinstance(update_data["form"], dict):
-            if "access" not in update_data["form"]:
-                update_data["form"]["access"] = []
-            
-            # Recursively ensure access field in all children
-            if "children" in update_data["form"] and isinstance(update_data["form"]["children"], list):
-                update_data["form"]["children"] = [
-                    self._ensure_access_field_recursive(child)
-                    for child in update_data["form"]["children"]
-                ]
+            self.apply_access_cascade(update_data)
         
         collection = await self.get_collection()
         

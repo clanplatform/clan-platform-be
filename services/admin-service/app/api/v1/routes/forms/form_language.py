@@ -13,6 +13,7 @@ from app.form_language.schemas.form_language import (
 )
 from app.form_language.services.form_language import FormLanguageService
 from app.core.security import get_current_user
+from app.infrastructure.scope_helpers import require_form_admin
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 
@@ -88,7 +89,7 @@ def create_form_language(
         }
     ),
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_form_admin)
 ):
     """
     Create a new form language translation.
@@ -341,7 +342,7 @@ def update_form_language(
     form_language_id: UUID,
     form_language_update: FormLanguageUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_form_admin)
 ):
     """
     Update a form language translation.
@@ -387,7 +388,7 @@ def delete_form_language(
     request: Request,
     form_language_id: UUID,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(require_form_admin)
 ):
     """
     Soft delete a form language translation.

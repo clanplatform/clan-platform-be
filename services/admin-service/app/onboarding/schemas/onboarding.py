@@ -429,7 +429,12 @@ class OnboardingRole(BaseModel):
                     "same shape as the direct Roles screen's Access panel — each entry's "
                     "menu_permissions/form_permissions/button_permissions holds "
                     "PermissionItems keyed by menu/form/button id with an access level "
-                    "(read/write/disable). A child menu can never exceed its parent's access.",
+                    "(read/write/disable). A child menu can never exceed its parent's access. "
+                    "A form_permissions entry may also carry `fields`: a per-field "
+                    "permission tree mirroring the form's key/access/children skeleton "
+                    "(root key = the form's own key), each node's access [] (Default) / "
+                    "['read'] / ['write'] / ['hidden']; clamped to the form's own "
+                    "form_access on save.",
     )
 
     @field_validator("access_scope")
@@ -475,6 +480,15 @@ class OnboardingRole(BaseModel):
                                 "application_id": "app-uuid-123",
                                 "modules_id": "module-uuid-456",
                                 "form_access": ["write"],
+                                "fields": {
+                                    "key": "EditorScreen_1",
+                                    "access": [],
+                                    "children": [
+                                        {"key": "code", "access": ["read"], "children": []},
+                                        {"key": "name", "access": ["write"], "children": []},
+                                        {"key": "audit_log_button", "access": ["hidden"], "children": []},
+                                    ],
+                                },
                             }
                         ],
                     }

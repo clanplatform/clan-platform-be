@@ -6,6 +6,8 @@ from datetime import datetime
 import math
 from app.infrastructure.database.session import get_tenant_db as get_db
 from app.core.security import get_current_user
+from app.core.access import cascade_access, coerce_access, apply_field_permissions
+from app.infrastructure.scope_helpers import require_form_admin
 from app.forms.services.forms import FormsService
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
@@ -48,6 +50,44 @@ def _filter_accessible_forms(forms: list, accessible_form_ids: set) -> list:
     ]
 
 
+def _overlay_field_permissions(forms: list, context: Dict[str, Any]) -> None:
+    """Overlay the role's per-field permission tree
+    (form_permissions[].fields) onto each served form's component tree, in
+    place — so a non-admin sees per-field read/write/hidden, not just which
+    forms exist. No-op for admins / roles without a field tree."""
+    trees_by_form = context.get("form_field_permissions") or {}
+    if not trees_by_form:
+        return
+    for f in (forms or []):
+        if not isinstance(f, dict):
+            continue
+        tree = trees_by_form.get(str(f.get("form_id")))
+        if isinstance(tree, dict) and isinstance(f.get("form"), dict):
+            apply_field_permissions(f["form"], tree)
+
+
+def _forms_payload_dicts(forms) -> list:
+    """The incoming forms array as plain dicts (Pydantic FormItem or already-dict)."""
+    return [item.model_dump() if hasattr(item, "model_dump") else item for item in (forms or [])]
+
+
+def _cascade_forms_access(forms_payload: list, top_level_access=None) -> list:
+    """Resolve the parent -> child access cascade on each incoming form item's
+    component tree, in place, so the PostgreSQL forms JSON and the MongoDB
+    forms_details copy store the same resolved access. Seed precedence: the
+    item's own form['access'], then the request's top-level access, then the
+    ['read', 'write'] default. See app.core.access.cascade_access."""
+    fallback = coerce_access(top_level_access) or ["read", "write"]
+    for item in (forms_payload or []):
+        if not isinstance(item, dict):
+            continue
+        form_structure = item.get("form")
+        if isinstance(form_structure, dict):
+            seed = coerce_access(form_structure.get("access")) or fallback
+            cascade_access(form_structure, seed)
+    return forms_payload
+
+
 @router.post(
     "/",
     status_code=status.HTTP_201_CREATED,
@@ -58,7 +98,7 @@ async def create_form(
     request: Request,
     form_data: FormCreateFromFrontend,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_form_admin)
 ):
     """
     Create a new form from frontend payload.
@@ -97,6 +137,11 @@ async def create_form(
             detail=f"Form with name '{form_name}' already exists in this menu"
         )
     
+    # Resolve the parent -> child access cascade before the payload is written
+    # to either store (parent 'write' => nested children 'write' unless a child
+    # overrides lower; a child never exceeds its parent).
+    forms_payload = _cascade_forms_access(_forms_payload_dicts(form_data.forms), form_data.access)
+
     try:
         # Convert frontend format to backend format - store the entire forms array
         backend_form_data = FormCreate(
@@ -104,7 +149,7 @@ async def create_form(
             name=form_name,  # Use name from first form item
             version=form_data.forms[0].version if form_data.forms else "1.0.0",
             trigger_when=json.dumps(form_data.forms[0].triggerWhen) if form_data.forms and form_data.forms[0].triggerWhen else None,
-            forms=[item.model_dump() if hasattr(item, 'model_dump') else item for item in form_data.forms],
+            forms=forms_payload,
             actions={},
             modal_type=form_data.forms[0].modalType if form_data.forms else "AntModal",
             tooltip_type=form_data.forms[0].tooltipType if form_data.forms else "AntTooltip",
@@ -195,7 +240,7 @@ async def import_form(
     menu_id: str,
     import_data: FormImport,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_form_admin),
     created_by: Optional[str] = Query(None, description="User who is importing the form")
 ):
     """
@@ -212,7 +257,11 @@ async def import_form(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Form with name '{import_data.name}' already exists in this menu"
         )
-    
+
+    # Resolve the parent -> child access cascade on the imported tree before it
+    # is persisted to PostgreSQL / MongoDB.
+    import_data.forms = _cascade_forms_access(_forms_payload_dicts(import_data.forms))
+
     try:
         # Create form from import data
         form = FormsService.create_form_from_import(db, menu_id, import_data, created_by)
@@ -351,11 +400,13 @@ async def get_forms(
                 doc["_id"] = str(doc["_id"])
 
         # Scope each menu's forms down to what the user's role permissions
-        # actually grant (dashboard should only ever show permissioned forms).
+        # actually grant (dashboard should only ever show permissioned forms),
+        # then overlay per-field read/write/hidden overrides.
         context = _user_permission_context(db, current_user)
         if UserRoleService.should_filter(context, "form"):
             for doc in forms_data:
                 doc["forms"] = _filter_accessible_forms(doc.get("forms"), context["form_ids"])
+                _overlay_field_permissions(doc["forms"], context)
 
         total_pages = math.ceil(total / size) if total > 0 else 0
         
@@ -454,10 +505,12 @@ async def get_forms_by_menu(
         forms_list = forms_collection.get("forms", [])
 
         # Scope down to what the user's role permissions actually grant
-        # (dashboard should only ever show permissioned forms).
+        # (dashboard should only ever show permissioned forms), then overlay
+        # per-field read/write/hidden overrides.
         context = _user_permission_context(db, current_user)
         if UserRoleService.should_filter(context, "form"):
             forms_list = _filter_accessible_forms(forms_list, context["form_ids"])
+            _overlay_field_permissions(forms_list, context)
 
         response = {
             "menu_id": forms_collection.get("menu_id"),
@@ -504,7 +557,7 @@ async def update_form(
     form_id: str,
     form_data: FormUpdateSimple,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_form_admin)
 ):
     """
     Update an existing form.
@@ -546,27 +599,30 @@ async def update_form(
                 detail=f"Form with name '{form_name}' already exists in this menu"
             )
 
+    # Resolve the parent -> child access cascade once, so the PostgreSQL row and
+    # the MongoDB forms_details copy are written with the same resolved access.
+    forms_payload = _cascade_forms_access(_forms_payload_dicts(form_data.forms), form_data.access)
+
     try:
         # Convert simplified format to full update format
         update_data = FormUpdate(
             menu_id=form_data.menu_id,
             name=form_name,
-            forms=form_data.forms,
+            forms=forms_payload,
             updated_by=None
         )
-        
+
         # Update form in PostgreSQL
         updated_form = FormsService.update_form(db, form_id, update_data, None)
-        
+
         # Update form details in MongoDB - update only the specific form.
         # Non-fatal: PostgreSQL is already updated; a Mongo outage must not 500.
-        if form_data.forms:
+        if forms_payload:
             try:
                 collection = await forms_details_service.get_collection()
 
                 # Convert the updated form data to dict format
-                updated_form_data = form_data.forms[0]  # Get the first (and should be only) form from request
-                form_dict = updated_form_data.model_dump() if hasattr(updated_form_data, 'model_dump') else updated_form_data
+                form_dict = dict(forms_payload[0])  # first (and should be only) form from request
 
                 # Ensure form_id is preserved
                 form_dict['form_id'] = form_id
@@ -647,7 +703,7 @@ async def delete_form(
     request: Request,
     form_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_form_admin)
 ):
     """
     Soft delete a form.

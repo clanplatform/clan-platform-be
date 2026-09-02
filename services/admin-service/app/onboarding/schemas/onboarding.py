@@ -426,15 +426,14 @@ class OnboardingRole(BaseModel):
     permissions: Optional[List[UserRolePermissionBase]] = Field(
         default_factory=list,
         description="Menu / Form / Button access for this role (userrole_permission), "
-                    "same shape as the direct Roles screen's Access panel — each entry's "
-                    "menu_permissions/form_permissions/button_permissions holds "
-                    "PermissionItems keyed by menu/form/button id with an access level "
-                    "(read/write/disable). A child menu can never exceed its parent's access. "
-                    "A form_permissions entry may also carry `fields`: a per-field "
-                    "permission tree mirroring the form's key/access/children skeleton "
-                    "(root key = the form's own key), each node's access [] (Default) / "
-                    "['read'] / ['write'] / ['hidden']; clamped to the form's own "
-                    "form_access on save.",
+                    "same shape as the direct Roles screen's Access panel. "
+                    "menu_permissions/button_permissions hold PermissionItems keyed by "
+                    "menu/button id with an access level (read/write/disable). "
+                    "form_permissions holds the FORM OBJECT itself (form-builder shape: "
+                    "`id` [the form's UUID] + the component tree under `form`); the "
+                    "per-field access lives on form.children[*].access — [] (Default, "
+                    "inherit form/parent) / ['read'] / ['write'] / ['hidden'] — clamped "
+                    "on save to the form-level access (form root's own access).",
     )
 
     @field_validator("access_scope")
@@ -477,18 +476,29 @@ class OnboardingRole(BaseModel):
                         "form_permissions": [
                             {
                                 "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                                "application_id": "app-uuid-123",
-                                "modules_id": "module-uuid-456",
-                                "form_access": ["write"],
-                                "fields": {
+                                "name": "Domain details",
+                                "defaultLanguage": "en-US",
+                                "form": {
                                     "key": "EditorScreen_1",
+                                    "type": "Screen",
+                                    "props": {},
                                     "access": [],
                                     "children": [
-                                        {"key": "code", "access": ["read"], "children": []},
-                                        {"key": "name", "access": ["write"], "children": []},
-                                        {"key": "audit_log_button", "access": ["hidden"], "children": []},
+                                        {"key": "code", "type": "AntInput", "access": ["read"], "children": []},
+                                        {"key": "name", "type": "AntInput", "access": ["write"], "children": []},
+                                        {"key": "audit_log_button", "type": "AntButton", "access": ["hidden"], "children": []},
                                     ],
                                 },
+                                "languages": [
+                                    {"code": "en", "dialect": "US", "name": "English",
+                                     "description": "American English", "bidi": "ltr"}
+                                ],
+                                "localization": {},
+                                "modalType": "AntModal",
+                                "tooltipType": "AntTooltip",
+                                "errorType": "AntErrorMessage",
+                                "triggerWhen": {},
+                                "version": "1",
                             }
                         ],
                     }

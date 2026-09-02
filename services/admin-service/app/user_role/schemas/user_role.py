@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
 from uuid import UUID
@@ -102,44 +102,150 @@ class UserRoleBasicResponse(UserRoleBasicBase):
 # UserRolePermission Schemas
 # ============================================================================
 
-# A per-field node's own access is one of these, or [] for "Default" (inherit
-# the form / parent-component access). "hidden" is the field-editor's term for
-# "not shown to this role" — mapped to the component tree's "disable" at serve
-# time (see app.core.access.apply_field_permissions).
-FIELD_ACCESS_VALUES = {"read", "write", "hidden"}
+# A form-component node's own access on a role form permission is one of these,
+# or [] for "Default" (inherit the form / parent-component access). "hidden" is
+# the field-editor's term for "not shown to this role" — mapped to the component
+# tree's "disable" at serve time (see app.core.access.apply_field_permissions).
+FIELD_ACCESS_VALUES = {"read", "write", "hidden", "disable"}
+
+# Shared OpenAPI example for the new form_permissions shape (form-builder object;
+# per-field access on form.children[*].access).
+_FORM_PERMISSION_EXAMPLE = [
+    {
+        "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
+        "name": "Domain details",
+        "defaultLanguage": "en-US",
+        "form": {
+            "key": "EditorScreen_1",
+            "type": "Screen",
+            "props": {},
+            "access": [],
+            "children": [
+                {"key": "code", "type": "AntInput", "access": ["read"], "children": []},
+                {"key": "name", "type": "AntInput", "access": ["write"], "children": []},
+                {"key": "audit_log_button", "type": "AntButton", "access": ["hidden"], "children": []},
+            ],
+        },
+        "languages": [
+            {"code": "en", "dialect": "US", "name": "English",
+             "description": "American English", "bidi": "ltr"}
+        ],
+        "localization": {},
+        "modalType": "AntModal",
+        "tooltipType": "AntTooltip",
+        "errorType": "AntErrorMessage",
+        "triggerWhen": {},
+        "version": "1",
+    }
+]
 
 
-class FieldPermissionNode(BaseModel):
-    """One node in a role's per-field permission tree. It mirrors a form
-    component's key/access/children skeleton and NOTHING else — no new field is
-    ever added to the form structure itself; this tree lives only on the role's
-    form_permissions entry (under `fields`).
+class RoleFormLanguage(BaseModel):
+    """A language entry on a role form permission — same shape as the form
+    builder's Language ({code, dialect, name, description, bidi}). Accepted and
+    echoed back; not used by the permission logic. Every field is optional so a
+    partial language object never rejects a role save."""
+    code: Optional[str] = None
+    dialect: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    bidi: Optional[str] = "ltr"
 
-    `access` is [] ("Default" — inherit the form/parent access), ['read'],
-    ['write'] or ['hidden']. On save each node is clamped to the form's own
-    `form_access` (see UserRoleService._build_field_tree). The frontend sends
-    the whole skeleton (every component), unchanged nodes carrying [].
+    model_config = ConfigDict(extra="ignore")
+
+
+class RoleFormComponentTree(BaseModel):
+    """A node of the form component tree carried on a role form permission —
+    same shape as the form builder's FormStructure (key/type/props/access/
+    children). Only `key`, `access` and `children` drive the permission logic;
+    `type`/`props` are accepted and ignored.
+
+    Per-node `access` is [] ("Default" — inherit the form/parent access),
+    ['read'], ['write'] or ['hidden']. On save each node is clamped so it never
+    exceeds the form-level access (root node's access), and 'hidden' becomes
+    'disable' on the served component tree. Nested-children cascade/clamp/hidden
+    behaviour is unchanged — see app.core.access.
     """
     key: str = Field(..., min_length=1, description="Form component key (FormComponent.key)")
+    type: Optional[str] = Field(None, description="Component type — accepted, not used")
+    props: Dict[str, Any] = Field(default_factory=dict, description="Accepted, not used")
     access: List[str] = Field(
         default_factory=list,
         description="[] (Default), ['read'], ['write'] or ['hidden']",
         json_schema_extra={"example": []},
     )
-    children: List["FieldPermissionNode"] = Field(default_factory=list)
+    children: List[Any] = Field(default_factory=list, description="Child component nodes")
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("access", mode="before")
+    @classmethod
+    def _coerce_access(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v.strip() else []
+        return list(v)
 
     @field_validator("access")
     @classmethod
-    def _validate_field_access(cls, v):
-        bad = [x for x in (v or []) if x not in FIELD_ACCESS_VALUES]
+    def _validate_access(cls, v):
+        bad = [x for x in (v or []) if str(x).strip().lower() not in FIELD_ACCESS_VALUES]
         if bad:
             raise ValueError(
-                f"Invalid field access {bad}. Must be one of {sorted(FIELD_ACCESS_VALUES)} (or [] for Default)"
+                f"Invalid access {bad}. Must be one of {sorted(FIELD_ACCESS_VALUES)} (or [] for Default)"
             )
-        return v or []
+        return [str(x).strip().lower() for x in (v or [])]
 
 
-FieldPermissionNode.model_rebuild()  # resolve the self-referential `children`
+class RoleFormPermission(BaseModel):
+    """A role's form permission — the whole form object in the form builder's
+    own shape (`id` = the form's UUID, plus the FormStructure under `form` and
+    the form's metadata). The per-field access lives on `form.children[*].access`;
+    the nested-children logic is unchanged.
+
+    Only `id` and `form` are used on save — `name`, `languages`, `localization`,
+    `modalType`, ... are accepted (the frontend sends its whole form object) and
+    ignored. Stored on userrole_permission.form_permissions as
+    {id, access, fields:{key,access,children}} and echoed back in this shape.
+    """
+    id: str = Field(..., description="The form's UUID (forms.id)")
+    name: Optional[str] = Field(None, description="Form name — accepted, not used")
+    defaultLanguage: Optional[str] = Field("en-US", description="Accepted, not used")
+    form: Optional[RoleFormComponentTree] = Field(
+        None, description="The form component tree; children[*].access carry the per-field picks"
+    )
+    languages: List[RoleFormLanguage] = Field(
+        default_factory=list,
+        description="Accepted, not used",
+        json_schema_extra={
+            "example": [
+                {"code": "en", "dialect": "US", "name": "English",
+                 "description": "American English", "bidi": "ltr"}
+            ]
+        },
+    )
+    localization: Dict[str, Any] = Field(default_factory=dict, description="Accepted, not used")
+    modalType: Optional[str] = Field("AntModal", description="Accepted, not used")
+    tooltipType: Optional[str] = Field("AntTooltip", description="Accepted, not used")
+    errorType: Optional[str] = Field("AntErrorMessage", description="Accepted, not used")
+    triggerWhen: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Accepted, not used")
+    version: Optional[str] = Field("1", description="Accepted, not used")
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_stored_shape(cls, data):
+        """Read back the stored JSONB shape {id, access, fields:{...}} as this
+        model: `id` maps straight through, `fields` -> `form`. Also tolerate a
+        legacy `form_id` alias on input."""
+        if isinstance(data, dict):
+            if data.get("id") is None and data.get("form_id") is not None:
+                data = {**data, "id": data["form_id"]}
+            if data.get("form") is None and data.get("fields") is not None:
+                data = {**data, "form": data["fields"]}
+        return data
 
 
 class PermissionItem(BaseModel):
@@ -173,26 +279,6 @@ class PermissionItem(BaseModel):
         None,
         description="Button access permissions: ['read'], ['read', 'write'], or ['disable']",
         json_schema_extra={"example": ["write"]}
-    )
-    fields: Optional[FieldPermissionNode] = Field(
-        None,
-        description=(
-            "Per-field permission tree — ONLY meaningful on form_permissions "
-            "items. Mirrors the form's key/access/children skeleton (root key = "
-            "the form's own key); each node's access is [] (Default — inherit "
-            "form/parent), ['read'], ['write'] or ['hidden']. Send the whole "
-            "skeleton; unchanged nodes carry []. Each node is clamped on save so "
-            "it never exceeds the form's own form_access, and 'hidden' becomes "
-            "'disable' on the served component tree."
-        ),
-        json_schema_extra={
-            "example": {
-                "key": "EditorScreen_1", "access": [], "children": [
-                    {"key": "code", "access": ["read"], "children": []},
-                    {"key": "name", "access": ["write"], "children": []},
-                ],
-            }
-        },
     )
 
 
@@ -273,19 +359,12 @@ class UserRolePermissionBase(BaseModel):
             ]
         }
     )
-    form_permissions: Optional[List[PermissionItem]] = Field(
+    form_permissions: Optional[List[RoleFormPermission]] = Field(
         default=[],
-        description="Array of form permissions - each form has individual access",
-        json_schema_extra={
-            "example": [
-                {
-                    "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                    "application_id": "app-uuid-123",
-                    "modules_id": "module-uuid-456",
-                    "form_access": ["write"]
-                }
-            ]
-        }
+        description="Array of form permissions — each item is the form object "
+                    "(form-builder shape); per-field access lives on "
+                    "form.children[*].access.",
+        json_schema_extra={"example": _FORM_PERMISSION_EXAMPLE},
     )
 
 
@@ -365,19 +444,12 @@ class UserRolePermissionUpdate(BaseModel):
             ]
         }
     )
-    form_permissions: Optional[List[PermissionItem]] = Field(
+    form_permissions: Optional[List[RoleFormPermission]] = Field(
         None,
-        description="Array of form permissions - each form has individual access",
-        json_schema_extra={
-            "example": [
-                {
-                    "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                    "application_id": "app-uuid-123",
-                    "modules_id": "module-uuid-456",
-                    "form_access": ["read"]
-                }
-            ]
-        }
+        description="Array of form permissions — each item is the form object "
+                    "(form-builder shape); per-field access lives on "
+                    "form.children[*].access.",
+        json_schema_extra={"example": _FORM_PERMISSION_EXAMPLE},
     )
 
 
@@ -391,7 +463,7 @@ class UserRolePermissionResponse(BaseModel):
     menu_access: Optional[str] = Field(None, description="Highest menu access level: read, write, or disable")
     button_permissions: List[PermissionItem] = Field(default_factory=list)
     button_access: Optional[str] = Field(None, description="Highest button access level: read, write, or disable")
-    form_permissions: List[PermissionItem] = Field(default_factory=list)
+    form_permissions: List[RoleFormPermission] = Field(default_factory=list)
     form_access: Optional[str] = Field(None, description="Highest form access level: read, write, or disable")
 
     created_at: datetime
@@ -472,14 +544,7 @@ class UserRoleCreateWithDetails(BaseModel):
                                 "menu_access": ["read"]
                             }
                         ],
-                        "form_permissions": [
-                            {
-                                "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                                "application_id": "app-uuid-123",
-                                "modules_id": "module-uuid-456",
-                                "form_access": ["write"]
-                            }
-                        ],
+                        "form_permissions": _FORM_PERMISSION_EXAMPLE,
                         "button_permissions": [
                             {
                                 "id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01",
@@ -512,9 +577,7 @@ class UserRoleUpdateWithDetails(BaseModel):
                             {"id": "menu-uuid-1", "menu_access": ["write"]},
                             {"id": "menu-uuid-2", "menu_access": ["read"]}
                         ],
-                        "form_permissions": [
-                            {"id": "form-uuid-1", "form_access": ["write"]}
-                        ]
+                        "form_permissions": _FORM_PERMISSION_EXAMPLE
                     }
                 ]
             }
@@ -548,25 +611,12 @@ class AvailableEntitiesResponse(BaseModel):
 
 class UserFormPermissionBase(BaseModel):
     """Base schema for User Form Permission"""
-    form_permissions: Optional[List[PermissionItem]] = Field(
+    form_permissions: Optional[List[RoleFormPermission]] = Field(
         default=[],
-        description="Array of form permissions - each form has individual access",
-        json_schema_extra={
-            "example": [
-                {
-                    "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                    "application_id": "app-uuid-123",
-                    "modules_id": "module-uuid-456",
-                    "form_access": ["write"]
-                },
-                {
-                    "id": "b0b34143-dffb-4fcb-b08b-a8b740b70dfa",
-                    "application_id": "app-uuid-789",
-                    "modules_id": "module-uuid-012",
-                    "form_access": ["write"]
-                }
-            ]
-        }
+        description="Array of form permissions — each item is the form object "
+                    "(form-builder shape); per-field access lives on "
+                    "form.children[*].access.",
+        json_schema_extra={"example": _FORM_PERMISSION_EXAMPLE},
     )
 
 
@@ -577,25 +627,12 @@ class UserFormPermissionCreate(UserFormPermissionBase):
 
 class UserFormPermissionUpdate(BaseModel):
     """Schema for updating user form permissions"""
-    form_permissions: Optional[List[PermissionItem]] = Field(
+    form_permissions: Optional[List[RoleFormPermission]] = Field(
         None,
-        description="Array of form permissions - each form has individual access",
-        json_schema_extra={
-            "example": [
-                {
-                    "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                    "application_id": "app-uuid-123",
-                    "modules_id": "module-uuid-456",
-                    "form_access": ["write"]
-                },
-                {
-                    "id": "b0b34143-dffb-4fcb-b08b-a8b740b70dfa",
-                    "application_id": "app-uuid-789",
-                    "modules_id": "module-uuid-012",
-                    "form_access": ["read"]
-                }
-            ]
-        }
+        description="Array of form permissions — each item is the form object "
+                    "(form-builder shape); per-field access lives on "
+                    "form.children[*].access.",
+        json_schema_extra={"example": _FORM_PERMISSION_EXAMPLE},
     )
 
 
@@ -604,7 +641,7 @@ class UserFormPermissionResponse(BaseModel):
     id: UUID
     user_role_id: UUID
     userrole_basic_id: UUID
-    form_permissions: List[PermissionItem] = Field(default_factory=list)
+    form_permissions: List[RoleFormPermission] = Field(default_factory=list)
     form_access: Optional[str] = Field(None, description="Highest form access level: read, write, or disable")
     created_at: datetime
     updated_at: datetime
@@ -616,14 +653,7 @@ class UserFormPermissionResponse(BaseModel):
                 "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                 "user_role_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                 "userrole_basic_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                "form_permissions": [
-                    {
-                        "id": "8ef5debb-b170-4659-a8ad-a73d41e5365d",
-                        "application_id": "app-uuid-123",
-                        "modules_id": "module-uuid-456",
-                        "form_access": ["write"]
-                    }
-                ],
+                "form_permissions": _FORM_PERMISSION_EXAMPLE,
                 "form_access": "write",
                 "created_at": "2026-01-21T05:44:23.234Z",
                 "updated_at": "2026-01-21T05:44:23.234Z"

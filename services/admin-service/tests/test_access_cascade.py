@@ -150,3 +150,49 @@ def test_build_field_tree_clamps_write_on_read_only_form_and_keeps_skeleton():
             {"key": "c", "access": [], "children": []},
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# _build_form_perms — the form-builder-shaped form_permissions item
+# ---------------------------------------------------------------------------
+
+def _role_form_perm(form_id, form):
+    return {"id": form_id, "name": "x", "form": form, "version": "1"}
+
+
+def test_build_form_perms_from_form_object_empty_root_grants_and_no_clamp():
+    from app.user_role.services.user_role import UserRoleService
+    item = _role_form_perm("F1", {
+        "key": "S", "type": "Screen", "props": {}, "access": [],
+        "children": [
+            {"key": "a", "type": "AntInput", "access": ["write"], "css": {"x": 1}, "children": []},
+            {"key": "b", "type": "AntInput", "access": ["hidden"], "children": []},
+        ],
+    })
+    out = UserRoleService._build_form_perms([item])
+    assert out == [{
+        "id": "F1", "access": ["read", "write"],
+        "fields": {"key": "S", "access": [], "children": [
+            {"key": "a", "access": ["write"], "children": []},   # css/type dropped
+            {"key": "b", "access": ["hidden"], "children": []},
+        ]},
+    }]
+
+
+def test_build_form_perms_read_only_form_clamps_children():
+    from app.user_role.services.user_role import UserRoleService
+    item = _role_form_perm("F2", {
+        "key": "S", "access": ["read"],
+        "children": [{"key": "a", "access": ["write"], "children": []}],
+    })
+    out = UserRoleService._build_form_perms([item])
+    assert out[0]["access"] == ["read"]
+    assert out[0]["fields"]["children"][0]["access"] == ["read"]
+
+
+def test_build_form_perms_hidden_form_not_granted():
+    from app.user_role.services.user_role import UserRoleService
+    out = UserRoleService._build_form_perms(
+        [_role_form_perm("F3", {"key": "S", "access": ["disable"], "children": []})]
+    )
+    assert out[0]["access"] == ["disable"]

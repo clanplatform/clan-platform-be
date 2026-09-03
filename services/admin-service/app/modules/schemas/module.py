@@ -19,6 +19,7 @@ class ModuleBase(BaseModel):
     level: Optional[int] = Field(2, description="Hierarchy level")
     order_index: Optional[int] = Field(0, description="Ordering index")
     is_active: Optional[bool] = Field(True, description="Whether the module is active")
+    is_selling: Optional[bool] = Field(False, description="Whether the module is available in the store / for sale")
     access: Optional[List[str]] = Field(default_factory=list, description="Array of access permissions")
 
 class ModuleCreate(ModuleBase):
@@ -41,6 +42,7 @@ class ModuleUpdate(BaseModel):
     level: Optional[int] = Field(None, description="Hierarchy level")
     order_index: Optional[int] = Field(None, description="Ordering index")
     is_active: Optional[bool] = Field(None, description="Whether the module is active")
+    is_selling: Optional[bool] = Field(None, description="Whether the module is available in the store / for sale")
     access: Optional[List[str]] = Field(None, description="Array of access permissions")
 
     @field_validator("access")

@@ -27,6 +27,7 @@ class ApplicationBase(BaseModel):
     status: Optional[str] = Field("active", description="Application status")
     domain_id: uuid.UUID = Field(..., description="Domain ID this application belongs to")
     is_active: Optional[bool] = Field(True, description="Whether the application is active")
+    is_selling: Optional[bool] = Field(False, description="Whether the application is available in the store / for sale")
     access: Optional[List[str]] = Field(default_factory=list, description="Array of access permissions")
 
     # ✅ New fields for navigation/UI display
@@ -58,6 +59,7 @@ class ApplicationUpdate(BaseModel):
     status: Optional[str] = Field(None, description="Application status")
     domain_id: Optional[uuid.UUID] = Field(None, description="Domain ID this application belongs to")
     is_active: Optional[bool] = Field(None, description="Whether the application is active")
+    is_selling: Optional[bool] = Field(None, description="Whether the application is available in the store / for sale")
     access: Optional[List[str]] = Field(None, description="Array of access permissions")
 
     # ✅ New fields for navigation/UI display
@@ -106,6 +108,7 @@ class ApplicationWithMenusResponse(BaseModel):
     application_section_title: Optional[str] = Field(None, description="Application section title")
     application_nav_group: Optional[str] = Field(None, description="Application navigation group ('tools', 'apps', or 'store')")
     application_is_active: bool = Field(..., description="Whether application is active")
+    application_is_selling: Optional[bool] = Field(None, description="Whether the application is available in the store / for sale")
     application_created_at: datetime = Field(..., description="Application creation timestamp")
     application_updated_at: datetime = Field(..., description="Application update timestamp")
     

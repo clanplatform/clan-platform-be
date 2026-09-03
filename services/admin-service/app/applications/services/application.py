@@ -103,6 +103,7 @@ def create_application(db: Session, application: ApplicationCreate, user_id: Opt
         status=application.status,
         domain_id=application.domain_id,
         is_active=is_active,
+        is_selling=application.is_selling,
         key=application.key,
         label=application.label,
         route=application.route,

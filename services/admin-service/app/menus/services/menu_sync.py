@@ -82,6 +82,7 @@ def _build_module_item(module, root_menus: List[Menu], menus_by_parent: Dict[Any
         "order_index": module.order_index,
         "level": 2,
         "is_active": module.is_active,
+        "is_selling": bool(module.is_selling),
         "access": module.access or [],
         "children": [
             _build_menu_item(menu, menus_by_parent, application_id)
@@ -206,6 +207,7 @@ async def sync_application_menus_to_mongodb(
             "route": app.route or f"/{app.name.lower().replace(' ', '-')}",
             "order_index": app.order_index or 1000,
             "access": app.access or [],
+            "is_selling": bool(app.is_selling),
             "children": navigation_structure,
             "updated_at": now,
         }
@@ -270,6 +272,7 @@ _APPLICATION_FIELD_MAP: Dict[str, str] = {
     "route": "route",
     "order_index": "order_index",
     "access": "access",
+    "is_selling": "is_selling",
 }
 
 
@@ -358,6 +361,7 @@ _MODULE_FIELD_MAP: Dict[str, str] = {
     "route": "route",
     "order_index": "order_index",
     "is_active": "is_active",
+    "is_selling": "is_selling",
     "access": "access",
     "badge": "badge",
     "section_title": "sectionTitle",

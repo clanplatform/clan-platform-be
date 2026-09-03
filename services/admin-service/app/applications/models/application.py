@@ -17,6 +17,7 @@ class Application(Base):
     status = Column(String(50), default="active")
     is_active = Column(Boolean, default=True)
     is_deleted = Column(Boolean, default=False)
+    is_selling = Column(Boolean, nullable=False, server_default="false", default=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # ✅ New fields for navigation/UI display

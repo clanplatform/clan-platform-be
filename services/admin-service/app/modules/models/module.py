@@ -23,6 +23,7 @@ class Module(Base):
     order_index = Column(Integer, default=0)  # ordering
     is_active = Column(Boolean, default=True)
     is_deleted = Column(Boolean, default=False)
+    is_selling = Column(Boolean, nullable=False, server_default="false", default=False)  # available in the store / for sale
     access = Column(ARRAY(String), default=list, nullable=True)  # Array of access permissions
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(Integer, nullable=True)

@@ -1,12 +1,13 @@
 """
 HTTP client for clan-communication-be email-service.
 
-One email, fire-and-forget (asyncio.create_task(...)) after a tenant is
-created and its users are seeded:
+Fire-and-forget (asyncio.create_task(...)) after a tenant is created and its
+users are seeded:
   - send_tenant_invitation_email() — the owner (owner_email), with their
     temp login password.
-contact_email and users[].email are stored for reference only - neither is
-ever emailed.
+  - send_user_invitation_email() — each onboarding users[] entry whose
+    send_invite_email flag is set, with that user's own temp login password.
+contact_email is stored for reference only and is never emailed.
 Failures are always swallowed — an email error must never roll back or
 fail the tenant-creation request.
 """
@@ -109,6 +110,92 @@ async def send_tenant_invitation_email(
         body_html=body_html,
         recipient_id=recipient_id,
         log_label="tenant-invitation",
+    )
+
+
+async def send_user_invitation_email(
+    *,
+    to_email: str,
+    first_name: Optional[str] = None,
+    tenant_name: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    recipient_id: Optional[str] = None,
+    temp_password: Optional[str] = None,
+    tenant_app_url: Optional[str] = None,
+) -> None:
+    """
+    Send an onboarded end user (a users[] entry with send_invite_email set)
+    their welcome email with temporary login credentials (login email + temp
+    password) and a login link. Same shape as send_tenant_invitation_email,
+    worded for a member of the tenant rather than its owner. The user is asked
+    to change the temp password on first login (usersetup_basic
+    .can_change_password is True, is_password_change False — see
+    onboarding/services/onboarding._create_user_row).
+    Fire-and-forget — never raises.
+    """
+    org = tenant_name or "your organization"
+    subject = f"Welcome to Clan — Your {org} Login Credentials" if tenant_name else "Welcome to Clan — Your Login Credentials"
+
+    # Prefer the tenant's own frontend (tenants.deployed_url, passed in as
+    # tenant_app_url) so the login link points at the tenant's domain; fall
+    # back to the platform login page. tenant_id in the query lets the login
+    # page authenticate against the tenant DB.
+    if tenant_app_url:
+        login_base = tenant_app_url.rstrip("/") + "/login"
+    else:
+        login_base = settings.FRONTEND_LOGIN_URL
+    login_url = f"{login_base}?email={quote(to_email)}"
+    if tenant_id:
+        login_url += f"&tenant_id={quote(tenant_id)}"
+
+    website = settings.COMPANY_WEBSITE
+    greeting = f"Hello {first_name}," if first_name else "Hello,"
+
+    body_text = (
+        f"{greeting}\n\n"
+        f"An account has been created for you on Clan for {org}.\n\n"
+        "Please use the temporary login credentials below to log in:\n\n"
+        f"Email: {to_email}\n"
+        f"Temporary Password: {temp_password}\n\n"
+        f"Login URL: {login_url}\n\n"
+        "For your security, please change your temporary password immediately "
+        "after your first login.\n\n"
+        "If you did not expect this account or believe you received this email "
+        "by mistake, please contact your administrator.\n\n"
+        "Thank you,\n\n"
+        "Team Clan\n"
+        "clan.platform@gmail.com\n"
+        f"{website}"
+    )
+
+    body_html = (
+        f"<p>{greeting}</p>"
+        f"<p>An account has been created for you on <strong>Clan</strong> for {org}.</p>"
+        "<p>Please use the temporary login credentials below to log in:</p>"
+        f"<p><strong>Email:</strong> {to_email}<br>"
+        f"<strong>Temporary Password:</strong> {temp_password}</p>"
+        f"<p><a href=\"{login_url}\" "
+        "style=\"display:inline-block;padding:10px 24px;background:#2563eb;"
+        "color:#ffffff;text-decoration:none;border-radius:6px;\">Log In</a></p>"
+        f"<p><strong>Login URL:</strong> <a href=\"{login_url}\">{login_url}</a></p>"
+        "<p>For your security, please change your temporary password "
+        "immediately after your first login.</p>"
+        "<p>If you did not expect this account or believe you received this "
+        "email by mistake, please contact your administrator.</p>"
+        "<p>Thank you,</p>"
+        "<p><strong>Team Clan</strong><br>"
+        "<a href=\"mailto:clan.platform@gmail.com\">clan.platform@gmail.com</a><br>"
+        f"<a href=\"{website}\">{website}</a></p>"
+    )
+
+    await _post_email(
+        to_email=to_email,
+        tenant_id=tenant_id,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        recipient_id=recipient_id,
+        log_label="user-invitation",
     )
 
 

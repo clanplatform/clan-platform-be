@@ -20,7 +20,7 @@ transaction. On failure after the tenant is created, the error is surfaced
 and the (empty/partial) client can be retried or deleted.
 """
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 from uuid import UUID
 from datetime import datetime, timezone
 
@@ -110,6 +110,18 @@ from app.onboarding.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class PendingUserInvite(NamedTuple):
+    """One onboarding users[] entry that asked for an invite email
+    (send_invite_email=True), captured during create_onboarding so the route
+    can fire send_user_invitation_email() after the tenant is committed. The
+    temp_password here is the plaintext one generated for that user's row —
+    it exists only in memory for the duration of the request and is never
+    persisted or returned in the API response."""
+    email: str
+    first_name: Optional[str]
+    temp_password: str
 
 
 def _safe_uuid(value) -> Optional[UUID]:
@@ -507,8 +519,12 @@ def create_onboarding(
     master_db: Session,
     payload: OnboardingRequest,
     created_by_user_id: Optional[str] = None,
-) -> Tuple[Tenant, OnboardingCounts, str]:
-    """Create the tenant + its whole org structure. Returns (tenant, counts, temp_password)."""
+) -> Tuple[Tenant, OnboardingCounts, str, List[PendingUserInvite]]:
+    """Create the tenant + its whole org structure.
+
+    Returns (tenant, counts, temp_password, pending_invites) — pending_invites
+    is one PendingUserInvite per users[] entry with send_invite_email=True, for
+    the route to email after the tenant is committed (see _send_onboarding_emails)."""
     company = payload.company
     # The owner's password is never accepted from the caller — always
     # randomly generated here, used to seed the actual login below, and
@@ -609,6 +625,7 @@ def create_onboarding(
 
     tenant_db = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
     counts = OnboardingCounts()
+    pending_invites: List[PendingUserInvite] = []
     failed = False
     try:
         tenant_id = tenant.tenant_id
@@ -855,6 +872,10 @@ def create_onboarding(
 
         # 10. Users
         for u in payload.users:
+            # Always server-generated — OnboardingUser has no password field.
+            # Held in memory only long enough to email it below when
+            # send_invite_email is set; never persisted, never in the response.
+            user_temp_password = generate_temp_password()
             _create_user_row(
                 tenant_db,
                 firstname=u.first_name,
@@ -862,9 +883,7 @@ def create_onboarding(
                 employee_id=u.employee_id,
                 username=u.username,
                 email=u.email,
-                # Always server-generated — OnboardingUser has no password
-                # field. Never emailed; not returned in the API response.
-                password=generate_temp_password(),
+                password=user_temp_password,
                 tenant_id=tenant_id,
                 phone=u.phone,
                 profile_image_url=u.profile_image_url,
@@ -880,6 +899,15 @@ def create_onboarding(
                 send_invite_email=u.send_invite_email,
             )
             counts.users += 1
+            # The owner already gets send_tenant_invitation_email with the same
+            # kind of credentials — don't double-email them if they also appear
+            # in users[].
+            if u.send_invite_email and u.email and u.email.strip().lower() != company.owner_email.strip().lower():
+                pending_invites.append(PendingUserInvite(
+                    email=u.email,
+                    first_name=u.first_name,
+                    temp_password=user_temp_password,
+                ))
 
         # 11. Security settings (optional; one per client)
         if payload.security is not None:
@@ -916,7 +944,7 @@ def create_onboarding(
             _cleanup_failed_tenant(master_db, tenant)
 
     master_db.refresh(tenant)
-    return tenant, counts, temp_password
+    return tenant, counts, temp_password, pending_invites
 
 
 # ============================================================================

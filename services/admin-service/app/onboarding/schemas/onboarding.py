@@ -557,14 +557,16 @@ class OnboardingUser(BaseModel):
 
     No password field - a new user's password is always generated server-side
     (see generate_temp_password() in onboarding/services/onboarding.py), never
-    accepted from the caller. It is not emailed anywhere; email here is
-    contact information only.
+    accepted from the caller. That temp password is emailed to `email` only
+    when `send_invite_email` is True (once the whole step form is finalized and
+    the tenant is created — see _send_onboarding_emails); otherwise `email` is
+    stored as contact information only and nothing is sent.
     """
     first_name: str
     last_name: str
     employee_id: str
     username: str
-    email: str = Field(..., description="Contact email only - never used to send an invitation")
+    email: str = Field(..., description="User's email — login/contact address, and where the invite with temporary credentials is sent when send_invite_email is True")
     phone: Optional[str] = None
     profile_image_url: Optional[str] = Field(None, description="Profile image URL")
     status: Optional[str] = "active"
@@ -597,7 +599,7 @@ class OnboardingUser(BaseModel):
                     "— same as the direct user_setup module's "
                     "UserSetupBasicCreate.user_group_id.",
     )
-    send_invite_email: bool = Field(default=False, description="Send an invite email to the user")
+    send_invite_email: bool = Field(default=False, description="When True, email this user their temporary login credentials (email + temp password + login link) after the tenant is created")
 
 
 # ============================================================================

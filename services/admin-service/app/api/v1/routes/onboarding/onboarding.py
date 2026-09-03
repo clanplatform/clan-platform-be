@@ -41,7 +41,7 @@ from app.infrastructure.audit_helpers import (
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
 from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
-from app.infrastructure.email_tenant import send_tenant_invitation_email
+from app.infrastructure.email_tenant import send_tenant_invitation_email, send_user_invitation_email
 
 from app.onboarding.services import onboarding as onboarding_service
 from app.onboarding.exceptions import MasterUserRequiredError, OnboardingDetailFailedError
@@ -89,9 +89,17 @@ def _sync_tenant(tenant) -> None:
     ))
 
 
-def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: str) -> None:
-    """Fire-and-forget: owner welcome (credentials) only. contact_email and
-    users[].email are stored for reference only - neither is ever emailed."""
+def _send_onboarding_emails(
+    tenant,
+    payload: OnboardingRequest,
+    temp_password: str,
+    pending_invites: list,
+) -> None:
+    """Fire-and-forget welcome emails with temp login credentials:
+      - the owner (company.owner_email), always;
+      - each users[] entry that set send_invite_email (pending_invites, built
+        by create_onboarding — the owner is already de-duped out there).
+    contact_email is stored for reference only and is never emailed."""
     asyncio.create_task(send_tenant_invitation_email(
         to_email=payload.company.owner_email,
         tenant_name=tenant.tenant_name,
@@ -103,6 +111,15 @@ def _send_onboarding_emails(tenant, payload: OnboardingRequest, temp_password: s
         # post-login redirect target) and isn't used here.
         tenant_app_url=tenant.deployed_url,
     ))
+    for invite in pending_invites:
+        asyncio.create_task(send_user_invitation_email(
+            to_email=invite.email,
+            first_name=invite.first_name,
+            tenant_name=tenant.tenant_name,
+            tenant_id=str(tenant.tenant_id),
+            temp_password=invite.temp_password,
+            tenant_app_url=tenant.deployed_url,
+        ))
 
 
 async def _create_and_finalize(
@@ -117,7 +134,7 @@ async def _create_and_finalize(
     completed on success, fire the audit log + sync, and return the
     OnboardingResult."""
     try:
-        tenant, counts, temp_password = onboarding_service.create_onboarding(
+        tenant, counts, temp_password, pending_invites = onboarding_service.create_onboarding(
             db, payload, created_by_user_id=get_user_id(current_user)
         )
     except Exception as exc:
@@ -161,7 +178,7 @@ async def _create_and_finalize(
         pass
 
     _sync_tenant(tenant)
-    _send_onboarding_emails(tenant, payload, temp_password)
+    _send_onboarding_emails(tenant, payload, temp_password, pending_invites)
 
     # Full detail — same query GET /{tenant_id} runs — so the creation
     # response carries every record actually written (company, branches,

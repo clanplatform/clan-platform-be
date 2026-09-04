@@ -112,16 +112,36 @@ from app.onboarding.exceptions import (
 logger = logging.getLogger(__name__)
 
 
-class PendingUserInvite(NamedTuple):
-    """One onboarding users[] entry that asked for an invite email
-    (send_invite_email=True), captured during create_onboarding so the route
-    can fire send_user_invitation_email() after the tenant is committed. The
-    temp_password here is the plaintext one generated for that user's row —
-    it exists only in memory for the duration of the request and is never
-    persisted or returned in the API response."""
+class OnboardedUser(NamedTuple):
+    """One user row create_onboarding wrote to the tenant DB (the owner, plus
+    every users[] entry), captured so the route can fan out post-commit work
+    once the tenant is fully created:
+
+      * eager-sync to the auth-service auth_users directory (every user — this
+        is what makes a tenant member's first login resolvable to the right
+        tenant DB; see _sync_onboarding_users_to_auth), and
+      * the welcome email with temporary credentials (only when send_invite_email
+        is set and the user isn't the owner — the owner already gets
+        send_tenant_invitation_email).
+
+    temp_password is the plaintext generated for that row — held in memory only
+    for the request, never persisted (drafts store no passwords) and never in
+    the API response. None for the owner (whose temp password is the top-level
+    create_onboarding return value)."""
+    user_setup_id: UUID
+    basic_id: UUID
     email: str
-    first_name: Optional[str]
-    temp_password: str
+    username: str
+    first_name: str
+    last_name: str
+    employee_id: str
+    phone: Optional[str]
+    status: str
+    password_hash: str
+    tenant_id: UUID
+    is_owner: bool
+    send_invite_email: bool
+    temp_password: Optional[str]
 
 
 def _safe_uuid(value) -> Optional[UUID]:
@@ -435,8 +455,10 @@ def _create_user_row(
     job_code_id: Optional[UUID] = None,
     user_group_id: Optional[UUID] = None,
     send_invite_email: bool = False,
-) -> Tuple[UUID, UUID]:
+) -> UserSetupBasic:
     """Create user_setup + usersetup_basic (+ optional role/entity/job code assignment).
+    Returns the committed UserSetupBasic (callers read .id / .user_setup_id /
+    .password_hash off it for the post-commit auth-service + email fan-out).
 
     By this point in the onboarding sequence, job_codes have already been
     created (step 5, before users at step 9), so the department/division
@@ -481,7 +503,8 @@ def _create_user_row(
     )
     tenant_db.add(basic)
     tenant_db.commit()
-    return user_setup.id, basic.id
+    tenant_db.refresh(basic)
+    return basic
 
 
 def _update_user_row(
@@ -519,12 +542,13 @@ def create_onboarding(
     master_db: Session,
     payload: OnboardingRequest,
     created_by_user_id: Optional[str] = None,
-) -> Tuple[Tenant, OnboardingCounts, str, List[PendingUserInvite]]:
+) -> Tuple[Tenant, OnboardingCounts, str, List[OnboardedUser]]:
     """Create the tenant + its whole org structure.
 
-    Returns (tenant, counts, temp_password, pending_invites) — pending_invites
-    is one PendingUserInvite per users[] entry with send_invite_email=True, for
-    the route to email after the tenant is committed (see _send_onboarding_emails)."""
+    Returns (tenant, counts, temp_password, onboarded_users) — onboarded_users
+    is one OnboardedUser per tenant-DB user written (owner + every users[]
+    entry), for the route's post-commit fan-out: auth_users eager-sync for all
+    of them, plus the welcome email for the ones with send_invite_email set."""
     company = payload.company
     # The owner's password is never accepted from the caller — always
     # randomly generated here, used to seed the actual login below, and
@@ -625,7 +649,7 @@ def create_onboarding(
 
     tenant_db = tenant_db_manager.get_session(tenant.tenant_db_name, settings.DATABASE_URL)
     counts = OnboardingCounts()
-    pending_invites: List[PendingUserInvite] = []
+    onboarded_users: List[OnboardedUser] = []
     failed = False
     try:
         tenant_id = tenant.tenant_id
@@ -647,17 +671,36 @@ def create_onboarding(
         # Owner admin user (step 1 "Owner login")
         code = (tenant.tenant_code or str(tenant_id)[:8]).upper()
         owner_first, owner_last = _split_full_name(company.owner_name)
-        owner_setup_id, owner_basic_id = _create_user_row(
+        owner_employee_id = f"OWNER-{code}"
+        owner_username = company.owner_email.split("@")[0]
+        owner_basic = _create_user_row(
             tenant_db,
             firstname=owner_first,
             lastname=owner_last,
-            employee_id=f"OWNER-{code}",
-            username=company.owner_email.split("@")[0],
+            employee_id=owner_employee_id,
+            username=owner_username,
             email=company.owner_email,
             password_hash=owner_password_hash,
             tenant_id=tenant_id,
         )
+        owner_basic_id = owner_basic.id
         counts.users += 1
+        onboarded_users.append(OnboardedUser(
+            user_setup_id=owner_basic.user_setup_id,
+            basic_id=owner_basic.id,
+            email=company.owner_email,
+            username=owner_username,
+            first_name=owner_first,
+            last_name=owner_last,
+            employee_id=owner_employee_id,
+            phone=None,
+            status="active",
+            password_hash=owner_password_hash,
+            tenant_id=tenant_id,
+            is_owner=True,
+            send_invite_email=False,  # owner gets send_tenant_invitation_email instead
+            temp_password=None,
+        ))
 
         # 3. Branches (entities) — created with the client-supplied entity_id so
         #    departments/divisions/job_codes/users can all reference them by
@@ -871,12 +914,14 @@ def create_onboarding(
         counts.users_groups = len(user_group_ids)
 
         # 10. Users
+        owner_email_lc = (company.owner_email or "").strip().lower()
         for u in payload.users:
             # Always server-generated — OnboardingUser has no password field.
-            # Held in memory only long enough to email it below when
-            # send_invite_email is set; never persisted, never in the response.
+            # Held in memory only long enough to sync it to auth_users and, when
+            # send_invite_email is set, email it; never persisted, never in the
+            # response.
             user_temp_password = generate_temp_password()
-            _create_user_row(
+            basic = _create_user_row(
                 tenant_db,
                 firstname=u.first_name,
                 lastname=u.last_name,
@@ -899,15 +944,29 @@ def create_onboarding(
                 send_invite_email=u.send_invite_email,
             )
             counts.users += 1
-            # The owner already gets send_tenant_invitation_email with the same
-            # kind of credentials — don't double-email them if they also appear
-            # in users[].
-            if u.send_invite_email and u.email and u.email.strip().lower() != company.owner_email.strip().lower():
-                pending_invites.append(PendingUserInvite(
-                    email=u.email,
-                    first_name=u.first_name,
-                    temp_password=user_temp_password,
-                ))
+            # The owner row (created above) already carries this email into
+            # auth_users and gets send_tenant_invitation_email — skip the
+            # post-commit fan-out for a users[] entry that reuses owner_email
+            # (in practice usersetup_basic.email is unique per tenant DB, so
+            # this branch only guards against a would-be duplicate).
+            if bool(u.email) and u.email.strip().lower() == owner_email_lc:
+                continue
+            onboarded_users.append(OnboardedUser(
+                user_setup_id=basic.user_setup_id,
+                basic_id=basic.id,
+                email=u.email,
+                username=u.username,
+                first_name=u.first_name,
+                last_name=u.last_name,
+                employee_id=u.employee_id,
+                phone=u.phone,
+                status=u.status or "active",
+                password_hash=basic.password_hash,
+                tenant_id=tenant_id,
+                is_owner=False,
+                send_invite_email=bool(u.send_invite_email),
+                temp_password=user_temp_password,
+            ))
 
         # 11. Security settings (optional; one per client)
         if payload.security is not None:
@@ -944,7 +1003,7 @@ def create_onboarding(
             _cleanup_failed_tenant(master_db, tenant)
 
     master_db.refresh(tenant)
-    return tenant, counts, temp_password, pending_invites
+    return tenant, counts, temp_password, onboarded_users
 
 
 # ============================================================================

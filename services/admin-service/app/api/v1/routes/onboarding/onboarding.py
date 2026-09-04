@@ -42,6 +42,7 @@ from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
 from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
 from app.infrastructure.email_tenant import send_tenant_invitation_email, send_user_invitation_email
+from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
 
 from app.onboarding.services import onboarding as onboarding_service
 from app.onboarding.exceptions import MasterUserRequiredError, OnboardingDetailFailedError
@@ -93,12 +94,12 @@ def _send_onboarding_emails(
     tenant,
     payload: OnboardingRequest,
     temp_password: str,
-    pending_invites: list,
+    onboarded_users: list,
 ) -> None:
     """Fire-and-forget welcome emails with temp login credentials:
       - the owner (company.owner_email), always;
-      - each users[] entry that set send_invite_email (pending_invites, built
-        by create_onboarding — the owner is already de-duped out there).
+      - each onboarded user with send_invite_email set (the owner is already
+        de-duped out of onboarded_users by create_onboarding).
     contact_email is stored for reference only and is never emailed."""
     asyncio.create_task(send_tenant_invitation_email(
         to_email=payload.company.owner_email,
@@ -111,15 +112,58 @@ def _send_onboarding_emails(
         # post-login redirect target) and isn't used here.
         tenant_app_url=tenant.deployed_url,
     ))
-    for invite in pending_invites:
+    for u in onboarded_users:
+        if not (u.send_invite_email and u.temp_password):
+            continue
         asyncio.create_task(send_user_invitation_email(
-            to_email=invite.email,
-            first_name=invite.first_name,
+            to_email=u.email,
+            first_name=u.first_name,
             tenant_name=tenant.tenant_name,
             tenant_id=str(tenant.tenant_id),
-            temp_password=invite.temp_password,
+            temp_password=u.temp_password,
             tenant_app_url=tenant.deployed_url,
         ))
+
+
+async def _sync_one_user_to_auth(u) -> None:
+    """One best-effort auth_users upsert. Never raises — a tenant is fully
+    created by this point and an auth-service hiccup must not surface as a
+    failure (the user is still recoverable: the login flow's own auto-sync
+    backfills auth_users on the first successful login once this lands)."""
+    try:
+        await AuthServiceSync.create_auth_user(
+            user_id=u.basic_id,
+            user_setup_id=u.user_setup_id,
+            username=u.username,
+            email=u.email,
+            password_hash=u.password_hash,
+            firstname=u.first_name,
+            lastname=u.last_name,
+            phone_number=u.phone,
+            is_active=(u.status == "active"),
+            employee_id=u.employee_id,
+            is_password_change=False,   # force the first-login password change
+            tenant_id=u.tenant_id,
+            can_change_password=True,
+        )
+    except AuthServiceSyncError as exc:
+        logger.warning("[onboarding] auth-service user sync failed for %s: %s", u.email, exc)
+    except Exception:
+        logger.warning("[onboarding] auth-service user sync errored for %s", u.email, exc_info=True)
+
+
+def _sync_onboarding_users_to_auth(onboarded_users: list) -> None:
+    """Fire-and-forget: eager-sync every onboarded user (owner + users[]) into
+    the auth-service auth_users directory. This is what lets a tenant member's
+    FIRST login resolve to the right tenant DB — the login API takes no
+    tenant_id and routes purely by the auth_users row. Upsert on the auth side
+    matches an existing row by email, so re-onboarding the same email refreshes
+    the stale row (new password hash + tenant_id) instead of colliding."""
+    if not AuthServiceSync.sync_enabled():
+        logger.info("[onboarding] auth-service sync disabled (IDENTITY_SERVICE_URL unset) — skipping user sync")
+        return
+    for u in onboarded_users:
+        asyncio.create_task(_sync_one_user_to_auth(u))
 
 
 async def _create_and_finalize(
@@ -134,7 +178,7 @@ async def _create_and_finalize(
     completed on success, fire the audit log + sync, and return the
     OnboardingResult."""
     try:
-        tenant, counts, temp_password, pending_invites = onboarding_service.create_onboarding(
+        tenant, counts, temp_password, onboarded_users = onboarding_service.create_onboarding(
             db, payload, created_by_user_id=get_user_id(current_user)
         )
     except Exception as exc:
@@ -178,7 +222,8 @@ async def _create_and_finalize(
         pass
 
     _sync_tenant(tenant)
-    _send_onboarding_emails(tenant, payload, temp_password, pending_invites)
+    _sync_onboarding_users_to_auth(onboarded_users)
+    _send_onboarding_emails(tenant, payload, temp_password, onboarded_users)
 
     # Full detail — same query GET /{tenant_id} runs — so the creation
     # response carries every record actually written (company, branches,

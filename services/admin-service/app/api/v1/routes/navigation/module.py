@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 # Modules, tenant_modules live only in the master DB; tenant scoping is done by
 # filtering tenant_modules.tenant_id, not by switching databases.
-from app.infrastructure.database.session import get_db
+from app.infrastructure.database.session import get_db, get_tenant_db
 from app.core.security import get_current_user
 from app.modules.services.module import ModuleService
 from app.modules.schemas.module import (
@@ -13,6 +13,7 @@ from app.modules.schemas.module import (
     ModuleResponse,
     ModuleListResponse
 )
+from app.subscription.models.subscription import Subscription
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
 from app.infrastructure.audit_tenant import fire_audit_log
 import math
@@ -115,6 +116,9 @@ async def create_module(
 async def get_modules(
     request: Request,
     db: Session = Depends(get_db),
+    # Routes to the caller's own tenant DB (or master, for a master user) —
+    # used only to read that tenant's Subscription.modules_to_grant below.
+    tenant_scoped_db: Session = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
@@ -142,6 +146,17 @@ async def get_modules(
     # Platform admins (no tenant_id in token) see all modules.
     requester_tenant_id = current_user.get("tenant_id") if current_user else None
 
+    # That tenant's own subscription grant list (lives in the tenant's own
+    # DB, not master) — the mechanism onboarding/role-permission checks/
+    # login-user-menus nav filtering already rely on for "what is this
+    # tenant actually subscribed to", unlike tenant_modules below which
+    # nothing currently populates automatically.
+    subscription_module_ids: Optional[List[str]] = None
+    if requester_tenant_id:
+        subscription = tenant_scoped_db.query(Subscription).first()
+        if subscription and subscription.modules_to_grant:
+            subscription_module_ids = [str(m) for m in subscription.modules_to_grant]
+
     try:
         modules, total = ModuleService.get_modules(
             db=db,
@@ -153,6 +168,7 @@ async def get_modules(
             sort_by=sort_by,
             sort_order=sort_order,
             tenant_id=requester_tenant_id,
+            subscription_module_ids=subscription_module_ids,
         )
         
         total_pages = math.ceil(total / size) if total > 0 else 0

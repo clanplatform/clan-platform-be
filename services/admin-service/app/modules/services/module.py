@@ -97,22 +97,39 @@ class ModuleService:
         sort_by: str = "created_at",
         sort_order: str = "desc",
         tenant_id: Optional[str] = None,
+        subscription_module_ids: Optional[List[str]] = None,
     ) -> tuple[List[Module], int]:
         """Get modules with filtering and pagination.
-        When tenant_id is provided, only returns modules licensed to that tenant."""
+
+        When tenant_id is provided, restricts to modules the tenant is
+        actually granted — the union of:
+          - tenant_modules (Tier-1 direct per-module licensing; a master admin
+            assigns these one at a time via POST /tenant_modules/), and
+          - subscription_module_ids (that tenant's own Subscription
+            .modules_to_grant, resolved by the caller from the tenant's own
+            DB — the array onboarding actually populates and the same one
+            role-permission checks / login-user-menus nav filtering key off
+            of; see UserRoleService._verify_permissions_within_subscription
+            and menu.py's _filter_navigation_by_subscription).
+
+        Permissive when NEITHER source has anything for this tenant (no
+        tenant_modules rows and no/empty subscription) — same convention as
+        _filter_navigation_by_subscription: an unconfigured tenant sees the
+        full catalog rather than being blanked outright.
+        """
 
         query = db.query(Module).filter(Module.is_deleted == False)
 
-        # Tenant isolation: restrict to modules the tenant has licensed
         if tenant_id:
-            query = query.join(
-                TenantModule,
-                and_(
-                    TenantModule.module_id == Module.id,
+            tenant_module_ids = {
+                str(row[0]) for row in db.query(TenantModule.module_id).filter(
                     TenantModule.tenant_id == tenant_id,
                     TenantModule.is_active == True,
-                )
-            )
+                ).all()
+            }
+            granted_ids = tenant_module_ids | {str(i) for i in (subscription_module_ids or [])}
+            if granted_ids:
+                query = query.filter(Module.id.in_(granted_ids))
 
         # Apply filters
         if application_id:

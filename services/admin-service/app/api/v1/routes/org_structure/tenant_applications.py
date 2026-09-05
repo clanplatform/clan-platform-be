@@ -24,6 +24,15 @@ def _to_uuid(value) -> Optional[uuid.UUID]:
         return None
 
 
+def _caller_tenant_id(current_user: dict) -> Optional[uuid.UUID]:
+    """The caller's own tenant_id from the JWT, or None for a master-DB user.
+    Writes here already require require_master_user; this is for the GET
+    endpoints below, which otherwise let ANY authenticated tenant user list
+    or look up every tenant's application assignments."""
+    raw = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    return _to_uuid(raw) if raw else None
+
+
 @router.post("/", response_model=TenantApplicationResponse, status_code=status.HTTP_201_CREATED,
              summary="Assign an application to a tenant",
              description="Grants a tenant a whole-application license (Tier 2). "
@@ -53,7 +62,8 @@ async def assign_application(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-@router.get("/", response_model=TenantApplicationListResponse, summary="List all tenant-application assignments")
+@router.get("/", response_model=TenantApplicationListResponse,
+            summary="List tenant-application assignments (all, for a master user; only the caller's own, for a tenant user)")
 async def list_assignments(
     request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100),
@@ -61,9 +71,15 @@ async def list_assignments(
     is_active: Optional[bool] = Query(None),
     sort_by: str = Query("assigned_at"), sort_order: str = Query("desc", regex="^(asc|desc)$"),
 ):
+    # A tenant user's JWT tenant_id always wins over the ?tenant_id= query
+    # param — otherwise a tenant caller could pass someone else's id (or
+    # omit it) and list every tenant's application assignments.
+    caller_tenant_id = _caller_tenant_id(current_user)
+    effective_tenant_id = str(caller_tenant_id) if caller_tenant_id is not None else tenant_id
+
     results, total = TenantApplicationService.get_assignments(
         db=db, skip=(page - 1) * size, limit=size,
-        tenant_id=tenant_id, application_id=application_id, is_active=is_active,
+        tenant_id=effective_tenant_id, application_id=application_id, is_active=is_active,
         sort_by=sort_by, sort_order=sort_order,
     )
     return TenantApplicationListResponse(
@@ -78,6 +94,11 @@ async def get_applications_for_tenant(
     tenant_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
     is_active: Optional[bool] = Query(None),
 ):
+    # A tenant user may only look up their own tenant's applications, never
+    # another tenant's by swapping the path id.
+    caller_tenant_id = _caller_tenant_id(current_user)
+    if caller_tenant_id is not None and str(caller_tenant_id) != str(tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access another tenant's data")
     return TenantApplicationService.get_applications_for_tenant(db, tenant_id, is_active)
 
 
@@ -87,7 +108,13 @@ async def get_tenants_for_application(
     application_id: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user),
     is_active: Optional[bool] = Query(None),
 ):
-    return TenantApplicationService.get_tenants_for_application(db, application_id, is_active)
+    results = TenantApplicationService.get_tenants_for_application(db, application_id, is_active)
+    # A tenant user gets only their own assignment row (if any) for this
+    # application, not the full list of every other tenant that has it.
+    caller_tenant_id = _caller_tenant_id(current_user)
+    if caller_tenant_id is not None:
+        results = [r for r in results if r.tenant_id == caller_tenant_id]
+    return results
 
 
 @router.get("/{assignment_id}", response_model=TenantApplicationResponse, summary="Get a specific assignment")
@@ -97,6 +124,9 @@ async def get_assignment(
     assignment = TenantApplicationService.get_assignment(db, assignment_id)
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Assignment {assignment_id} not found")
+    caller_tenant_id = _caller_tenant_id(current_user)
+    if caller_tenant_id is not None and assignment.tenant_id != caller_tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access another tenant's data")
     return assignment
 
 

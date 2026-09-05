@@ -32,6 +32,20 @@ from app.tenants.schemas.tenants import (
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "false").lower() == "true"
 
 
+def _caller_tenant_id(current_user) -> Optional[UUID]:
+    """The caller's own tenant_id from the JWT, or None for a master-DB user.
+    None is also returned (rather than raising) for a malformed/non-UUID
+    claim, since that should never happen for a validly issued token and
+    must not itself become a way to bypass the tenant scoping below."""
+    raw = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    if not raw:
+        return None
+    try:
+        return UUID(str(raw))
+    except (ValueError, TypeError):
+        return None
+
+
 def _split_full_name(full_name: Optional[str]) -> tuple:
     """Split 'Owner full name' into (first, last); defaults to Tenant/Admin
     when no owner_name was given (same rule as onboarding's create_onboarding
@@ -280,13 +294,24 @@ async def list_tenants(
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)
 ):
-    """List all tenants with pagination and filtering (admin only)"""
+    """List tenants with pagination and filtering.
+
+    Master-DB users (JWT tenant_id NULL) see every tenant, as before.
+    A tenant user's JWT carries their own tenant_id — the `tenants` table is
+    the master registry of every client, so without this filter a tenant
+    user's token could list every other tenant's record too; this restricts
+    the query to that one row (0 or 1 result) regardless of the other filters.
+    """
     # Add cache control headers to prevent browser caching
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
 
     query = db.query(Tenant)
+
+    caller_tenant_id = _caller_tenant_id(current_user)
+    if caller_tenant_id is not None:
+        query = query.filter(Tenant.tenant_id == caller_tenant_id)
 
     # Apply filters
     if search:
@@ -333,10 +358,16 @@ async def update_tenant(
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)
 ):
-    """Update tenant (admin only)"""
+    """Update tenant (admin only). A tenant user (JWT tenant_id set) may only
+    update their own tenant's row — never another tenant's, even by guessing
+    its tenant_id."""
     tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+    caller_tenant_id = _caller_tenant_id(current_user)
+    if caller_tenant_id is not None and caller_tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail="Cannot update another tenant's data")
 
     # Capture old values before update for audit
     old_values = {
@@ -403,13 +434,18 @@ async def delete_tenant(
     db: Session = Depends(get_db),
     current_user=Depends(require_admin_role)
 ):
-    """Soft delete tenant (admin only)"""
+    """Soft delete tenant (admin only). A tenant user (JWT tenant_id set) may
+    only delete their own tenant's row — never another tenant's."""
     tenant = db.query(Tenant).filter(
         Tenant.tenant_id == tenant_id,
         Tenant.is_active == True
     ).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+    caller_tenant_id = _caller_tenant_id(current_user)
+    if caller_tenant_id is not None and caller_tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail="Cannot delete another tenant's data")
 
     # Snapshot name before soft delete for audit
     old_tenant_name = tenant.tenant_name

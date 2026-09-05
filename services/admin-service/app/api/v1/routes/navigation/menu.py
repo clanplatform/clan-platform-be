@@ -170,8 +170,13 @@ async def get_menus(
 
     print(f"[GET Menus] Fetching entire mainNavigation from MongoDB with access data (lang_code: {lang_code})")
 
-    # Create cache key for entire navigation (include lang_code for separate caching)
-    cache_key = f"menus:mongo:main_navigation_full_with_access:{lang_code}" if lang_code else "menus:mongo:main_navigation_full_with_access"
+    # Create cache key for entire navigation (include lang_code AND the
+    # caller's own tenant_id for separate caching — the response is now
+    # subscription-filtered per caller, so a shared key would risk one
+    # tenant's cached, filtered result being served back to another caller,
+    # or to a master user, once caching is re-enabled below).
+    caller_tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    cache_key = f"menus:mongo:main_navigation_full_with_access:{caller_tenant_id or 'master'}:{lang_code}"
 
     # ⚠️ TEMPORARILY BYPASS CACHE FOR DEBUGGING
     # Try to get from cache
@@ -382,6 +387,20 @@ async def get_menus(
             print(f"[GET Menus]   [{idx}] ⚠️ Invalid item in mainNavigation at index {idx}: {type(app_ref)}")
     
     print(f"[GET Menus] 📊 Total application_documents collected: {len(application_documents)}")
+
+    # Restrict to applications/modules actually in the caller's subscription —
+    # menu_details is one shared MongoDB catalog across every tenant, so
+    # without this a tenant user's token would see the exact same full
+    # mainNavigation a master user does. `db` is already routed to the
+    # caller's own tenant DB (or master, for a master user) by get_tenant_db
+    # above, and a master caller's DB has no tenant subscription row, so this
+    # stays permissive (unrestricted) for them — same helper login-user-menus
+    # already uses for this.
+    subscription = db.query(Subscription).first()
+    granted_apps = {str(a) for a in (subscription.applications_to_grant or [])} if subscription else set()
+    granted_modules = {str(m) for m in (subscription.modules_to_grant or [])} if subscription else set()
+    application_documents = _filter_navigation_by_subscription(application_documents, granted_apps, granted_modules)
+    print(f"[GET Menus] 📊 {len(application_documents)} application documents remain after subscription filtering")
 
     # Get profileSection and config
     profile_section = master_doc.get("profileSection", {})

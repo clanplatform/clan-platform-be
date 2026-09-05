@@ -66,6 +66,36 @@ def _overlay_field_permissions(forms: list, context: Dict[str, Any]) -> None:
             apply_field_permissions(f["form"], tree)
 
 
+def _subscription_granted_menu_ids(db: Session) -> Optional[set]:
+    """Menu ids belonging to an application/module this caller's own
+    Subscription actually grants (applications_to_grant / modules_to_grant).
+
+    Returns None when there's no subscription signal at all — permissive,
+    same convention as menu.py's _filter_navigation_by_subscription: an
+    unconfigured tenant isn't blanked outright. A master-DB caller's `db`
+    session has no tenant subscription row (subscriptions live only in each
+    tenant's own DB, seeded at onboarding), so this is always None for them
+    -> unrestricted, which is exactly "master sees all"."""
+    from app.subscription.models.subscription import Subscription
+    from app.menus.models.menu import Menu
+    from sqlalchemy import or_
+
+    subscription = db.query(Subscription).first()
+    if not subscription:
+        return None
+    granted_apps = {str(a) for a in (subscription.applications_to_grant or [])}
+    granted_modules = {str(m) for m in (subscription.modules_to_grant or [])}
+    if not granted_apps and not granted_modules:
+        return None
+
+    conditions = []
+    if granted_apps:
+        conditions.append(Menu.application_id.in_(granted_apps))
+    if granted_modules:
+        conditions.append(Menu.module_id.in_(granted_modules))
+    return {str(mid) for (mid,) in db.query(Menu.id).filter(or_(*conditions)).all()}
+
+
 def _forms_payload_dicts(forms) -> list:
     """The incoming forms array as plain dicts (Pydantic FormItem or already-dict)."""
     return [item.model_dump() if hasattr(item, "model_dump") else item for item in (forms or [])]
@@ -367,12 +397,25 @@ async def get_forms(
     try:
         # Get forms directly from MongoDB
         collection = await forms_details_service.get_collection()
-        
-        # Build query
+
+        # Build query. forms_details is one shared Mongo collection across
+        # every tenant (there's no tenant_id field, and menu_id is the same
+        # catalog id in every tenant DB — see onboarding's catalog copy), so
+        # an unscoped query here would hand a tenant caller every OTHER
+        # tenant's forms too. Restrict to menu ids under this caller's own
+        # subscription BEFORE pagination — a master caller has no tenant
+        # subscription row, so this stays unrestricted for them (permissive
+        # fallback for an unconfigured tenant as well).
         query = {}
+        allowed_menu_ids = _subscription_granted_menu_ids(db)
         if menu_id:
-            query["menu_id"] = menu_id
-        
+            if allowed_menu_ids is not None and menu_id not in allowed_menu_ids:
+                query["menu_id"] = "__not_subscribed__"  # deliberately matches nothing
+            else:
+                query["menu_id"] = menu_id
+        elif allowed_menu_ids is not None:
+            query["menu_id"] = {"$in": list(allowed_menu_ids)}
+
         if search:
             query["$or"] = [
                 {"name": {"$regex": search, "$options": "i"}},

@@ -2,7 +2,7 @@
 
 Platform Admin Service for managing domains and applications with PostgreSQL, MongoDB, and Redis.
 
-## Features
+## Feature's
 
 - **Domain Management**: Create, read, update, and soft-delete domains
 - **Application Management**: Manage applications within domains

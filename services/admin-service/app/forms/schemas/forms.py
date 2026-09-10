@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any, List, Union
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
 import uuid
 
@@ -10,14 +10,130 @@ class ComponentAccess(BaseModel):
     write: bool = Field(True, description="Can edit/modify the component")
     disable: bool = Field(False, description="Component is disabled")
 
+
+# The form-builder's own wire vocabulary for props.access.value: [] (Default)
+# / read / write / hidden — same vocabulary the role field-permission tree
+# uses (see app.user_role.schemas.user_role.FIELD_ACCESS_VALUES). This is
+# DIFFERENT from the definition-level `access` field's vocabulary (read/
+# write/disable) that app.core.access.cascade_access resolves — 'hidden'
+# means the same thing as 'disable' there (see _to_definition_access below,
+# mirroring app.core.access._FIELD_TO_TREE_ACCESS).
+FIELD_ACCESS_VALUES = {"read", "write", "hidden", "disable"}
+
+
+class AccessProp(BaseModel):
+    """Form-builder prop wrapper for `props.access` — every prop is `{value: ...}`."""
+    value: List[str] = Field(
+        default_factory=list,
+        description="Access permissions: [] (Default) / ['read'] / ['write'] / ['hidden']",
+        json_schema_extra={"example": ["read"]},
+    )
+
+    @field_validator('value', mode='before')
+    @classmethod
+    def _normalize_value(cls, v):
+        """Lower-case/strip and silently drop unknown tokens — nested
+        component access is free-form JSON and must never 500 a form save
+        (same lenient philosophy as app.core.access.coerce_access)."""
+        if isinstance(v, str):
+            v = [v] if v else []
+        toks = [str(t).strip().lower() for t in (v or [])]
+        return [t for t in toks if t in FIELD_ACCESS_VALUES]
+
+
+class LabelProp(BaseModel):
+    """Form-builder prop wrapper for `props.label` — every prop is `{value: ...}`."""
+    value: Optional[str] = Field(None, description="Display label text", json_schema_extra={"example": "Code"})
+
+
+class ComponentSchema(BaseModel):
+    """Form-builder validation schema for a component (form-builder shape:
+    {type, validations, autoValidate})."""
+    type: Optional[str] = Field(None, description="Field data type", json_schema_extra={"example": "string"})
+    validations: List[Any] = Field(default_factory=list, description="Validation rules")
+    autoValidate: bool = Field(False, description="Whether to auto-validate on change")
+
+
+class ComponentProps(BaseModel):
+    """A component's props (form-builder convention: every prop is `{value: ...}`).
+
+    `access` and `label` are the well-known props surfaced explicitly; any
+    other component-specific prop (placeholder, options, format, ...) passes
+    through untouched via extra='allow'.
+    """
+    access: Optional[AccessProp] = Field(None, description="Field-level access — see FormComponent.access")
+    label: Optional[LabelProp] = Field(None, description="Display label")
+
+    model_config = ConfigDict(extra="allow")
+
+
+def _extract_node_access(data: dict):
+    """A form-component node's access, preferring the form-builder's own wire
+    convention `props.access.value` (every prop is `{value: ...}` — same
+    convention used for role form permissions, see
+    app.user_role.schemas.user_role.RoleFormComponentTree), and falling back
+    to a top-level `access` key so already-stored / older payloads that only
+    ever set it there keep working. Returns None when neither is set (leaves
+    the field's own default in place)."""
+    props = data.get("props")
+    if isinstance(props, dict) and "access" in props:
+        ap = props["access"]
+        found = ap.get("value") if isinstance(ap, dict) else ap
+        if found is not None:
+            return found
+    return data.get("access")
+
+
+def _to_definition_access(value):
+    """Map the form-builder's props.access.value vocabulary (read/write/
+    hidden) onto the definition-level `access` field's vocabulary (read/
+    write/disable) that app.core.access.cascade_access understands — 'hidden'
+    means the same thing as 'disable' there. Same mapping as
+    app.core.access._FIELD_TO_TREE_ACCESS. Without this, a component
+    authored as 'hidden' would silently vanish (cascade_access's
+    coerce_access drops any token outside read/write/disable) instead of
+    behaving like a disabled component."""
+    if isinstance(value, str):
+        value = [value] if value else []
+    return ["disable" if str(t).strip().lower() == "hidden" else t for t in (value or [])]
+
+
 # Form component structure
 class FormComponent(BaseModel):
     """Base form component structure - simplified"""
     key: str = Field(..., description="Unique component key")
     type: str = Field(..., description="Component type (e.g., AntInput, AntButton)")
-    access: Union[str, List[str]] = Field(default_factory=list, description="Access permissions array")
-    props: Dict[str, Any] = Field(default_factory=dict, description="Component properties")
-    children: List = Field(default_factory=list, description="Child components - empty array")
+    access: Union[str, List[str]] = Field(
+        default_factory=list,
+        description="Access permissions array — resolved from props.access.value "
+                    "(form-builder convention) or a top-level access key",
+    )
+    props: ComponentProps = Field(default_factory=ComponentProps, description="Component properties")
+    schema: Optional[ComponentSchema] = Field(
+        default=None,
+        description="Component validation schema (form-builder shape: {type, validations, autoValidate})",
+    )
+    tooltipProps: Dict[str, Any] = Field(default_factory=dict, description="Tooltip properties — accepted, not used")
+    children: List["FormComponent"] = Field(default_factory=list, description="Child components")
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_access(cls, data):
+        """Surface props.access.value to the top-level `access` field before
+        validation, so callers that only ever set access via the form-builder
+        prop (not the legacy top-level key) still get a resolved access list —
+        this is what app.core.access.cascade_access, the forms JSONB storage
+        and get_forms_with_access_level all read. 'hidden' is mapped to
+        'disable' for this top-level field (see _to_definition_access) —
+        props.access.value itself is left as authored (echoed back via
+        ComponentProps/AccessProp)."""
+        if isinstance(data, dict):
+            extracted = _extract_node_access(data)
+            if extracted is not None:
+                data = {**data, "access": _to_definition_access(extracted)}
+        return data
 
     @field_validator('access')
     @classmethod
@@ -29,6 +145,9 @@ class FormComponent(BaseModel):
             return v
         else:
             return []
+
+
+FormComponent.model_rebuild()
 
 # Language configuration
 class Language(BaseModel):
@@ -44,9 +163,28 @@ class FormStructure(BaseModel):
     """Complete form structure - simplified"""
     key: str = Field(..., description="Form key")
     type: str = Field("Screen", description="Form type")
-    props: Dict[str, Any] = Field(default_factory=dict, description="Form properties")
-    access: Union[str, List[str]] = Field(default_factory=list, description="Form access permissions")
-    children: List = Field(default_factory=list, description="Form components - empty array")
+    props: ComponentProps = Field(default_factory=ComponentProps, description="Form properties")
+    access: Union[str, List[str]] = Field(
+        default_factory=list,
+        description="Form-level access permissions — resolved from props.access.value "
+                    "(form-builder convention) or a top-level access key",
+    )
+    tooltipProps: Dict[str, Any] = Field(default_factory=dict, description="Tooltip properties — accepted, not used")
+    children: List[FormComponent] = Field(default_factory=list, description="Form components")
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_access(cls, data):
+        """Same props.access.value-preferring normalization as FormComponent
+        (see _extract_node_access / _to_definition_access) applied to the
+        form root node."""
+        if isinstance(data, dict):
+            extracted = _extract_node_access(data)
+            if extracted is not None:
+                data = {**data, "access": _to_definition_access(extracted)}
+        return data
 
     @field_validator('access')
     @classmethod

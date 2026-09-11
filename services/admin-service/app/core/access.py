@@ -272,6 +272,33 @@ def apply_field_permissions(
     return node
 
 
+def prune_hidden_fields(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop every descendant (and its whole subtree) whose resolved
+    ``access`` is 'disable' from a served form component tree, in place.
+    Returns ``node``.
+
+    Call this AFTER cascade_access / apply_field_permissions have resolved
+    every node's access — a field marked hidden/disable (whether baked into
+    the form's own definition or overlaid by the viewing role) is then
+    genuinely absent from what GET returns, not merely present with an
+    access marker for the frontend to hide itself. The root itself is never
+    pruned here (a form whose OWN root is disabled is excluded at the
+    form level upstream, e.g. _filter_accessible_forms's form-level
+    summary) — only its descendants.
+    """
+    if not isinstance(node, dict):
+        return node
+    children = node.get("children")
+    if isinstance(children, list):
+        kept = []
+        for child in children:
+            if isinstance(child, dict) and "disable" in coerce_access(child.get("access")):
+                continue
+            kept.append(prune_hidden_fields(child) if isinstance(child, dict) else child)
+        node["children"] = kept
+    return node
+
+
 def _more_restrictive(a: List[str], b: List[str]) -> List[str]:
     """The lower-ranked (more restrictive) of two resolved access lists
     (write > read > disable). An empty ``b`` (no definition restriction) yields

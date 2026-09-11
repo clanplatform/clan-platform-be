@@ -6,7 +6,7 @@ from datetime import datetime
 import math
 from app.infrastructure.database.session import get_tenant_db as get_db
 from app.core.security import get_current_user
-from app.core.access import cascade_access, coerce_access, apply_field_permissions
+from app.core.access import cascade_access, coerce_access, apply_field_permissions, prune_hidden_fields
 from app.infrastructure.scope_helpers import require_form_admin
 from app.forms.services.forms import FormsService
 from app.infrastructure.audit_helpers import RISK_SCORE, get_client_ip, get_audit_org_context, get_user_id, get_session_id
@@ -64,6 +64,21 @@ def _overlay_field_permissions(forms: list, context: Dict[str, Any]) -> None:
         tree = trees_by_form.get(str(f.get("form_id")))
         if isinstance(tree, dict) and isinstance(f.get("form"), dict):
             apply_field_permissions(f["form"], tree)
+
+
+def _prune_hidden_fields(forms: list) -> None:
+    """Drop every hidden/disabled field (and its subtree) from each served
+    form's component tree, in place — runs UNCONDITIONALLY (not gated by
+    should_filter/role), since a field can be marked disable at the form's
+    own definition level (baked in at save time by cascade_access,
+    independent of any viewing role) as well as by a role's field-permission
+    overlay (_overlay_field_permissions, above) — either way it must be
+    genuinely absent from what GET returns, not merely marked, for every
+    caller including admins. Must run AFTER _overlay_field_permissions so it
+    sees the fully-resolved access."""
+    for f in (forms or []):
+        if isinstance(f, dict) and isinstance(f.get("form"), dict):
+            prune_hidden_fields(f["form"])
 
 
 def _subscription_granted_menu_ids(db: Session) -> Optional[set]:
@@ -451,6 +466,12 @@ async def get_forms(
                 doc["forms"] = _filter_accessible_forms(doc.get("forms"), context["form_ids"])
                 _overlay_field_permissions(doc["forms"], context)
 
+        # Drop hidden/disabled fields entirely (not just marked) — runs for
+        # every caller including admins, since a field can be disabled at
+        # the form's own definition level independent of any role.
+        for doc in forms_data:
+            _prune_hidden_fields(doc.get("forms"))
+
         total_pages = math.ceil(total / size) if total > 0 else 0
         
         result = {
@@ -554,6 +575,11 @@ async def get_forms_by_menu(
         if UserRoleService.should_filter(context, "form"):
             forms_list = _filter_accessible_forms(forms_list, context["form_ids"])
             _overlay_field_permissions(forms_list, context)
+
+        # Drop hidden/disabled fields entirely (not just marked) — runs for
+        # every caller including admins, since a field can be disabled at
+        # the form's own definition level independent of any role.
+        _prune_hidden_fields(forms_list)
 
         response = {
             "menu_id": forms_collection.get("menu_id"),

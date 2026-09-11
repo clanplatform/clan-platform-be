@@ -114,6 +114,16 @@ def _clamp_access(own: List[str], ceiling: List[str]) -> List[str]:
     return [max(ceiling, key=lambda a: _ACCESS_RANK.get(a, 0))]
 
 
+# cascade_access resolves the definition-level `access` in the tree
+# vocabulary (read/write/disable). props.access.value — the form-builder
+# convention a frontend actually reads — uses read/write/hidden instead
+# (same wire vocabulary FIELD_ACCESS_VALUES/AccessProp use in
+# app.forms.schemas.forms). This is the reverse of that module's
+# _to_definition_access (hidden -> disable), applied when syncing a
+# resolved node's access back into props.access.value.
+_TREE_TO_FIELD_ACCESS = {"disable": "hidden"}
+
+
 def cascade_access(
     node: Dict[str, Any],
     inherited: Optional[List[str]] = None,
@@ -134,7 +144,17 @@ def cascade_access(
         ``children``.
 
     ``inherited`` None/[] at the root means "no ceiling" — the root keeps its
-    own access verbatim and empty descendants inherit nothing.
+    own access verbatim and empty descendants inherit nothing (so an
+    uncalled/rootless cascade can still legitimately end up with an empty
+    resolved access — callers that need every node to land on a concrete
+    read/write/hidden, such as _cascade_forms_access, must always seed the
+    root with a non-empty ``inherited``).
+
+    Also keeps ``props.access.value`` in sync with the resolved access on
+    every node (mapped through _TREE_TO_FIELD_ACCESS), so "Default" fields
+    that just inherited a concrete value from their parent report that same
+    concrete value under props.access.value too, instead of staying stuck at
+    ``[]`` — the form-builder convention a frontend actually reads.
     """
     if not isinstance(node, dict):
         return node
@@ -148,6 +168,12 @@ def cascade_access(
         resolved = list(ceiling)
 
     node["access"] = resolved
+
+    props = node.get("props")
+    if not isinstance(props, dict):
+        props = {}
+        node["props"] = props
+    props["access"] = {"value": [_TREE_TO_FIELD_ACCESS.get(a, a) for a in resolved]}
 
     children = node.get("children")
     if isinstance(children, list):
@@ -231,7 +257,7 @@ def apply_field_permissions(
     if not isinstance(props, dict):
         props = {}
         node["props"] = props
-    props["access"] = {"value": list(coerce_access(node.get("access")))}
+    props["access"] = {"value": [_TREE_TO_FIELD_ACCESS.get(a, a) for a in coerce_access(node.get("access"))]}
 
     perm_children = {}
     if isinstance(perm_node, dict):

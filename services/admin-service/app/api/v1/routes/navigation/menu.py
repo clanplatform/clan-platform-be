@@ -603,140 +603,30 @@ async def get_login_user_menus(
             print(f"[GET Login User Menus] ✅ Returning cached navigation for user {user.id} (lang_code: {lang_code})")
             return cached_data
 
-        # 2. Get user's assigned role (usersetup_basic.role_id)
-        # Initialize accessible menu IDs
-        accessible_menu_ids = set()
-        has_permissions = False
-        is_admin_user = False
+        # 2. Resolve the user's role-based access context via the SAME shared
+        # helper forms.py / button.py already use to scope their own
+        # listings (UserRoleService.get_user_permission_context /
+        # should_filter) — so menu/form/button visibility follow one
+        # consistent set of rules instead of menus having their own
+        # separately-maintained (and previously out-of-sync) copy of this
+        # logic. is_admin / a role with nothing configured for "menu" still
+        # sees everything unfiltered — same fail-open convention already
+        # documented on should_filter (a role that only ever configured
+        # form_permissions shouldn't blank out every menu for its users).
+        from app.user_role.services.user_role import UserRoleService
+        context = UserRoleService.get_user_permission_context(db, user.id)
+        is_admin_user = context["is_admin"]
+        accessible_menu_ids = context["menu_ids"]
+        has_permissions = UserRoleService.should_filter(context, "menu")
 
-        if not user.role_id:
-            print(f"[GET Login User Menus] ⚠️ User {user.id} has no assigned role")
-            print(f"[GET Login User Menus] 📊 Will return all menus (no role-based filtering)")
-            # Don't return early - fetch all menus instead
+        if is_admin_user:
+            print(f"[GET Login User Menus] 👑 User has an ADMIN role — sees ALL menus without filtering")
+        elif not context["has_role"]:
+            print(f"[GET Login User Menus] ⚠️ User {user.id} has no assigned role — returning all menus")
+        elif not has_permissions:
+            print(f"[GET Login User Menus] ⚠️ Role has no menu_permissions configured — returning all menus")
         else:
-            assigned_role_ids = [user.role_id]
-            print(f"[GET Login User Menus] ✅ User has assigned role: {user.role_id}")
-
-            # 2a. Check if user has any admin role (is_admin = True)
-            from app.user_role.models.user_role import UserRoleBasic
-            admin_roles = db.query(UserRoleBasic).filter(
-                and_(
-                    UserRoleBasic.user_role_id.in_(assigned_role_ids),
-                    UserRoleBasic.is_admin == True,
-                    UserRoleBasic.active == True
-                )
-            ).all()
-
-            if admin_roles:
-                is_admin_user = True
-                admin_role_names = [role.role_name for role in admin_roles]
-                print(f"[GET Login User Menus] 👑 User has ADMIN role(s): {admin_role_names}")
-                print(f"[GET Login User Menus] 👑 Admin users see ALL menus without filtering")
-                # Admin users bypass permission filtering - they see everything
-            else:
-                print(f"[GET Login User Menus] 👤 User is NOT an admin - will apply permission filtering")
-
-            # 3. Get all permissions for these roles from userrole_permission
-            permissions = db.query(UserRolePermission).filter(
-                UserRolePermission.user_role_id.in_(assigned_role_ids)
-            ).all()
-
-            if not permissions:
-                print(f"[GET Login User Menus] ⚠️ No permissions found for user's roles: {assigned_role_ids}")
-                if not is_admin_user:
-                    print(f"[GET Login User Menus] 📊 Will return all menus (no permission-based filtering)")
-                # Don't return early - fetch all menus instead
-            else:
-                print(f"[GET Login User Menus] ✅ Found {len(permissions)} permission records")
-                
-                # 4. Build a set of accessible menu IDs (excluding disabled menus)
-                disabled_menu_ids = set()
-
-                for idx, perm in enumerate(permissions):
-                    print(f"[GET Login User Menus] 🔍 Processing permission {idx + 1}/{len(permissions)}")
-                    print(f"[GET Login User Menus]   - Role ID: {perm.userrole_basic_id}")
-                    print(f"[GET Login User Menus]   - menu_permissions type: {type(perm.menu_permissions)}")
-                    print(f"[GET Login User Menus]   - menu_permissions value: {perm.menu_permissions}")
-
-                    # Check menu_permissions (JSONB array)
-                    if perm.menu_permissions:
-                        for menu_idx, menu_perm in enumerate(perm.menu_permissions):
-                            print(f"[GET Login User Menus]   - Menu permission {menu_idx + 1}: {menu_perm}")
-
-                            if isinstance(menu_perm, dict):
-                                menu_ids = menu_perm.get('id', [])
-                                access_list = menu_perm.get('access', [])
-
-                                print(f"[GET Login User Menus]     - Menu IDs (raw): {menu_ids}")
-                                print(f"[GET Login User Menus]     - Menu IDs type: {type(menu_ids)}")
-                                print(f"[GET Login User Menus]     - Access: {access_list}")
-
-                                # Ensure menu_ids is a list and convert all to strings
-                                if not isinstance(menu_ids, list):
-                                    menu_ids = [menu_ids]
-
-                                # Convert all menu IDs to strings (in case they're UUIDs)
-                                menu_ids_str = [str(mid) for mid in menu_ids]
-                                print(f"[GET Login User Menus]     - Menu IDs (converted to strings): {menu_ids_str}")
-
-                                # If access contains 'disable', mark these menus as disabled
-                                if 'disable' in access_list:
-                                    disabled_menu_ids.update(menu_ids_str)
-                                    print(f"[GET Login User Menus]     - ❌ Marked as disabled")
-                                else:
-                                    # Add to accessible menus if they have read or write access
-                                    if 'read' in access_list or 'write' in access_list:
-                                        accessible_menu_ids.update(menu_ids_str)
-                                        print(f"[GET Login User Menus]     - ✅ Added to accessible menus")
-
-                # Remove disabled menus from accessible set
-                accessible_menu_ids -= disabled_menu_ids
-                
-                # Only set has_permissions to True if we actually found accessible menu IDs
-                if accessible_menu_ids:
-                    has_permissions = True
-                    print(f"[GET Login User Menus] ✅ User has permissions for {len(accessible_menu_ids)} menus")
-                else:
-                    print(f"[GET Login User Menus] ⚠️ No accessible menu IDs found (all disabled or no valid permissions)")
-                    print(f"[GET Login User Menus] 📊 Will return all menus (no valid permissions)")
-
-                print(f"[GET Login User Menus] 📊 Total accessible menu IDs: {len(accessible_menu_ids)}")
-                print(f"[GET Login User Menus] 📊 Accessible menu IDs: {accessible_menu_ids}")
-                print(f"[GET Login User Menus] 📊 Disabled menu IDs: {disabled_menu_ids}")
-
-                # ⚠️ DESCENDANT EXPANSION DISABLED
-                # Previously, this code expanded accessible_menu_ids to include ALL descendants
-                # This caused issues where if a parent menu was accessible, ALL its children were included
-                # even if they didn't have explicit permissions.
-                # 
-                # For level 3 menu filtering, we only want to show menus that have explicit permissions
-                # in the menu_permissions JSONB field, not auto-include all siblings.
-                #
-                # If you need to re-enable descendant expansion for nested menus (level 4+), 
-                # uncomment the code below and adjust the logic to only expand for specific levels.
-                
-                # expanded_menu_ids = set(accessible_menu_ids)
-                # def get_all_descendants(parent_ids: set) -> set:
-                #     if not parent_ids:
-                #         return set()
-                #     children = db.query(Menu).filter(
-                #         and_(
-                #             Menu.parent_menu_id.in_(parent_ids),
-                #             Menu.is_active == True,
-                #             Menu.deleted_at.is_(None)
-                #         )
-                #     ).all()
-                #     if not children:
-                #         return set()
-                #     child_ids = {str(child.id) for child in children}
-                #     grandchild_ids = get_all_descendants(child_ids)
-                #     return child_ids | grandchild_ids
-                # descendant_ids = get_all_descendants(accessible_menu_ids)
-                # expanded_menu_ids.update(descendant_ids)
-                # expanded_menu_ids -= disabled_menu_ids
-                # accessible_menu_ids = expanded_menu_ids
-                
-                print(f"[GET Login User Menus] ✅ Using explicit permissions only (no descendant expansion)")
+            print(f"[GET Login User Menus] ✅ User has permissions for {len(accessible_menu_ids)} menus: {accessible_menu_ids}")
 
         # 5. Fetch the full mainNavigation structure from MongoDB
         print(f"[GET Login User Menus] 🔍 Connecting to MongoDB...")
@@ -1071,32 +961,21 @@ async def _filter_menu_by_permissions(
             print(f"[Filter Menu] {indent}    - child_menu_id: {child_menu_id}")
             print(f"[Filter Menu] {indent}    - child_key: {child_key}")
 
-            # Try to find the menu in PostgreSQL by key or menu_id
-            child_accessible = False
-
-            if child_menu_id and child_menu_id in accessible_menu_ids:
-                child_accessible = True
-                print(f"[Filter Menu] {indent}    - ✅ Accessible (menu_id {child_menu_id} in set)")
-            elif child_key:
-                # Look up menu by name (key) in PostgreSQL
-                menu = db.query(Menu).filter(
-                    Menu.name == child_key,
-                    Menu.is_active == True,
-                    Menu.deleted_at.is_(None)
-                ).first()
-
-                if menu:
-                    menu_id_str = str(menu.id)
-                    print(f"[Filter Menu] {indent}    - Found in PostgreSQL: {menu_id_str}")
-                    print(f"[Filter Menu] {indent}    - Checking if {menu_id_str} in accessible_menu_ids...")
-                    if menu_id_str in accessible_menu_ids:
-                        child_accessible = True
-                        child["menu_id"] = menu_id_str
-                        print(f"[Filter Menu] {indent}    - ✅ Accessible (found in PostgreSQL and in accessible set)")
-                    else:
-                        print(f"[Filter Menu] {indent}    - ❌ Not accessible (PostgreSQL ID {menu_id_str} NOT in accessible set)")
-                else:
-                    print(f"[Filter Menu] {indent}    - ⚠️ Not found in PostgreSQL with key '{child_key}'")
+            # Accessibility is decided ONLY by the child's own menu_id against
+            # the role's accessible set — every served node already carries
+            # its own menu_id directly from MongoDB. There used to be a
+            # fallback here that looked up `Menu.name == child_key` in
+            # PostgreSQL whenever menu_id was present but simply not granted
+            # (an `if X and Y: ... elif Z: ...` falls into the elif whenever
+            # `X and Y` is False, even when X — child_menu_id — is truthy).
+            # That lookup was UNSCOPED (no parent/module/application filter),
+            # so any other menu anywhere in the tenant sharing the same
+            # `name` as this child's `key` — a common generic slug like
+            # "users" or "roles" — could match and leak an ungranted sibling
+            # through as "accessible" whenever that unrelated menu's id
+            # happened to be in the accessible set. Removed.
+            child_accessible = bool(child_menu_id and child_menu_id in accessible_menu_ids)
+            print(f"[Filter Menu] {indent}    - {'✅ Accessible' if child_accessible else '❌ Not accessible'} (menu_id {child_menu_id} in set? {child_accessible})")
 
             # Recursively filter child's children if they exist
             child_has_children = child.get("children") is not None and len(child.get("children", [])) > 0

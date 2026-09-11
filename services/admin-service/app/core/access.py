@@ -210,6 +210,14 @@ def apply_field_permissions(
 
     Serve time only, never persisted. Node-level values were already clamped to
     the form's ``form_access`` on save (UserRoleService._build_field_tree).
+
+    Keeps ``props.access.value`` (the form-builder convention a frontend
+    actually reads) in sync with the resolved top-level ``access`` on every
+    node this walks — without this, a served form would show the role's
+    resolved per-field access (write/read/disable) only under the legacy
+    top-level ``access`` key while ``props.access.value`` kept whatever
+    static value the field was authored with, never reflecting what the
+    viewing role can actually do with that field.
     """
     if not isinstance(node, dict):
         return node
@@ -218,6 +226,12 @@ def apply_field_permissions(
     effective = own or inherited
     if effective is not None:
         node["access"] = _more_restrictive(effective, coerce_access(node.get("access")))
+
+    props = node.get("props")
+    if not isinstance(props, dict):
+        props = {}
+        node["props"] = props
+    props["access"] = {"value": list(coerce_access(node.get("access")))}
 
     perm_children = {}
     if isinstance(perm_node, dict):

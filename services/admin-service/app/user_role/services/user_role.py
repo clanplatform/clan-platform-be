@@ -20,6 +20,7 @@ from app.user_role.schemas.user_role import (
     EntityReference,
     AvailableEntitiesResponse,
     _extract_node_access,
+    _extract_node_label,
 )
 
 
@@ -773,9 +774,11 @@ class UserRoleService:
     @staticmethod
     def _build_field_tree(node, form_access) -> Optional[Dict[str, Any]]:
         """Normalize a form component tree to the stored JSONB shape:
-        {"key": ..., "access": [...], "children": [...]} recursively —
-        ONLY key/access/children, nothing else from the form structure
-        (type/props/css/... are dropped).
+        {"key": ..., "props": {"access": {"value": [...]}, "label"?: {"value": ...}},
+        "children": [...]} recursively — ONLY key/props.access/props.label/children
+        are kept, nothing else from the form structure (type/schema/css/... are
+        still dropped). label is included only when the source node had one
+        (layout/container nodes usually don't).
 
         - access is [] ("Default"), ['read'], ['write'] or ['hidden'].
         - Each node is CLAMPED to the form-level access (form_access): a node
@@ -786,7 +789,8 @@ class UserRoleService:
 
         The node's role access comes from props.access.value (form-builder prop
         convention), falling back to a top-level `access` key — see
-        _extract_node_access."""
+        _extract_node_access. label comes from props.label.value — see
+        _extract_node_label."""
         if isinstance(node, dict):
             key = node.get("key")
             raw_children = node.get("children")
@@ -818,7 +822,12 @@ class UserRoleService:
                 seen.add(built["key"])
                 children.append(built)
 
-        return {"key": key, "access": access, "children": children}
+        props: Dict[str, Any] = {"access": {"value": access}}
+        label = _extract_node_label(node)
+        if label is not None:
+            props["label"] = {"value": label}
+
+        return {"key": key, "props": props, "children": children}
 
     @staticmethod
     def _form_access_summary(root_access) -> List[str]:
@@ -842,12 +851,15 @@ class UserRoleService:
         """Convert RoleFormPermission items (form-builder shape: `id` [the form's
         UUID] + the form component tree under `form`) to the JSONB shape stored
         on userrole_permission.form_permissions:
-        [{"id": <form id>, "access": [...], "fields": {"key","access","children"}}].
+        [{"id": <form id>, "access": [...], "fields": {"key", "props":
+        {"access":{"value":[...]}, "label"?:{"value":...}}, "children"}}].
 
-        The per-field access lives on each component's props.access.value;
-        _build_field_tree strips each node to key/access/children and clamps to
-        the form-level access (form root's own access). `access` is the
-        form-level summary (see _form_access_summary)."""
+        The per-field access AND label live on each component's props.access.value
+        / props.label.value; _build_field_tree strips each node down to just
+        key/props.access/props.label/children (type/schema/... still dropped)
+        and clamps access to the form-level access (form root's own access).
+        `access` at the top of the dict is the form-level summary (see
+        _form_access_summary)."""
         form_perms: List[Dict[str, Any]] = []
         for item in (form_permissions or []):
             if isinstance(item, dict):
@@ -925,9 +937,9 @@ class UserRoleService:
         "don't filter" rather than "show nothing" — a role that was only ever
         given menu_permissions shouldn't blank out every form/button for its
         users. form_field_permissions carries the per-field permission tree
-        (form_permissions[].fields — {key, access, children}) for the forms
-        the role CAN see, to overlay on the served component tree
-        (see app.core.access.apply_field_permissions).
+        (form_permissions[].fields — {key, props:{access, label?}, children})
+        for the forms the role CAN see, to overlay on the served component
+        tree (see app.core.access.apply_field_permissions).
         """
         result: Dict[str, Any] = {
             "is_admin": False, "has_role": False,

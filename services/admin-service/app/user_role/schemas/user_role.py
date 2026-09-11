@@ -170,8 +170,8 @@ class RoleFormLanguage(BaseModel):
 def _extract_node_access(node) -> Optional[Any]:
     """A form component node's role access, read from the form-builder prop
     convention `props.access.value` (every prop is `{value: ...}`). Falls back
-    to a top-level `access` key (older shape / the stored `fields` tree).
-    None when neither is set."""
+    to a top-level `access` key (legacy stored shape, before props/label were
+    kept — see _build_field_tree). None when neither is set."""
     if isinstance(node, dict):
         props, top = node.get("props"), node.get("access")
     else:
@@ -182,15 +182,36 @@ def _extract_node_access(node) -> Optional[Any]:
     return top
 
 
+def _extract_node_label(node) -> Optional[str]:
+    """A form component node's display label, read from the form-builder prop
+    convention `props.label.value` (falling back to a bare `props.label`
+    string). None when the node never carried a label (layout/container nodes
+    usually don't) — same tolerant shape as _extract_node_access."""
+    if isinstance(node, dict):
+        props = node.get("props")
+    else:
+        props = getattr(node, "props", None)
+    if isinstance(props, dict) and "label" in props:
+        lp = props["label"]
+        return lp.get("value") if isinstance(lp, dict) else lp
+    return None
+
+
 def _fields_node_to_builder(node) -> Optional[Dict[str, Any]]:
-    """Convert a stored `fields` tree node ({key, access, children}) to the
-    form-builder shape ({key, props: {access: {value: [...]}}, children}) so a
-    role form permission reads back in the same shape it was sent."""
+    """Convert a stored `fields` tree node ({key, props:{access,label?},
+    children} — or the legacy {key, access, children} shape, still read for
+    rows saved before label was kept) to the form-builder shape ({key, props:
+    {access: {value: [...]}, label?: {value: ...}}, children}) so a role form
+    permission reads back in the same shape it was sent."""
     if not isinstance(node, dict):
         return node
+    props: Dict[str, Any] = {"access": {"value": list(_extract_node_access(node) or [])}}
+    label = _extract_node_label(node)
+    if label is not None:
+        props["label"] = {"value": label}
     return {
         "key": node.get("key"),
-        "props": {"access": {"value": list(node.get("access") or [])}},
+        "props": props,
         "children": [_fields_node_to_builder(c) for c in (node.get("children") or [])],
     }
 
@@ -250,7 +271,11 @@ class RoleFormPermission(BaseModel):
     Only `id` and `form` are used on save — `name`, `languages`, `localization`,
     `modalType`, ... are accepted (the frontend sends its whole form object) and
     ignored. Stored on userrole_permission.form_permissions as
-    {id, access, fields:{key,access,children}} and echoed back in this shape.
+    {id, access, fields:{key, props:{access:{value:[...]}, label?:{value:...}},
+    children}} and echoed back in this shape (label is carried through when the
+    incoming node had one — layout/container nodes usually don't). Rows written
+    before label was kept still read back fine via the legacy
+    {key, access, children} fallback in _extract_node_access.
     """
     id: str = Field(..., description="The form's UUID (forms.id)")
     name: Optional[str] = Field(None, description="Form name — accepted, not used")

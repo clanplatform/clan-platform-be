@@ -61,8 +61,16 @@ class UserSetupBasicBase(BaseModel):
 
 
 class UserSetupBasicCreate(UserSetupBasicBase):
-    """Schema for creating a new user setup"""
-    password: str = Field(..., min_length=8, max_length=100, description="User password (will be hashed)")
+    """Schema for creating a new user setup.
+
+    No password field — creation always server-generates a temporary
+    password (see UserSetupService.create_user_setup_with_details), hashed
+    and stored, synced to auth-service, and emailed to the user when
+    send_invite_email is set (send_user_invitation_email). The plaintext is
+    never accepted from the caller and never returned in the API response —
+    same convention as onboarding's users[] (see
+    app.onboarding.services.onboarding._create_user_row)."""
+    pass
 
 
 class UserSetupBasicUpdate(BaseModel):

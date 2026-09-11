@@ -54,6 +54,16 @@ class ComponentSchema(BaseModel):
     autoValidate: bool = Field(False, description="Whether to auto-validate on change")
 
 
+def _hide_additional_properties(schema: Dict[str, Any], _model) -> None:
+    """extra='allow' makes pydantic advertise `additionalProperties: true` in
+    the OpenAPI schema, which Swagger UI renders as a synthetic
+    `additionalProp1` entry in the example body. Strip it from the generated
+    schema only — the model still accepts/round-trips arbitrary props at
+    runtime (see ComponentProps docstring); this just stops Swagger from
+    fabricating a fake field for it."""
+    schema.pop("additionalProperties", None)
+
+
 class ComponentProps(BaseModel):
     """A component's props (form-builder convention: every prop is `{value: ...}`).
 
@@ -64,7 +74,7 @@ class ComponentProps(BaseModel):
     access: Optional[AccessProp] = Field(None, description="Field-level access — see FormComponent.access")
     label: Optional[LabelProp] = Field(None, description="Display label")
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", json_schema_extra=_hide_additional_properties)
 
 
 def _extract_node_access(data: dict):
@@ -328,7 +338,7 @@ class FormResponse(FormBase):
     model_config = ConfigDict(from_attributes=True)
 
     access: List[str] = Field(
-        default=["read"],
+        default=["write"],
         description="Access permissions for this menu (e.g., ['read', 'write', 'disable'])"
     )
 

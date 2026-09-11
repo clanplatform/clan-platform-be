@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 from typing import List, Optional
 from uuid import UUID
+import asyncio
 import logging
 
 from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupPreference
@@ -17,9 +18,11 @@ from app.user_setup.schemas.user_setup import (
     AvailableUsersResponse,
     UserReference
 )
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, generate_temp_password
 from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServiceSyncError
 from app.infrastructure.audit_tenant import fire_audit_log
+from app.infrastructure.email_tenant import send_user_invitation_email
+from app.infrastructure.database.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -460,10 +463,14 @@ class UserSetupService:
             db.add(db_user_setup)
             db.flush()  # Get the ID without committing
 
-            # Hash the password before storing
+            # No password in the request — always server-generated (same
+            # convention as onboarding's users[], see _create_user_row).
+            # Held in memory only long enough to sync it to auth-service and,
+            # when send_invite_email is set, email it; never persisted in
+            # plaintext, never returned in the API response.
             user_dict = user_data.basic.model_dump()
-            password = user_dict.pop('password')  # Remove password from dict
-            password_hash = get_password_hash(password)  # Hash the password
+            temp_password = generate_temp_password()
+            password_hash = get_password_hash(temp_password)
 
             department_id, division_id = UserSetupService._derive_dept_division_from_job_code(
                 db, user_dict.get('job_code_id')
@@ -529,7 +536,17 @@ class UserSetupService:
                     logger.error(f"SYNC UNEXPECTED ERROR during auth-service sync: {str(e)}")
             else:
                 logger.warning("SYNC DISABLED - Auth service sync is disabled (IDENTITY_SERVICE_URL not configured)")
-            
+
+            # Fire-and-forget welcome email with the temp password — same
+            # helper/behavior as onboarding's users[] (send_user_invitation_email).
+            if db_user_basic.send_invite_email:
+                asyncio.create_task(UserSetupService._send_invite_email(
+                    to_email=db_user_basic.email,
+                    first_name=db_user_basic.firstname,
+                    tenant_id=tenant_id,
+                    temp_password=temp_password,
+                ))
+
             return UserSetupService.get_user_setup_with_details(db, db_user_basic.id)
         except IntegrityError as e:
             db.rollback()
@@ -553,6 +570,46 @@ class UserSetupService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Failed to create user setup: {str(e.orig)}"
                 )
+
+    @staticmethod
+    async def _send_invite_email(
+        to_email: str,
+        first_name: Optional[str],
+        tenant_id: Optional[UUID],
+        temp_password: str,
+    ) -> None:
+        """Best-effort welcome email for a user created via
+        create_user_setup_with_details — resolves tenant_name/deployed_url
+        from the master DB (tenants table) for parity with onboarding's own
+        invite email, then delegates to send_user_invitation_email. Never
+        raises: a lookup or send failure must not surface to the caller,
+        the user is already created."""
+        tenant_name = None
+        tenant_app_url = None
+        if tenant_id is not None:
+            master_db = SessionLocal()
+            try:
+                from app.tenants.models.tenants import Tenant
+                tenant = master_db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+                if tenant:
+                    tenant_name = tenant.tenant_name
+                    tenant_app_url = tenant.deployed_url
+            except Exception as e:
+                logger.error(f"Failed to resolve tenant for invite email: {e}")
+            finally:
+                master_db.close()
+
+        try:
+            await send_user_invitation_email(
+                to_email=to_email,
+                first_name=first_name,
+                tenant_name=tenant_name,
+                tenant_id=str(tenant_id) if tenant_id else None,
+                temp_password=temp_password,
+                tenant_app_url=tenant_app_url,
+            )
+        except Exception as e:
+            logger.error(f"Failed to send user invitation email to {to_email}: {e}")
 
     @staticmethod
     def get_available_users(db: Session, status_filter: Optional[str] = 'active') -> AvailableUsersResponse:

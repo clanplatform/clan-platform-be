@@ -137,6 +137,9 @@ def test_empty_field_tree_leaves_form_untouched():
 
 def test_build_field_tree_clamps_write_on_read_only_form_and_keeps_skeleton():
     from app.user_role.services.user_role import UserRoleService
+    # _perm's flat {key, access, children} shape is still valid INPUT here —
+    # _extract_node_access falls back to it — but _build_field_tree's OUTPUT
+    # is always the current nested props shape (see assertion below).
     incoming = _perm("Screen", [], [
         _perm("a", ["write"]),
         _perm("b", ["hidden"]),
@@ -144,10 +147,10 @@ def test_build_field_tree_clamps_write_on_read_only_form_and_keeps_skeleton():
     ])
     out = UserRoleService._build_field_tree(incoming, ["read"])
     assert out == {
-        "key": "Screen", "access": [], "children": [
-            {"key": "a", "access": ["read"], "children": []},
-            {"key": "b", "access": ["hidden"], "children": []},
-            {"key": "c", "access": [], "children": []},
+        "key": "Screen", "props": {"access": {"value": []}}, "children": [
+            {"key": "a", "props": {"access": {"value": ["read"]}}, "children": []},
+            {"key": "b", "props": {"access": {"value": ["hidden"]}}, "children": []},
+            {"key": "c", "props": {"access": {"value": []}}, "children": []},
         ],
     }
 
@@ -172,9 +175,9 @@ def test_build_form_perms_from_form_object_empty_root_grants_and_no_clamp():
     out = UserRoleService._build_form_perms([item])
     assert out == [{
         "id": "F1", "access": ["read", "write"],
-        "fields": {"key": "S", "access": [], "children": [
-            {"key": "a", "access": ["write"], "children": []},   # css/type dropped
-            {"key": "b", "access": ["hidden"], "children": []},
+        "fields": {"key": "S", "props": {"access": {"value": []}}, "children": [
+            {"key": "a", "props": {"access": {"value": ["write"]}}, "children": []},   # css/type dropped, no label
+            {"key": "b", "props": {"access": {"value": ["hidden"]}}, "children": []},
         ]},
     }]
 
@@ -187,7 +190,7 @@ def test_build_form_perms_read_only_form_clamps_children():
     })
     out = UserRoleService._build_form_perms([item])
     assert out[0]["access"] == ["read"]
-    assert out[0]["fields"]["children"][0]["access"] == ["read"]
+    assert out[0]["fields"]["children"][0]["props"]["access"]["value"] == ["read"]
 
 
 def test_build_form_perms_hidden_form_not_granted():
@@ -222,11 +225,12 @@ def test_build_form_perms_reads_props_access_value():
     out = UserRoleService._build_form_perms([item])
     assert out == [{
         "id": "F1", "access": ["read", "write"],
-        "fields": {"key": "Screen", "access": [], "children": [
-            {"key": "code", "access": ["read"], "children": []},
-            {"key": "name", "access": ["write"], "children": []},
-            {"key": "secret", "access": ["hidden"], "children": []},
-            {"key": "notes", "access": [], "children": []},
+        "fields": {"key": "Screen", "props": {"access": {"value": []}}, "children": [
+            # "code" carried a label -> it's preserved on the stored node too
+            {"key": "code", "props": {"access": {"value": ["read"]}, "label": {"value": "Code"}}, "children": []},
+            {"key": "name", "props": {"access": {"value": ["write"]}}, "children": []},
+            {"key": "secret", "props": {"access": {"value": ["hidden"]}}, "children": []},
+            {"key": "notes", "props": {"access": {"value": []}}, "children": []},
         ]},
     }]
 
@@ -238,7 +242,7 @@ def test_build_form_perms_props_access_read_only_root_clamps():
             "tooltipProps": {}}
     out = UserRoleService._build_form_perms([_role_form_perm("F2", form)])
     assert out[0]["access"] == ["read"]
-    assert out[0]["fields"]["children"][0]["access"] == ["read"]   # write clamped
+    assert out[0]["fields"]["children"][0]["props"]["access"]["value"] == ["read"]   # write clamped
 
 
 def test_role_form_component_tree_normalizes_props_access():
@@ -253,7 +257,11 @@ def test_role_form_component_tree_normalizes_props_access():
     assert _extract_node_access(node) == ["write"]
 
 
-def test_role_form_permission_reads_back_in_props_access_value_shape():
+def test_role_form_permission_reads_back_legacy_flat_shape():
+    """Rows written before props/label were kept on the stored fields tree
+    ({key, access, children}, no props at all) still read back correctly —
+    _fields_node_to_builder falls back to the top-level `access` key via
+    _extract_node_access, and simply omits label (never stored)."""
     from app.user_role.schemas.user_role import RoleFormPermission
     stored = {"id": "F1", "access": ["read", "write"], "fields": {
         "key": "Screen", "access": [], "children": [
@@ -267,3 +275,64 @@ def test_role_form_permission_reads_back_in_props_access_value_shape():
     assert resp.form.children[1].props == {"access": {"value": []}}
     # no top-level `access` key on the echoed nodes
     assert "access" not in resp.form.model_dump()
+
+
+def test_role_form_permission_reads_back_with_label_preserved():
+    """Current stored shape: {key, props:{access, label?}, children}. label
+    round-trips through the response exactly as it was saved."""
+    from app.user_role.schemas.user_role import RoleFormPermission
+    stored = {"id": "F1", "access": ["read", "write"], "fields": {
+        "key": "Screen", "props": {"access": {"value": []}}, "children": [
+            {"key": "doctor_code", "props": {
+                "access": {"value": ["write"]}, "label": {"value": "Doctor Code"},
+            }, "children": []},
+            {"key": "layout", "props": {"access": {"value": []}}, "children": []},  # no label
+        ]}}
+    resp = RoleFormPermission.model_validate(stored)
+    assert resp.form.children[0].props == {
+        "access": {"value": ["write"]}, "label": {"value": "Doctor Code"},
+    }
+    assert resp.form.children[1].props == {"access": {"value": []}}
+
+
+# ---------------------------------------------------------------------------
+# _field_node_access / apply_field_permissions — enforcement reads the SAME
+# access regardless of which shape the perm node is stored in (new
+# props.access.value, or the legacy flat access key from rows saved before
+# label was kept).
+# ---------------------------------------------------------------------------
+
+def test_field_node_access_reads_new_props_shape():
+    from app.core.access import _field_node_access
+    assert _field_node_access({"key": "doctor_code", "props": {"access": {"value": ["write"]}}, "children": []}) == ["write"]
+    assert _field_node_access({"key": "doctor_ssn", "props": {"access": {"value": ["hidden"]}}, "children": []}) == ["disable"]
+    assert _field_node_access({"key": "doctor_notes", "props": {"access": {"value": []}}, "children": []}) is None
+
+
+def test_field_node_access_falls_back_to_legacy_flat_shape():
+    from app.core.access import _field_node_access
+    assert _field_node_access({"key": "doctor_code", "access": ["write"], "children": []}) == ["write"]
+
+
+def test_apply_field_permissions_enforces_identically_for_new_and_legacy_shape():
+    """A role's 'hidden' grant on a field must still map to 'disable' on the
+    served form whether the stored perm node is in the current props shape
+    or the legacy flat shape — same real-world guarantee either way."""
+    from app.core.access import apply_field_permissions
+
+    def served_form():
+        return {"key": "Screen", "access": ["write"], "children": [
+            {"key": "doctor_ssn", "access": ["write"], "children": []},
+        ]}
+
+    new_shape_tree = {"key": "Screen", "props": {"access": {"value": []}}, "children": [
+        {"key": "doctor_ssn", "props": {"access": {"value": ["hidden"]}}, "children": []},
+    ]}
+    legacy_shape_tree = {"key": "Screen", "access": [], "children": [
+        {"key": "doctor_ssn", "access": ["hidden"], "children": []},
+    ]}
+
+    form_a = apply_field_permissions(served_form(), new_shape_tree)
+    form_b = apply_field_permissions(served_form(), legacy_shape_tree)
+    assert form_a["children"][0]["access"] == ["disable"]
+    assert form_b["children"][0]["access"] == ["disable"]

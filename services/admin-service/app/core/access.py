@@ -164,10 +164,23 @@ _FIELD_TO_TREE_ACCESS = {"read": ["read"], "write": ["write"], "hidden": ["disab
 
 def _field_node_access(perm_node: Optional[Dict[str, Any]]) -> Optional[List[str]]:
     """The tree-vocabulary access a role field-permission node asks for, or None
-    for "Default" (empty / missing access)."""
+    for "Default" (empty / missing access).
+
+    Reads props.access.value — the current userrole_permission
+    .form_permissions[].fields node shape, {key, props:{access:{value:[...]},
+    label?}, children} (see UserRoleService._build_field_tree) — falling back
+    to a legacy top-level `access` key so rows written before props/label were
+    kept ({key, access, children}) still enforce correctly."""
     if not isinstance(perm_node, dict):
         return None
-    for a in (perm_node.get("access") or []):
+    raw = None
+    props = perm_node.get("props")
+    if isinstance(props, dict) and "access" in props:
+        ap = props["access"]
+        raw = ap.get("value") if isinstance(ap, dict) else ap
+    if raw is None:
+        raw = perm_node.get("access")
+    for a in (raw or []):
         mapped = _FIELD_TO_TREE_ACCESS.get(str(a).strip().lower())
         if mapped:
             return list(mapped)
@@ -184,8 +197,9 @@ def apply_field_permissions(
     children by ``key``. Returns ``node``.
 
     ``perm_node`` is the matching node in the role's ``form_permissions[].fields``
-    tree ({key, access, children}), or None when the role tree doesn't cover
-    this branch. Semantics mirror ``cascade_access``:
+    tree ({key, props:{access:{value:[...]}, label?}, children} — or the legacy
+    {key, access, children} shape, both read by _field_node_access), or None
+    when the role tree doesn't cover this branch. Semantics mirror ``cascade_access``:
       * a node whose role access is set ('read'/'write'/'hidden', the last ->
         ``["disable"]``) takes it, and it cascades to descendants that have no
         role access of their own;

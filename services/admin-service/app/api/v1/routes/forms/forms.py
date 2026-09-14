@@ -202,10 +202,11 @@ async def create_form(
             localization=form_data.forms[0].localization if form_data.forms else {},
             languages=form_data.forms[0].languages if form_data.forms else [],
             default_language=form_data.forms[0].defaultLanguage if form_data.forms else "en-US",
+            access=coerce_access(form_data.access) or ["read", "write"],
             is_active=True,
             created_by=None
         )
-        
+
         # Create form in PostgreSQL
         form = FormsService.create_form(db, backend_form_data, None)
         
@@ -231,9 +232,10 @@ async def create_form(
                 languages=form.languages,
                 default_language=form.default_language,
                 is_active=form.is_active,
-                created_by=None
+                created_by=None,
+                access=form.access,
             )
-            
+
             print(f"[Forms Create] ✅ MongoDB sync successful, mongo_id: {mongo_id}")
             
             # Update PostgreSQL with MongoDB ID

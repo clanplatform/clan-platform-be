@@ -48,12 +48,17 @@ class FormsDetailsService(BaseMongoService):
         existing = await collection.find_one({"menu_id": menu_id})
         
         if existing:
-            # Add form to existing collection
+            # Add form to existing collection. Also refresh the collection-level
+            # access to whatever was actually passed this call — otherwise it
+            # stays frozen at whatever the FIRST form under this menu set it
+            # to, silently ignoring access the caller sends on every later
+            # create (the whole point of accepting it as a parameter here).
             result = await collection.update_one(
                 {"menu_id": menu_id},
                 {
                     "$push": {"forms": form_item},
                     "$set": {
+                        "access": access or ["read", "write"],
                         "updated_at": datetime.utcnow(),
                         "updated_by": created_by
                     }
@@ -118,9 +123,16 @@ class FormsDetailsService(BaseMongoService):
         languages: Optional[List[Dict[str, Any]]] = None,
         default_language: str = "en-US",
         is_active: bool = True,
-        created_by: Optional[str] = None
+        created_by: Optional[str] = None,
+        access: Optional[List[str]] = None,
     ) -> str:
-        """Create form details in MongoDB using new grouped structure - clean format only"""
+        """Create form details in MongoDB using new grouped structure - clean format only.
+
+        access is the menu-level access the caller actually wants stored on
+        the collection document (and used to seed the form-tree cascade) —
+        defaults to ["read", "write"] only when the caller doesn't have one
+        to pass (e.g. import_form), so existing callers keep their old
+        behavior."""
         
         # Prepare the clean form item to add to the collection
         if forms is None or len(forms) == 0:
@@ -202,7 +214,7 @@ class FormsDetailsService(BaseMongoService):
         return await self.create_or_update_form_collection(
             menu_id=menu_id,
             collection_name="",  # Empty since name is now in form objects
-            access=["read", "write"],
+            access=coerce_access(access) or ["read", "write"],
             form_item=form_item,
             created_by=created_by
         )

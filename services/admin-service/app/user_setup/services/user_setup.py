@@ -23,6 +23,7 @@ from app.user_setup.services.auth_service_sync import AuthServiceSync, AuthServi
 from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.email_tenant import send_user_invitation_email
 from app.infrastructure.database.session import SessionLocal
+from app.infrastructure.auth_users_lookup import auth_user_email_exists
 
 logger = logging.getLogger(__name__)
 
@@ -452,6 +453,18 @@ class UserSetupService:
         caller's JWT and injected here (None for master-DB users).
         """
         try:
+            # usersetup_basic.email is only unique WITHIN this tenant's own
+            # DB — it wouldn't catch the same email already registered under
+            # a different tenant (or a master user), which would otherwise
+            # only surface later as an opaque UniqueViolation when this user
+            # gets synced into the shared auth_users table. Check that
+            # directly, before any writes.
+            if auth_user_email_exists(user_data.basic.email):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Email '{user_data.basic.email}' already exists",
+                )
+
             role_id = user_data.basic.role_id
 
             # role_id must hold a user_role.id — validate before any writes

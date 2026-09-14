@@ -18,6 +18,7 @@ from app.infrastructure.audit_tenant import fire_audit_log
 from app.infrastructure.tenant_sync_client import sync_tenant_profile
 from app.infrastructure.gateway_sync_client import sync_tenant_to_gateway
 from app.infrastructure.email_tenant import send_tenant_invitation_email
+from app.infrastructure.auth_users_lookup import auth_user_email_exists
 from app.tenants.models.tenants import Tenant
 from app.tenants.schemas.tenants import (
     TenantCreate,
@@ -156,6 +157,17 @@ async def create_tenant(
     existing_email = db.query(Tenant).filter(Tenant.contact_email == tenant_data.contact_email).first()
     if existing_email:
         raise HTTPException(status_code=400, detail="Tenant email already exists")
+
+    # The OWNER's login email (owner_email, falling back to contact_email —
+    # same precedence _seed_tenant_db / send_tenant_invitation_email use) is
+    # what actually gets seeded into auth_users. Check it there too — a
+    # value only reused across a *different* tenant's owner/contact_email
+    # (or a stray usersetup_basic row) wouldn't be caught by the tenants-table
+    # checks above, but would collide once _seed_tenant_db syncs it, failing
+    # late with an opaque UniqueViolation instead of this clear message.
+    login_email = tenant_data.owner_email or tenant_data.contact_email
+    if auth_user_email_exists(login_email):
+        raise HTTPException(status_code=400, detail=f"Email '{login_email}' already exists")
 
     # tenant_db_name (and thus the whole per-tenant database) is derived from
     # tenant_code alone, lowercased — a case-different duplicate code would

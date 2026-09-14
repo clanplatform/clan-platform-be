@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import get_password_hash, generate_temp_password
 from app.infrastructure.database.tenant_db_manager import tenant_db_manager
+from app.infrastructure.auth_users_lookup import auth_user_email_exists
 
 from app.tenants.models.tenants import Tenant
 
@@ -102,6 +103,7 @@ from app.onboarding.exceptions import (
     DuplicateTenantError,
     OnboardingUnknownReferenceError,
     OnboardingDuplicateError,
+    OnboardingDuplicateEmailError,
     TenantProvisioningError,
     OnboardingNotFoundError,
     OnboardingDraftNotFoundError,
@@ -587,6 +589,22 @@ def create_onboarding(
 
     # Validate parent references before creating anything
     _validate_indices(payload)
+
+    # Fail fast if any login email in this batch already has an auth_users
+    # row — otherwise this only surfaces later as an opaque UniqueViolation
+    # once that row gets synced (see _fan_out_emails / _sync_one_user_to_auth,
+    # called post-commit, after the tenant + users are already written). A
+    # users[] entry reusing owner_email is the SAME identity (see the
+    # post-commit fan-out's own dedup further below), not a duplicate.
+    owner_login_email = company.owner_email or company.contact_email
+    if auth_user_email_exists(owner_login_email):
+        raise OnboardingDuplicateEmailError("Owner", owner_login_email)
+    owner_login_email_lc = (owner_login_email or "").strip().lower()
+    for i, u in enumerate(payload.users):
+        if not u.email or u.email.strip().lower() == owner_login_email_lc:
+            continue  # same identity as the owner — not a new auth_users row
+        if auth_user_email_exists(u.email):
+            raise OnboardingDuplicateEmailError(f"users[{i}]", u.email)
 
     # 1. Create tenant row in the master DB
     tenant = Tenant(

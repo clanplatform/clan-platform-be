@@ -49,6 +49,18 @@ class OnboardingDuplicateError(HTTPException):
         )
 
 
+class OnboardingDuplicateEmailError(HTTPException):
+    """An owner/users[] login email already has an auth_users row — would
+    otherwise only surface later as an opaque UniqueViolation once that
+    row gets synced into the shared auth_users table."""
+
+    def __init__(self, what: str, email: str) -> None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{what} email '{email}' already exists",
+        )
+
+
 class TenantProvisioningError(HTTPException):
     """The tenant row was created but its dedicated database could not be provisioned."""
 

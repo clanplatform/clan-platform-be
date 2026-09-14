@@ -50,8 +50,15 @@ async def create_user_role_with_details(
     current_user: dict = Depends(require_whole_org_admin)
 ):
     """Create a user role with permissions in one request"""
-    # tenant_id is taken from the JWT, never the body. None => master-DB user.
+    # tenant_id is taken from the JWT; only when the JWT has none (a
+    # master-DB "Clan admin") does the body's tenant_id get used as a
+    # fallback — to attribute the role to that client and check its
+    # menu/form/button grants against that client's own subscription. A
+    # tenant-scoped caller's JWT tenant_id always wins and the body value is
+    # ignored, so one tenant can never grant permissions "as" another by
+    # setting this.
     tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    tenant_id = tenant_id or role_data.tenant_id
     role = UserRoleService.create_user_role_with_details(db, role_data, tenant_id=tenant_id)
 
     # Audit log: user role created
@@ -168,7 +175,14 @@ async def update_user_role_with_details(
     current_user: dict = Depends(require_whole_org_admin)
 ):
     """Update a user role with all permissions in one request"""
-    role = UserRoleService.update_user_role_with_details(db, role_id, role_data)
+    # Subscription-check fallback only (see UserRoleService
+    # .update_user_role_with_details) — the role's own tenant_id (already set
+    # at creation) always wins when present; this only matters for a
+    # master-level role being edited by a master-DB "Clan admin" (JWT
+    # tenant_id None), same precedence as create_user_role_with_details.
+    caller_tenant_id = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    caller_tenant_id = caller_tenant_id or role_data.tenant_id
+    role = UserRoleService.update_user_role_with_details(db, role_id, role_data, tenant_id=caller_tenant_id)
     if not role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

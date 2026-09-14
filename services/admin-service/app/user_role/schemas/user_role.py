@@ -89,13 +89,20 @@ class UserRoleBasicUpdate(BaseModel):
 
 class UserRoleBasicResponse(UserRoleBasicBase):
     """Schema for user role response"""
-    id: UUID
+    id: UUID = Field(
+        ...,
+        validation_alias="user_role_id",
+        description="user_role.id (UserRoleMain.id) — the same id every other "
+                    "endpoint's {role_id} path param expects (GET/PUT/DELETE "
+                    "/user_role/{role_id}...), not userrole_basic's own PK, so "
+                    "this id round-trips directly into those calls.",
+    )
     parent_role_id: Optional[UUID] = Field(None, description="Parent role id (user_role.id) — Reports to")
     parent_role: Optional[str] = Field(None, description="Parent role's role_code (Reports to), resolved from parent_role_id for display")
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 # ============================================================================
@@ -582,6 +589,15 @@ class UserRolePermissionResponse(BaseModel):
                     }
                 ],
                 "menu_access": "write",
+                "button_permissions": [
+                    {
+                        "id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01",
+                        "button_access": ["write"]
+                    }
+                ],
+                "button_access": "write",
+                "form_permissions": _FORM_PERMISSION_EXAMPLE,
+                "form_access": "write",
                 "created_at": "2026-01-21T05:44:23.234Z",
                 "updated_at": "2026-01-21T05:44:23.234Z"
             }
@@ -604,6 +620,15 @@ class UserRoleCreateWithDetails(BaseModel):
     """Schema for creating a user role with permissions in one request"""
     basic: UserRoleBasicCreate
     permissions: Optional[List[UserRolePermissionBase]] = Field(default_factory=list, description="Initial permissions")
+    tenant_id: Optional[UUID] = Field(
+        None,
+        description="Client tenant to check menu/form/button grants against (Subscription."
+                    "applications_to_grant / modules_to_grant) and to attribute this role to. "
+                    "Only used as a fallback when the caller's own JWT has no tenant_id (a "
+                    "master-DB 'Clan admin' has none) — a tenant-scoped caller's JWT tenant_id "
+                    "always wins and this is ignored, so one tenant can never grant permissions "
+                    "against another tenant's subscription by setting this.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -653,6 +678,15 @@ class UserRoleUpdateWithDetails(BaseModel):
     """Schema for updating a user role with permissions in one request"""
     basic: Optional[UserRoleBasicUpdate] = Field(None, description="Basic role information to update")
     permissions: Optional[List[UserRolePermissionBase]] = Field(None, description="Permissions to replace (replaces all existing)")
+    tenant_id: Optional[UUID] = Field(
+        None,
+        description="Client tenant to check menu/form/button grants against when this role "
+                    "isn't already attributed to one. Not persisted / does not change the "
+                    "role's own tenant_id (immutable after creation) — only used as a "
+                    "subscription-check fallback for a master-DB 'Clan admin' (JWT tenant_id "
+                    "None) editing a role that also has no tenant_id of its own. Ignored "
+                    "whenever the role, or the caller's own JWT, already has one.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -667,6 +701,9 @@ class UserRoleUpdateWithDetails(BaseModel):
                         "menu_permissions": [
                             {"id": "menu-uuid-1", "menu_access": ["write"]},
                             {"id": "menu-uuid-2", "menu_access": ["read"]}
+                        ],
+                        "button_permissions": [
+                            {"id": "9a1c2f7e-1111-4bbb-9ccc-2b6d5e4f7a01", "button_access": ["write"]}
                         ],
                         "form_permissions": _FORM_PERMISSION_EXAMPLE
                     }

@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from uuid import UUID
+from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
@@ -408,6 +409,7 @@ class UserRoleService:
         perm_data,
         user_role_id: UUID,
         userrole_basic_id: UUID,
+        tenant_id: Optional[UUID] = None,
     ) -> UserRolePermission:
         """Build (unattached — caller adds/flushes) a UserRolePermission from a
         UserRolePermissionBase-shaped payload. Shared by create_user_role_with_details,
@@ -449,7 +451,7 @@ class UserRoleService:
             getattr(perm_data, "form_permissions", None)
         )
 
-        UserRoleService._verify_permissions_within_subscription(db, menu_ids, form_ids, button_ids)
+        UserRoleService._verify_permissions_within_subscription(db, menu_ids, form_ids, button_ids, tenant_id=tenant_id)
 
         return UserRolePermission(
             user_role_id=user_role_id,
@@ -501,7 +503,7 @@ class UserRoleService:
             if role_data.permissions:
                 for perm_data in role_data.permissions:
                     db_permission = UserRoleService.build_permission_row(
-                        db, perm_data, db_user_role_main.id, db_role.id
+                        db, perm_data, db_user_role_main.id, db_role.id, tenant_id=tenant_id
                     )
                     db.add(db_permission)
                     db.flush()  # Get the permission ID
@@ -523,9 +525,19 @@ class UserRoleService:
     def update_user_role_with_details(
         db: Session,
         role_id: UUID,
-        role_data: "UserRoleUpdateWithDetails"
+        role_data: "UserRoleUpdateWithDetails",
+        tenant_id: Optional[UUID] = None,
     ) -> Optional[UserRoleBasic]:
-        """Update a user role with permissions in one transaction - role_id is UserRoleMain.id"""
+        """Update a user role with permissions in one transaction - role_id is UserRoleMain.id.
+
+        tenant_id here is a subscription-check FALLBACK only (see
+        _verify_permissions_within_subscription) — the role's own, already-set
+        tenant_id (db_role.tenant_id) always takes precedence when non-null;
+        this is used only when that's None (a master-level role) and the
+        caller supplied one (route: JWT tenant_id, else body tenant_id).
+        Never written back to db_role.tenant_id, which is immutable after
+        creation.
+        """
         try:
             # Get the existing UserRoleMain
             db_user_role_main = db.query(UserRoleMain).filter(UserRoleMain.id == role_id).first()
@@ -561,7 +573,8 @@ class UserRoleService:
                 # apply here too instead of writing unvalidated JSONB directly.
                 for perm_data in role_data.permissions:
                     db_permission = UserRoleService.build_permission_row(
-                        db, perm_data, db_role.user_role_id, db_role.id
+                        db, perm_data, db_role.user_role_id, db_role.id,
+                        tenant_id=db_role.tenant_id or tenant_id,
                     )
                     db.add(db_permission)
 
@@ -663,11 +676,39 @@ class UserRoleService:
                 )
 
     @staticmethod
+    def _resolve_tenant_subscription_session(tenant_id: UUID):
+        """Open a session on tenant_id's OWN database, purely to read its
+        Subscription row. Only used as a fallback when the caller's own `db`
+        (JWT-routed) has none — a master-DB caller (Clan admin, JWT tenant_id
+        None) has no tenant DB of their own, so `db` is the master DB, which
+        never has a Subscription row (one per TENANT DB, by convention).
+        Returns None (never raises) when the tenant_id doesn't resolve to a
+        provisioned tenant DB — the caller treats that the same as
+        "no subscription found". Caller must close the returned session."""
+        from app.infrastructure.database.session import SessionLocal
+        from app.infrastructure.database.tenant_db_manager import tenant_db_manager
+        from app.core.config import settings
+
+        master_db = SessionLocal()
+        try:
+            row = master_db.execute(
+                text("SELECT tenant_code FROM tenants WHERE tenant_id = :tid AND is_active = true"),
+                {"tid": str(tenant_id)},
+            ).fetchone()
+        finally:
+            master_db.close()
+        if not row or not row.tenant_code:
+            return None
+        tenant_db_name = tenant_db_manager.make_db_name(row.tenant_code)
+        return tenant_db_manager.get_session(tenant_db_name, settings.DATABASE_URL)
+
+    @staticmethod
     def _verify_permissions_within_subscription(
         db: Session,
         menu_ids: Optional[List[str]] = None,
         form_ids: Optional[List[str]] = None,
         button_ids: Optional[List[str]] = None,
+        tenant_id: Optional[UUID] = None,
     ) -> None:
         """menu_permissions/form_permissions/button_permissions may only grant
         access to a menu/form/button whose application (and, when the menu is
@@ -677,11 +718,27 @@ class UserRoleService:
         Forms and buttons don't carry their own application_id/module_id —
         both are derived through their parent menu. One subscription row per
         tenant DB by convention (same as app.subscription.services.subscription).
+
+        `db` is checked first (the normal case — a tenant-scoped caller's `db`
+        is already routed to their own tenant DB, which has the subscription).
+        Only when that comes up empty AND an explicit `tenant_id` was given
+        (a master-DB "Clan admin" caller, JWT tenant_id None, has no tenant DB
+        of their own to be routed to) does this open a dedicated session on
+        that tenant's own DB as a fallback, to check the RIGHT subscription
+        instead of failing outright.
         """
         if not menu_ids and not form_ids and not button_ids:
             return
 
         subscription = db.query(Subscription).first()
+        tenant_session = None
+        if subscription is None and tenant_id is not None:
+            tenant_session = UserRoleService._resolve_tenant_subscription_session(tenant_id)
+            if tenant_session is not None:
+                try:
+                    subscription = tenant_session.query(Subscription).first()
+                finally:
+                    tenant_session.close()
         if subscription is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -31,6 +31,12 @@ class TenantBase(BaseModel):
     tax_id: Optional[str] = None
     founded_year: Optional[int] = None
     website: Optional[str] = None
+    deployed_url: Optional[str] = Field(
+        None,
+        description="URL of the tenant's deployed application instance — used as the "
+                    "login-link base for invitation emails (see send_tenant_invitation_email / "
+                    "send_user_invitation_email) instead of the platform's default login page.",
+    )
     company_logo: Optional[str] = None
     annual_revenue: Optional[str] = None
     # Headquarters address
@@ -96,6 +102,7 @@ class TenantUpdate(BaseModel):
     tax_id: Optional[str] = None
     founded_year: Optional[int] = None
     website: Optional[str] = None
+    deployed_url: Optional[str] = None
     company_logo: Optional[str] = None
     annual_revenue: Optional[str] = None
     postal_code: Optional[str] = None

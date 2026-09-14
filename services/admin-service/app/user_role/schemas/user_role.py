@@ -197,22 +197,43 @@ def _extract_node_label(node) -> Optional[str]:
     return None
 
 
+def _is_hidden_node(node) -> bool:
+    """True when a stored fields-tree node's own resolved access is 'hidden'
+    (_build_field_tree already normalizes 'disable' to 'hidden' on save, so
+    checking for 'hidden' alone covers both)."""
+    access = _extract_node_access(node)
+    if isinstance(access, str):
+        access = [access] if access.strip() else []
+    return "hidden" in {str(a).strip().lower() for a in (access or [])}
+
+
 def _fields_node_to_builder(node) -> Optional[Dict[str, Any]]:
     """Convert a stored `fields` tree node ({key, props:{access,label?},
     children} — or the legacy {key, access, children} shape, still read for
     rows saved before label was kept) to the form-builder shape ({key, props:
     {access: {value: [...]}, label?: {value: ...}}, children}) so a role form
-    permission reads back in the same shape it was sent."""
+    permission reads back in the same shape it was sent.
+
+    A child whose own resolved access is 'hidden' is dropped entirely (not
+    just marked) — same convention as app.core.access.prune_hidden_fields on
+    the served-form side, so a role marked 'hidden' for a field is completely
+    absent from the response, not merely flagged. Only descendants are
+    pruned this way; the node itself is always returned."""
     if not isinstance(node, dict):
         return node
     props: Dict[str, Any] = {"access": {"value": list(_extract_node_access(node) or [])}}
     label = _extract_node_label(node)
     if label is not None:
         props["label"] = {"value": label}
+    children = [
+        _fields_node_to_builder(c)
+        for c in (node.get("children") or [])
+        if isinstance(c, dict) and not _is_hidden_node(c)
+    ]
     return {
         "key": node.get("key"),
         "props": props,
-        "children": [_fields_node_to_builder(c) for c in (node.get("children") or [])],
+        "children": children,
     }
 
 

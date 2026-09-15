@@ -109,12 +109,19 @@ class UserSetupBasicUpdate(BaseModel):
 
 class UserSetupBasicResponse(UserSetupBasicBase):
     """Schema for user setup response"""
-    id: UUID
+    id: UUID = Field(
+        ...,
+        validation_alias="user_setup_id",
+        description="user_setup.id (UserSetup.id) — the parent-table PK, not "
+                    "usersetup_basic's own PK (see UserSetupPreferenceResponse."
+                    "usersetup_basic_id for that one).",
+    )
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 
 # ============================================================================

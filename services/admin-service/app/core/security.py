@@ -113,6 +113,24 @@ def generate_temp_password(length: int = 12) -> str:
     return "".join(parts)
 
 
+def generate_invitation_token() -> str:
+    """A cryptographically secure, URL-safe invitation token — the raw value
+    put in the invitation email's accept link. Never persisted; only its
+    hash (see hash_invitation_token) is stored, so a DB leak of
+    user_invitations alone can't be used to accept anyone's invitation."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_invitation_token(token: str) -> str:
+    """SHA-256 hex digest of an invitation token, for storage/lookup
+    (user_invitations.token_hash). Deliberately NOT bcrypt: bcrypt's random
+    salt makes "hash this token and look up the matching row" impossible
+    without an extra column — a fast, deterministic hash is the right tool
+    here (the token itself already carries 256 bits of entropy from
+    generate_invitation_token, so it needs no salt to resist brute force)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def get_password_hash(password: str) -> str:
     """
     Hash a password using bcrypt.

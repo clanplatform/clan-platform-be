@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
+import asyncio
 import logging
 
 from app.infrastructure.database.session import get_db, get_tenant_db
@@ -21,6 +22,12 @@ from app.user_setup.schemas.user_setup import (
     UserSetupCreateWithDetails,
     UserSetupListResponse,
     AvailableUsersResponse
+)
+from app.user_invitations.services.user_invitations import UserInvitationService
+from app.user_invitations.schemas.user_invitations import (
+    UserInvitationBulkCreate,
+    UserInvitationResponse,
+    BulkInvitationResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -263,3 +270,131 @@ async def delete_user_setup(
         logger.error(f"Failed to fire audit log for DELETE UserSetup {user_id}: {e}", exc_info=True)
 
     return result
+
+
+# ============================================================================
+# POST — Invitation emails (see app.user_invitations)
+# ============================================================================
+
+def _caller_tenant_uuid(current_user: dict) -> Optional[UUID]:
+    raw = current_user.get("tenant_id") if isinstance(current_user, dict) else None
+    return UUID(str(raw)) if raw else None
+
+
+@router.post(
+    "/{user_id}/send-invitation",
+    response_model=UserInvitationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_invitation_to_user(
+    request: Request,
+    user_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(require_whole_org_admin),
+):
+    """Send an invitation email to one user_setup user (user_id is
+    user_setup.id). Awaits the actual send, so the response's `status`
+    accurately reflects 'sent' vs 'failed' — this is a single email, not the
+    bulk case that needs a background task (see the /send-invitations
+    endpoints below and app.user_invitations.services.user_invitations)."""
+    tenant_id = _caller_tenant_uuid(current_user)
+    tenant_name, tenant_app_url = UserInvitationService.resolve_tenant_branding(tenant_id)
+
+    invitation = await UserInvitationService.send_single(
+        db, user_id, tenant_id, tenant_name=tenant_name, tenant_app_url=tenant_app_url,
+    )
+
+    try:
+        uid = get_user_id(current_user)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        fire_audit_log(
+            action="CREATE", object_type="UserInvitation", object_id=str(invitation.id),
+            user_id=uid, tenant_id=tenant_id_audit, entity_id=entity_id_audit,
+            session_id=get_session_id(current_user), ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["CREATE"],
+            new_values={"user_id": str(user_id), "status": invitation.status},
+        )
+    except Exception as e:
+        logger.error(f"Failed to fire audit log for send-invitation {user_id}: {e}", exc_info=True)
+
+    return invitation
+
+
+@router.post("/send-invitations", response_model=BulkInvitationResult, status_code=status.HTTP_202_ACCEPTED)
+async def send_invitations_to_selected(
+    request: Request,
+    payload: UserInvitationBulkCreate,
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(require_whole_org_admin),
+):
+    """Send invitations to a caller-selected list of users.
+
+    The invitation rows are created synchronously (fast — local DB writes
+    only) and this returns 202 immediately with what was queued; actual
+    delivery runs in a background task with bounded concurrency
+    (UserInvitationService.BULK_SEND_CONCURRENCY) so a large selection never
+    blocks this request or hits the email-service with hundreds of calls at
+    once. Poll GET /user_invitations/?status=... for final delivery state.
+    """
+    tenant_id = _caller_tenant_uuid(current_user)
+    created, skipped = UserInvitationService.create_bulk_rows(db, tenant_id, user_ids=payload.user_ids)
+
+    tenant_name, tenant_app_url = UserInvitationService.resolve_tenant_branding(tenant_id)
+    send_args = [(row.id, raw_token, basic.firstname, temp_password) for row, raw_token, basic, temp_password in created]
+    asyncio.create_task(
+        UserInvitationService.send_bulk(send_args, tenant_id, tenant_name=tenant_name, tenant_app_url=tenant_app_url)
+    )
+
+    try:
+        uid = get_user_id(current_user)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        fire_audit_log(
+            action="CREATE", object_type="UserInvitation",
+            user_id=uid, tenant_id=tenant_id_audit, entity_id=entity_id_audit,
+            session_id=get_session_id(current_user), ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["CREATE"],
+            new_values={"selected_count": len(payload.user_ids), "queued": len(created)},
+        )
+    except Exception as e:
+        logger.error(f"Failed to fire audit log for send-invitations (selected): {e}", exc_info=True)
+
+    return BulkInvitationResult(
+        queued=len(created), skipped=skipped, invitation_ids=[row.id for row, _t, _b, _p in created],
+    )
+
+
+@router.post("/send-invitations/bulk", response_model=BulkInvitationResult, status_code=status.HTTP_202_ACCEPTED)
+async def send_invitations_bulk(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    current_user: dict = Depends(require_whole_org_admin),
+):
+    """Send invitations to every eligible user in this tenant — active
+    users who don't already have a live (pending/sent, unexpired)
+    invitation. Same background-task delivery as /send-invitations
+    (selected); see that endpoint's docstring."""
+    tenant_id = _caller_tenant_uuid(current_user)
+    created, skipped = UserInvitationService.create_bulk_rows(db, tenant_id, user_ids=None)
+
+    tenant_name, tenant_app_url = UserInvitationService.resolve_tenant_branding(tenant_id)
+    send_args = [(row.id, raw_token, basic.firstname, temp_password) for row, raw_token, basic, temp_password in created]
+    asyncio.create_task(
+        UserInvitationService.send_bulk(send_args, tenant_id, tenant_name=tenant_name, tenant_app_url=tenant_app_url)
+    )
+
+    try:
+        uid = get_user_id(current_user)
+        tenant_id_audit, entity_id_audit = get_audit_org_context(db, uid)
+        fire_audit_log(
+            action="CREATE", object_type="UserInvitation",
+            user_id=uid, tenant_id=tenant_id_audit, entity_id=entity_id_audit,
+            session_id=get_session_id(current_user), ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"), risk_score=RISK_SCORE["CREATE"],
+            new_values={"queued": len(created)},
+        )
+    except Exception as e:
+        logger.error(f"Failed to fire audit log for send-invitations (bulk): {e}", exc_info=True)
+
+    return BulkInvitationResult(
+        queued=len(created), skipped=skipped, invitation_ids=[row.id for row, _t, _b, _p in created],
+    )

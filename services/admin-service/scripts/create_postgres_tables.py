@@ -69,6 +69,7 @@ from app.job_codes.models.job_codes import (
 )
 from app.tenant_modules.models.tenant_module import TenantModule
 from app.tenant_applications.models.tenant_application import TenantApplication
+from app.user_invitations.models.user_invitations import UserInvitation
 
 
 def print_header(text):

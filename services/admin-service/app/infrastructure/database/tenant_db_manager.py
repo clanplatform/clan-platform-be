@@ -208,6 +208,7 @@ class TenantDatabaseManager:
         from app.user_setup.models.user_setup import (                                       # noqa: F401
             UserSetup, UserSetupBasic, UserSetupPreference
         )
+        from app.user_invitations.models.user_invitations import UserInvitation              # noqa: F401
         from app.users_groups.models.users_groups import UserGroup                            # noqa: F401
         from app.buttons.models.button import Button                                         # noqa: F401
         from app.tenant_modules.models.tenant_module import TenantModule                     # noqa: F401

@@ -66,6 +66,7 @@ try:
 
     # User setup models
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupRolesEntity, UserSetupPreference
+    from app.user_invitations.models.user_invitations import UserInvitation
 
     print("All models imported successfully")
 except ImportError as e:

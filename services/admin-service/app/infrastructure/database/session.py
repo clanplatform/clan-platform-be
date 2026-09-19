@@ -65,6 +65,7 @@ def create_tables():
     from app.job_codes.models.job_codes import JobCode
     from app.user_role.models.user_role import UserRoleMain, UserRoleBasic, UserRolePermission
     from app.user_setup.models.user_setup import UserSetup, UserSetupBasic, UserSetupPreference
+    from app.user_invitations.models.user_invitations import UserInvitation
     from app.users_groups.models.users_groups import UserGroup
     from app.buttons.models.button import Button
     from app.tenant_modules.models.tenant_module import TenantModule

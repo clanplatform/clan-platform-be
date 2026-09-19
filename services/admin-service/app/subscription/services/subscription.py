@@ -82,17 +82,29 @@ def _audit(action: str, sub: Subscription, user_id: Optional[UUID], **kw) -> Non
         pass
 
 
-def get_subscription(db: Session, subscription_id: UUID) -> Optional[Subscription]:
-    """Get a subscription by id."""
-    return db.query(Subscription).filter(
-        Subscription.subscription_id == subscription_id
-    ).first()
+def get_subscription(db: Session, subscription_id: UUID, include_inactive: bool = False) -> Optional[Subscription]:
+    """Get a subscription by id.
+
+    Excludes soft-deleted rows (is_active=False) by default — delete_subscription
+    doesn't remove the row, just flips is_active, and a deleted subscription
+    should no longer be visible via GET. Internal callers that must still be
+    able to find/act on a soft-deleted row (update_subscription, so a delete
+    can be reversed by PUT-ing is_active back to True; delete_subscription
+    itself, so re-deleting is idempotent rather than 404ing) pass
+    include_inactive=True.
+    """
+    query = db.query(Subscription).filter(Subscription.subscription_id == subscription_id)
+    if not include_inactive:
+        query = query.filter(Subscription.is_active == True)
+    return query.first()
 
 
 def get_subscriptions(db: Session, skip: int = 0, limit: int = 100) -> List[Subscription]:
-    """List subscriptions (newest first)."""
+    """List active subscriptions (newest first) — soft-deleted rows
+    (is_active=False) are excluded."""
     return (
         db.query(Subscription)
+        .filter(Subscription.is_active == True)
         .order_by(Subscription.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -101,7 +113,9 @@ def get_subscriptions(db: Session, skip: int = 0, limit: int = 100) -> List[Subs
 
 
 def get_subscriptions_count(db: Session) -> int:
-    return db.query(Subscription).count()
+    """Count of active (non-soft-deleted) subscriptions — matches
+    get_subscriptions so list pagination totals stay consistent."""
+    return db.query(Subscription).filter(Subscription.is_active == True).count()
 
 
 def create_subscription(
@@ -135,7 +149,7 @@ def update_subscription(
     user_id: Optional[UUID] = None,
 ) -> Subscription:
     """Update a subscription."""
-    db_sub = get_subscription(db, subscription_id)
+    db_sub = get_subscription(db, subscription_id, include_inactive=True)
     if not db_sub:
         raise SubscriptionNotFoundError()
 
@@ -158,7 +172,7 @@ def update_subscription(
 
 def delete_subscription(db: Session, subscription_id: UUID, user_id: Optional[UUID] = None) -> bool:
     """Soft delete a subscription (is_active = False)."""
-    db_sub = get_subscription(db, subscription_id)
+    db_sub = get_subscription(db, subscription_id, include_inactive=True)
     if not db_sub:
         return False
 
